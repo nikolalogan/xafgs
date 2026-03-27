@@ -1,0 +1,13 @@
+FROM golang:1.25-alpine
+
+WORKDIR /app
+
+ENV PATH=/usr/local/go/bin:/go/bin:$PATH
+ENV CGO_ENABLED=0
+ENV AIR_VERSION=v1.64.5
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOSUMDB=sum.golang.google.cn
+
+RUN go install github.com/air-verse/air@${AIR_VERSION}
+
+CMD ["air", "-c", ".air.toml"]
