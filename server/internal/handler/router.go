@@ -8,11 +8,12 @@ func RegisterRoutes(
 	authHandler *AuthHandler,
 	userHandler *UserHandler,
 	authMiddleware fiber.Handler,
+	adminMiddleware fiber.Handler,
 ) {
 	publicGroup := router.Group("")
 	healthHandler.Register(publicGroup)
 	authHandler.Register(publicGroup)
 
 	protectedGroup := router.Group("", authMiddleware)
-	userHandler.Register(protectedGroup)
+	userHandler.Register(protectedGroup, adminMiddleware)
 }

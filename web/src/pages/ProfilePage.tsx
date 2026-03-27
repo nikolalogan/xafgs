@@ -43,6 +43,7 @@ function ProfilePage() {
       <Descriptions title="当前登录用户" column={1} bordered>
         <Descriptions.Item label="ID">{user?.id}</Descriptions.Item>
         <Descriptions.Item label="用户名">{user?.username}</Descriptions.Item>
+        <Descriptions.Item label="姓名">{user?.name}</Descriptions.Item>
         <Descriptions.Item label="角色">{user?.role}</Descriptions.Item>
       </Descriptions>
     </Card>

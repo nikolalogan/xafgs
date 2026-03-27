@@ -16,10 +16,12 @@ func NewAuthRepository(apiToken string) AuthRepository {
 	}
 	return &authRepository{
 		tokenToUserID: map[string]int64{
-			apiToken: 1,
+			apiToken:         1,
+			"normal-user-token": 2,
 		},
 		credentialsToToken: map[string]string{
-			"developer:123456": apiToken,
+			"developer:123456":   apiToken,
+			"normal-user:123456": "normal-user-token",
 		},
 	}
 }

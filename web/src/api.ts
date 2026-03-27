@@ -1,6 +1,7 @@
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from "axios";
 
 const ACCESS_TOKEN_KEY = "sxfg_access_token";
+const CURRENT_USER_KEY = "sxfg_current_user";
 
 export type ApiResponse<T> = {
   statusCode: number;
@@ -27,7 +28,21 @@ export type HealthResponse = {
 export type UserResponse = {
   id: number;
   username: string;
-  role: string;
+  name: string;
+  role: "admin" | "user";
+};
+
+export type CreateUserRequest = {
+  username: string;
+  name: string;
+  password: string;
+  role: "admin" | "user";
+};
+
+export type UpdateUserRequest = {
+  name: string;
+  password: string;
+  role: "admin" | "user";
 };
 
 export type LoginResponse = {
@@ -69,6 +84,23 @@ export function getAccessToken(): string {
 
 export function clearAccessToken() {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.removeItem(CURRENT_USER_KEY);
+}
+
+export function setCurrentUser(user: UserResponse) {
+  localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+}
+
+export function getCurrentUser(): UserResponse | null {
+  const payload = localStorage.getItem(CURRENT_USER_KEY);
+  if (!payload) {
+    return null;
+  }
+  try {
+    return JSON.parse(payload) as UserResponse;
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchHealth() {
@@ -90,15 +122,47 @@ export async function login(username: string, password: string) {
 }
 
 export async function fetchCurrentUser() {
-  return request<UserResponse>({
+  const user = await request<UserResponse>({
     method: "GET",
     url: "/me"
   });
+  setCurrentUser(user);
+  return user;
 }
 
 export async function fetchUserByID(userID: number) {
   return request<UserResponse>({
     method: "GET",
+    url: `/users/${userID}`
+  });
+}
+
+export async function fetchUsers() {
+  return request<UserResponse[]>({
+    method: "GET",
+    url: "/users"
+  });
+}
+
+export async function createUser(data: CreateUserRequest) {
+  return request<UserResponse>({
+    method: "POST",
+    url: "/users",
+    data
+  });
+}
+
+export async function updateUser(userID: number, data: UpdateUserRequest) {
+  return request<UserResponse>({
+    method: "PUT",
+    url: `/users/${userID}`,
+    data
+  });
+}
+
+export async function deleteUser(userID: number) {
+  return request<boolean>({
+    method: "DELETE",
     url: `/users/${userID}`
   });
 }

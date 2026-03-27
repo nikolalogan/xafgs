@@ -5,15 +5,22 @@ import LoginPage from "./pages/LoginPage";
 import AppLayout from "./pages/AppLayout";
 import DashboardPage from "./pages/DashboardPage";
 import ProfilePage from "./pages/ProfilePage";
-import WorkflowEditorPage from "./pages/WorkflowEditor";
-import WorkflowRunnerPage from "./pages/WorkflowRunner";
 import DifyWorkflowPage from "./pages/DifyWorkflow";
-import { getAccessToken } from "./api";
+import UsersPage from "./pages/UsersPage";
+import { getAccessToken, getCurrentUser } from "./api";
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const token = getAccessToken();
   if (!token) {
     return <Navigate to="/login" replace />;
+  }
+  return children;
+}
+
+function AdminRoute({ children }: { children: ReactNode }) {
+  const user = getCurrentUser();
+  if (!user || user.role !== "admin") {
+    return <Navigate to="/app" replace />;
   }
   return children;
 }
@@ -33,9 +40,15 @@ function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="profile" element={<ProfilePage />} />
-        <Route path="workflow-editor" element={<WorkflowEditorPage />} />
         <Route path="dify-workflow" element={<DifyWorkflowPage />} />
-        <Route path="workflow-runner" element={<WorkflowRunnerPage />} />
+        <Route
+          path="users"
+          element={
+            <AdminRoute>
+              <UsersPage />
+            </AdminRoute>
+          }
+        />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

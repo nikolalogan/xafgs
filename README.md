@@ -138,6 +138,9 @@ make down
 - 未携带或无效 Token 时返回 `401` + `UNAUTHORIZED`
 - 默认登录账号：`developer`
 - 默认登录密码：`123456`
+- 普通用户账号：`normal-user`
+- 普通用户密码：`123456`
+- 角色：`admin`（管理员）/`user`（普通用户）
 
 ### 参数校验
 
@@ -155,7 +158,11 @@ make down
 - `GET /api/health`：公开接口，健康检查
 - `POST /api/auth/login`：公开接口，账号密码登录
 - `GET /api/me`：受保护接口，获取当前认证用户
-- `GET /api/users/:userId`：受保护接口，按 ID 查询用户
+- `GET /api/users`：管理员接口，用户列表
+- `GET /api/users/:userId`：管理员接口，按 ID 查询用户
+- `POST /api/users`：管理员接口，创建用户
+- `PUT /api/users/:userId`：管理员接口，更新用户
+- `DELETE /api/users/:userId`：管理员接口，删除用户
 
 ## 前端 API 客户端封装
 

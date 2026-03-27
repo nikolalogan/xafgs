@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { LoginFormPage, ProFormText } from "@ant-design/pro-components";
 import { message } from "antd";
-import { login, setAccessToken, type ApiError } from "../api";
+import { login, setAccessToken, setCurrentUser, type ApiError } from "../api";
 
 function LoginPage() {
   const navigate = useNavigate();
@@ -15,6 +15,7 @@ function LoginPage() {
         try {
           const result = await login(values.username, values.password);
           setAccessToken(result.accessToken);
+          setCurrentUser(result.user);
           message.success(`欢迎，${result.user.username}`);
           navigate("/app");
           return true;

@@ -76,7 +76,7 @@ func NewApp() (*fiber.App, Config) {
 	healthHandler := handler.NewHealthHandler(systemService)
 	authHandler := handler.NewAuthHandler(authService)
 	userHandler := handler.NewUserHandler(userService)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, authMiddleware.Require)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

@@ -16,7 +16,7 @@ import {
   type Node
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import demoFlow from "../../WorkflowEditor/demo.json";
+import demoFlow from "../demo.json";
 import DifyNodeRenderer from "../migrated/components/nodes";
 import CustomEdge from "../migrated/components/CustomEdge";
 import ZoomInOut from "../migrated/components/ZoomInOut";
