@@ -7,7 +7,7 @@ import { clearAccessToken, fetchCurrentUser, getCurrentUser, type UserResponse }
 
 const baseMenuItems = [
   { path: "/app", name: "工作台", icon: <HomeOutlined /> },
-  { path: "/app/dify-workflow", name: "Dify工作流", icon: <DeploymentUnitOutlined /> },
+  { path: "/app/workflow", name: "workflow", icon: <DeploymentUnitOutlined /> },
   { path: "/app/profile", name: "个人信息", icon: <UserOutlined /> }
 ];
 

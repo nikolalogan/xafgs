@@ -29,7 +29,7 @@ type WorkflowUIState = {
 
 const WorkflowUIContext = createContext<WorkflowUIState | null>(null);
 
-export function DifyWorkflowStoreProvider({ children }: PropsWithChildren) {
+export function WorkflowStoreProvider({ children }: PropsWithChildren) {
   const [nodeAnimation, setNodeAnimation] = useState(false);
   const [controlMode, setControlMode] = useState<"pointer" | "hand">("pointer");
   const [nodeMenu, setNodeMenu] = useState<MenuPosition | undefined>(undefined);
@@ -68,8 +68,8 @@ export function DifyWorkflowStoreProvider({ children }: PropsWithChildren) {
   return <WorkflowUIContext.Provider value={value}>{children}</WorkflowUIContext.Provider>;
 }
 
-export function useDifyWorkflowStore() {
+export function useWorkflowStore() {
   const context = useContext(WorkflowUIContext);
-  if (!context) throw new Error("Missing DifyWorkflowStoreProvider");
+  if (!context) throw new Error("Missing WorkflowStoreProvider");
   return context;
 }

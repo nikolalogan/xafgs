@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import type { DifyNodeData } from "../types";
-import { useDifyWorkflowStore } from "../store";
+import { useWorkflowStore } from "../store";
 
 type Params = {
   nodes: Node<DifyNodeData, "difyNode">[];
@@ -25,7 +25,7 @@ const isEditableTarget = (target: EventTarget | null) => {
 };
 
 export function useShortcutsClipboard({ nodes, edges, setNodes, setEdges, onUndo, onRedo }: Params) {
-  const store = useDifyWorkflowStore();
+  const store = useWorkflowStore();
 
   const copySelection = useCallback(() => {
     const selectedNodes = nodes.filter((node) => node.selected);

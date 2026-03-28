@@ -14,7 +14,8 @@ const options: Array<{ label: string; value: BlockEnum }> = [
   { label: "If/Else", value: BlockEnum.IfElse },
   { label: "End", value: BlockEnum.End },
   { label: "HTTP Request", value: BlockEnum.HttpRequest },
-  { label: "Code", value: BlockEnum.Code }
+  { label: "Code", value: BlockEnum.Code },
+  { label: "File Extractor", value: BlockEnum.FileExtractor }
 ];
 
 function BlockSelector({ open, onClose, onSelect }: Props) {

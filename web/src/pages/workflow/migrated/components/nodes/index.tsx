@@ -8,6 +8,7 @@ import EndNode from "./EndNode";
 import InputNode from "./InputNode";
 import HttpRequestNode from "./HttpRequestNode";
 import CodeNode from "./CodeNode";
+import FileExtractorNode from "./FileExtractorNode";
 import BaseCard from "./BaseCard";
 
 function DifyNodeRenderer(props: NodeProps<DifyNode>) {
@@ -18,6 +19,7 @@ function DifyNodeRenderer(props: NodeProps<DifyNode>) {
   if (nodeType === BlockEnum.IfElse) return <IfElseNode {...props} />;
   if (nodeType === BlockEnum.HttpRequest) return <HttpRequestNode {...props} />;
   if (nodeType === BlockEnum.Code) return <CodeNode {...props} />;
+  if (nodeType === BlockEnum.FileExtractor) return <FileExtractorNode {...props} />;
   if (nodeType === BlockEnum.End) return <EndNode {...props} />;
   return <BaseCard id={props.id} data={props.data} blockLabel={nodeType.toUpperCase()} />;
 }

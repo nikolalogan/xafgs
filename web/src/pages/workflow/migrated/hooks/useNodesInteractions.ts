@@ -1,11 +1,11 @@
 import { useCallback, useRef } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { Node } from "@xyflow/react";
-import { useDifyWorkflowStore } from "../store";
+import { useWorkflowStore } from "../store";
 import type { DifyNodeData } from "../types";
 
 export function useNodesInteractions() {
-  const workflowStore = useDifyWorkflowStore();
+  const workflowStore = useWorkflowStore();
   const dragNodeStartPosition = useRef({ x: 0, y: 0 });
 
   const handleNodeDragStart = useCallback(

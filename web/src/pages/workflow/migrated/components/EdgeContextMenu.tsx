@@ -1,6 +1,6 @@
 import { Card, Button, Space } from "antd";
 import { DeleteOutlined } from "@ant-design/icons";
-import { useDifyWorkflowStore } from "../store";
+import { useWorkflowStore } from "../store";
 
 type Props = {
   onDelete: (edgeId: string) => void;
@@ -8,7 +8,7 @@ type Props = {
 };
 
 function EdgeContextMenu({ onDelete, onClose }: Props) {
-  const { edgeMenu } = useDifyWorkflowStore();
+  const { edgeMenu } = useWorkflowStore();
   if (!edgeMenu?.edgeId) return null;
 
   return (

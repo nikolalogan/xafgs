@@ -1,9 +1,9 @@
 import { useCallback } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { useDifyWorkflowStore } from "../store";
+import { useWorkflowStore } from "../store";
 
 export function usePanelInteractions() {
-  const workflowStore = useDifyWorkflowStore();
+  const workflowStore = useWorkflowStore();
 
   const handlePaneContextMenu = useCallback(
     (event: MouseEvent | ReactMouseEvent) => {

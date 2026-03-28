@@ -1,6 +1,6 @@
 import { Card, Button, Dropdown, Space, type MenuProps } from "antd";
 import { PlusOutlined, CopyOutlined } from "@ant-design/icons";
-import { useDifyWorkflowStore } from "../store";
+import { useWorkflowStore } from "../store";
 import { BlockEnum } from "../types";
 
 type Props = {
@@ -11,7 +11,7 @@ type Props = {
 };
 
 function PanelContextMenu({ onAddNode, onPaste, hasClipboard, onClose }: Props) {
-  const { panelMenu } = useDifyWorkflowStore();
+  const { panelMenu } = useWorkflowStore();
   if (!panelMenu) return null;
 
   const addNodeItems: MenuProps["items"] = [
@@ -21,6 +21,7 @@ function PanelContextMenu({ onAddNode, onPaste, hasClipboard, onClose }: Props) 
     { key: BlockEnum.IfElse, label: "If/Else" },
     { key: BlockEnum.HttpRequest, label: "HTTP Request" },
     { key: BlockEnum.Code, label: "Code" },
+    { key: BlockEnum.FileExtractor, label: "File Extractor" },
     { key: BlockEnum.End, label: "End" }
   ];
 

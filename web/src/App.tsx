@@ -5,7 +5,7 @@ import LoginPage from "./pages/LoginPage";
 import AppLayout from "./pages/AppLayout";
 import DashboardPage from "./pages/DashboardPage";
 import ProfilePage from "./pages/ProfilePage";
-import DifyWorkflowPage from "./pages/DifyWorkflow";
+import WorkflowPage from "./pages/workflow";
 import UsersPage from "./pages/UsersPage";
 import { getAccessToken, getCurrentUser } from "./api";
 
@@ -40,7 +40,7 @@ function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="profile" element={<ProfilePage />} />
-        <Route path="dify-workflow" element={<DifyWorkflowPage />} />
+        <Route path="workflow" element={<WorkflowPage />} />
         <Route
           path="users"
           element={

@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import type { OnSelectionChangeFunc } from "@xyflow/react";
-import { useDifyWorkflowStore } from "../store";
+import { useWorkflowStore } from "../store";
 import type { DifyNodeData } from "../types";
 
 type Params = {
@@ -12,7 +12,7 @@ type Params = {
 };
 
 export function useSelectionInteractions({ nodes, edges, setNodes, setEdges }: Params) {
-  const workflowStore = useDifyWorkflowStore();
+  const workflowStore = useWorkflowStore();
 
   const handleSelectionStart = useCallback(() => {
     workflowStore.setSelectionMenu(undefined);

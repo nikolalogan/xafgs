@@ -1,6 +1,6 @@
 import { Card, Button } from "antd";
 import { DeleteOutlined } from "@ant-design/icons";
-import { useDifyWorkflowStore } from "../store";
+import { useWorkflowStore } from "../store";
 
 type Props = {
   onDeleteSelection: () => void;
@@ -8,7 +8,7 @@ type Props = {
 };
 
 function SelectionContextMenu({ onDeleteSelection, onClose }: Props) {
-  const { selectionMenu } = useDifyWorkflowStore();
+  const { selectionMenu } = useWorkflowStore();
   if (!selectionMenu) return null;
 
   return (

@@ -1,6 +1,6 @@
 import { Card, Button, Space, Typography } from "antd";
 import { CopyOutlined, DeleteOutlined } from "@ant-design/icons";
-import { useDifyWorkflowStore } from "../store";
+import { useWorkflowStore } from "../store";
 
 type Props = {
   onCopyNode: (nodeId: string) => void;
@@ -9,7 +9,7 @@ type Props = {
 };
 
 function NodeContextMenu({ onCopyNode, onDeleteNode, onClose }: Props) {
-  const { nodeMenu } = useDifyWorkflowStore();
+  const { nodeMenu } = useWorkflowStore();
   if (!nodeMenu?.nodeId) return null;
 
   return (

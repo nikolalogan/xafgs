@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import type { Edge, EdgeMouseHandler, OnEdgesChange } from "@xyflow/react";
 import { applyEdgeChanges } from "@xyflow/react";
-import { useDifyWorkflowStore } from "../store";
+import { useWorkflowStore } from "../store";
 
 type Params = {
   edges: Edge[];
@@ -9,7 +9,7 @@ type Params = {
 };
 
 export function useEdgesInteractions({ edges, setEdges }: Params) {
-  const workflowStore = useDifyWorkflowStore();
+  const workflowStore = useWorkflowStore();
 
   const handleEdgeEnter = useCallback<EdgeMouseHandler>(
     (_, edge) => {

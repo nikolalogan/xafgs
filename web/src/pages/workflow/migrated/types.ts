@@ -12,7 +12,8 @@ export enum BlockEnum {
   QuestionClassifier = "question-classifier",
   HttpRequest = "http-request",
   Code = "code",
-  Input = "input"
+  Input = "input",
+  FileExtractor = "file-extractor"
 }
 
 export enum NodeRunningStatus {
@@ -176,6 +177,18 @@ export type DifyNodeData = {
       key: string;
       target: string;
     }>;
+  };
+  file_extractor_config?: {
+    source?: string;
+    input_selector: string;
+    input_selectors?: string[];
+    extraction_mode: "text" | "markdown";
+    strategy: "auto" | "ocr";
+    output_key: string;
+    file_types: Array<"pdf" | "docx" | "pptx" | "xlsx" | "txt" | "md" | "html">;
+    max_file_size_mb: number;
+    timeout_ms?: number;
+    retry_count?: number;
   };
   variables?: Array<{
     variable: string;

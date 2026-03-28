@@ -21,7 +21,7 @@ import DifyNodeRenderer from "../migrated/components/nodes";
 import CustomEdge from "../migrated/components/CustomEdge";
 import ZoomInOut from "../migrated/components/ZoomInOut";
 import { BlockEnum, type DifyGlobalVariable, type DifyNodeData, type DifyProcessObject, type DifyProcessObjectNode } from "../migrated/types";
-import { DifyWorkflowStoreProvider, useDifyWorkflowStore } from "../migrated/store";
+import { WorkflowStoreProvider, useWorkflowStore } from "../migrated/store";
 import { useNodesInteractions } from "../migrated/hooks/useNodesInteractions";
 import { useSelectionInteractions } from "../migrated/hooks/useSelectionInteractions";
 import { useEdgesInteractions } from "../migrated/hooks/useEdgesInteractions";
@@ -48,6 +48,7 @@ const mapCodeToBlock = (code?: string): BlockEnum => {
   if (normalized === "decision") return BlockEnum.IfElse;
   if (normalized === "processor") return BlockEnum.LLM;
   if (normalized === "http") return BlockEnum.HttpRequest;
+  if (normalized === "file-extractor" || normalized === "document-extractor" || normalized === "file_parser") return BlockEnum.FileExtractor;
   return BlockEnum.Input;
 };
 
@@ -104,6 +105,19 @@ const buildDefaultCodeConfig = () => ({
   timeout_ms: 3000,
   input_mapping: [] as Array<{ id: string; key: string; source: string; required?: boolean; default?: string }>,
   output_mapping: [] as Array<{ id: string; key: string; target: string }>
+});
+
+const buildDefaultFileExtractorConfig = () => ({
+  source: "",
+  input_selector: "",
+  input_selectors: [],
+  extraction_mode: "text" as const,
+  strategy: "auto" as const,
+  output_key: "extracted_text",
+  file_types: ["pdf", "docx", "txt"] as Array<"pdf" | "docx" | "pptx" | "xlsx" | "txt" | "md" | "html">,
+  max_file_size_mb: 20,
+  timeout_ms: 10000,
+  retry_count: 0
 });
 
 const ifElseMatchModeOptions = [
@@ -432,6 +446,7 @@ type ParamRefOption = {
   label: string;
   sourceType: "global" | "node";
   sourceNodeId?: string;
+  valueType?: string;
 };
 
 const makeGlobalRefKey = (name: string) => `global:${name}`;
@@ -465,7 +480,8 @@ const collectNodeProducedParams = (node: Node<DifyNodeData, "difyNode">): ParamR
       key: makeNodeRefKey(node.id, String(field.id).trim()),
       label: `${field.label || field.id} (${field.id})`,
       sourceType: "node",
-      sourceNodeId: node.id
+      sourceNodeId: node.id,
+      valueType: String(field.value_type ?? "")
     }));
 };
 
@@ -533,6 +549,7 @@ const buildInitialNodes = (): Node<DifyNodeData, "difyNode">[] =>
       if_else_config: buildDefaultIfElseConfig(),
       http_config: buildDefaultHTTPConfig(),
       code_config: buildDefaultCodeConfig(),
+      file_extractor_config: buildDefaultFileExtractorConfig(),
       input_config: {
         ...buildDefaultInputConfig(nodeType === BlockEnum.Start),
         forms: nodeType === BlockEnum.Input ? buildDefaultInputForms() : []
@@ -551,11 +568,11 @@ const buildInitialEdges = (): Edge[] =>
 const nodeTypes = { difyNode: DifyNodeRenderer };
 const edgeTypes = { difyEdge: CustomEdge };
 
-function DifyWorkflowMigratedCanvasInner() {
+function WorkflowCanvasInner() {
   const { message, modal } = App.useApp();
   const [nodeForm] = Form.useForm();
   const reactFlow = useReactFlow();
-  const { controlMode, setClipboard } = useDifyWorkflowStore();
+  const { controlMode, setClipboard } = useWorkflowStore();
 
   const [blockSelectorOpen, setBlockSelectorOpen] = useState(false);
   const [nodeDrawerOpen, setNodeDrawerOpen] = useState(false);
@@ -936,6 +953,7 @@ function DifyWorkflowMigratedCanvasInner() {
           if_else_config: buildDefaultIfElseConfig(),
           http_config: buildDefaultHTTPConfig(),
           code_config: buildDefaultCodeConfig(),
+          file_extractor_config: buildDefaultFileExtractorConfig(),
           input_config: {
             ...buildDefaultInputConfig(type === BlockEnum.Start),
             forms: type === BlockEnum.Input ? buildDefaultInputForms() : []
@@ -1048,11 +1066,13 @@ function DifyWorkflowMigratedCanvasInner() {
     const httpConfig = activeNode.data.http_config ?? buildDefaultHTTPConfig();
     const responseConfig = httpConfig.response_config ?? buildDefaultHTTPConfig().response_config;
     const codeConfig = activeNode.data.code_config ?? buildDefaultCodeConfig();
+    const fileExtractorConfig = activeNode.data.file_extractor_config ?? buildDefaultFileExtractorConfig();
     const inputConfig = activeNode.data.input_config ?? buildDefaultInputConfig(activeNode.data.type === BlockEnum.Start);
     const inputForms = normalizeInputForms(inputConfig.forms ?? []);
     const globalNameSet = new Set(globalVariables.map((item) => item.name.trim()).filter(Boolean));
     const inputRefsSummary = collectRuleRefsFromForms(inputForms).map((token) => tokenToReadableLabel(token, nodes)).join("\n");
     const ifElseRefsSummary = collectIfElseRefsFromBranches(ifElseConfig.branches).map((token) => tokenToReadableLabel(token, nodes)).join("\n");
+    const fileExtractorSource = fileExtractorConfig.source || fileExtractorConfig.input_selector || "";
     nodeForm.setFieldsValue({
       title: activeNode.data.title ?? "",
       desc: activeNode.data.desc ?? "",
@@ -1085,6 +1105,14 @@ function DifyWorkflowMigratedCanvasInner() {
         ...row,
         target: normalizeCodeMappingToken(String(row.target ?? ""))
       })),
+      fileExtractorSource,
+      fileExtractorMode: fileExtractorConfig.extraction_mode,
+      fileExtractorStrategy: fileExtractorConfig.strategy,
+      fileExtractorOutputKey: fileExtractorConfig.output_key,
+      fileExtractorTypes: fileExtractorConfig.file_types,
+      fileExtractorMaxSizeMB: fileExtractorConfig.max_file_size_mb,
+      fileExtractorTimeout: fileExtractorConfig.timeout_ms ?? 10000,
+      fileExtractorRetryCount: fileExtractorConfig.retry_count ?? 0,
       ifElseBranches: ensureElseLast(ifElseConfig.branches),
       ifElseRefsSummary,
       inputFields: inputConfig.fields,
@@ -1236,6 +1264,18 @@ function DifyWorkflowMigratedCanvasInner() {
             pushIssue(`node:http-extract-invalid-write:${node.id}:${index}`, `HTTP 节点写入目标不在流程对象结构中：${title}`, node.id);
           }
         });
+      }
+      if (String(node.data?.type) === BlockEnum.FileExtractor) {
+        const config = node.data?.file_extractor_config ?? buildDefaultFileExtractorConfig();
+        if (!String(config.source ?? config.input_selector ?? "").trim()) {
+          pushIssue(`node:file-extractor-source:${node.id}`, `文件提取器未配置文件来源：${title}`, node.id);
+        }
+        if (!String(config.output_key ?? "").trim()) {
+          pushIssue(`node:file-extractor-output:${node.id}`, `文件提取器未配置输出变量：${title}`, node.id);
+        }
+        if ((config.file_types ?? []).length === 0) {
+          pushIssue(`node:file-extractor-types:${node.id}`, `文件提取器未配置文件类型：${title}`, node.id);
+        }
       }
       const ancestors = getAncestorsOfNode(node.id, edges);
       const allowedRefs = new Set<string>(globalRefOptions.map((ref) => ref.key));
@@ -1459,6 +1499,9 @@ function DifyWorkflowMigratedCanvasInner() {
             <Button icon={<PlusOutlined />} onClick={() => addNode(BlockEnum.Code)}>
               Add Code
             </Button>
+            <Button icon={<PlusOutlined />} onClick={() => addNode(BlockEnum.FileExtractor)}>
+              Add FileExtractor
+            </Button>
             <Button icon={<PlusOutlined />} onClick={() => addNode(BlockEnum.End)}>
               Add End
             </Button>
@@ -1617,6 +1660,7 @@ function DifyWorkflowMigratedCanvasInner() {
               if (type === BlockEnum.IfElse) return "#f79009";
               if (type === BlockEnum.LLM) return "#7a5af8";
               if (type === BlockEnum.Input) return "#06aed4";
+              if (type === BlockEnum.FileExtractor) return "#d444f1";
               return "#98a2b3";
             }}
           />
@@ -1791,6 +1835,26 @@ function DifyWorkflowMigratedCanvasInner() {
                     input_mapping: normalizeCodeInputMappings(values.codeInputMappings),
                     output_mapping: normalizeCodeOutputMappings(values.codeOutputMappings)
                   };
+                  const rawFileExtractorTypes = Array.isArray(values.fileExtractorTypes) ? values.fileExtractorTypes : [];
+                  const parsedFileExtractorTypes = rawFileExtractorTypes
+                    .map((item: any) => String(item))
+                    .filter((item: string) => ["pdf", "docx", "pptx", "xlsx", "txt", "md", "html"].includes(item)) as Array<
+                    "pdf" | "docx" | "pptx" | "xlsx" | "txt" | "md" | "html"
+                  >;
+                  const parsedFileExtractorSource = String(values.fileExtractorSource ?? "").trim();
+                  const parsedFileExtractorConfig: NonNullable<DifyNodeData["file_extractor_config"]> = {
+                    ...(item.data.file_extractor_config ?? buildDefaultFileExtractorConfig()),
+                    source: parsedFileExtractorSource,
+                    input_selector: parsedFileExtractorSource,
+                    input_selectors: parsedFileExtractorSource ? [parsedFileExtractorSource] : [],
+                    extraction_mode: values.fileExtractorMode === "markdown" ? "markdown" : "text",
+                    strategy: values.fileExtractorStrategy === "ocr" ? "ocr" : "auto",
+                    output_key: String(values.fileExtractorOutputKey ?? "").trim(),
+                    file_types: parsedFileExtractorTypes.length > 0 ? parsedFileExtractorTypes : buildDefaultFileExtractorConfig().file_types,
+                    max_file_size_mb: Math.max(1, Number(values.fileExtractorMaxSizeMB ?? 20)),
+                    timeout_ms: Math.max(100, Number(values.fileExtractorTimeout ?? 10000)),
+                    retry_count: Math.max(0, Number(values.fileExtractorRetryCount ?? 0))
+                  };
 
                   const nextType = values.type ?? item.data.type;
                   const nextInputConfig =
@@ -1822,6 +1886,8 @@ function DifyWorkflowMigratedCanvasInner() {
                                 ? []
                               : nextType === BlockEnum.HttpRequest
                                 ? []
+                              : nextType === BlockEnum.FileExtractor
+                                ? []
                               : variables,
                       error_handle: {
                         ...(item.data.error_handle ?? { enabled: false }),
@@ -1840,6 +1906,7 @@ function DifyWorkflowMigratedCanvasInner() {
                       },
                       http_config: parsedHTTPConfig,
                       code_config: parsedCodeConfig,
+                      file_extractor_config: parsedFileExtractorConfig,
                       input_config: nextInputConfig
                     }
                   };
@@ -1867,7 +1934,8 @@ function DifyWorkflowMigratedCanvasInner() {
                   { label: "If/Else", value: BlockEnum.IfElse },
                   { label: "End", value: BlockEnum.End },
                   { label: "HTTP Request", value: BlockEnum.HttpRequest },
-                  { label: "Code", value: BlockEnum.Code }
+                  { label: "Code", value: BlockEnum.Code },
+                  { label: "File Extractor", value: BlockEnum.FileExtractor }
                 ]}
               />
             </Form.Item>
@@ -1882,7 +1950,8 @@ function DifyWorkflowMigratedCanvasInner() {
                   currentType === BlockEnum.Input ||
                   currentType === BlockEnum.IfElse ||
                   currentType === BlockEnum.Code ||
-                  currentType === BlockEnum.HttpRequest
+                  currentType === BlockEnum.HttpRequest ||
+                  currentType === BlockEnum.FileExtractor
                 ) return null;
                 return (
                   <Form.Item label="变量引用" name="variablesText" extra="可选择全局变量或上游节点参数。">
@@ -2490,6 +2559,77 @@ function DifyWorkflowMigratedCanvasInner() {
             <Form.Item shouldUpdate noStyle>
               {({ getFieldValue }) => {
                 const currentType = getFieldValue("type");
+                if (currentType !== BlockEnum.FileExtractor) return null;
+                return (
+                  <>
+                    <Form.Item
+                      label="文件来源"
+                      name="fileExtractorSource"
+                      rules={[{ required: true, message: "请输入文件来源" }]}
+                      extra="参考 HTTP URL 输入方式：输入 / 选择参数来源。"
+                    >
+                      <Mentions
+                        rows={1}
+                        prefix={["/"]}
+                        options={ifElseMatchValueMentionOptions}
+                        placeholder="输入 / 选择文件来源，如：start.upload_file"
+                        onChange={(value) => {
+                          nodeForm.setFieldValue("fileExtractorSource", sanitizeMentionsValue(value));
+                        }}
+                      />
+                    </Form.Item>
+                    <Space style={{ display: "flex" }} size={12}>
+                      <Form.Item label="超时(ms)" name="fileExtractorTimeout" style={{ flex: 1 }}>
+                        <Input type="number" min={100} step={100} />
+                      </Form.Item>
+                      <Form.Item label="重试次数" name="fileExtractorRetryCount" style={{ flex: 1 }}>
+                        <Input type="number" min={0} step={1} />
+                      </Form.Item>
+                    </Space>
+                    <Form.Item label="提取模式" name="fileExtractorMode">
+                      <Select
+                        options={[
+                          { label: "纯文本", value: "text" },
+                          { label: "Markdown", value: "markdown" }
+                        ]}
+                      />
+                    </Form.Item>
+                    <Form.Item label="解析策略" name="fileExtractorStrategy">
+                      <Select
+                        options={[
+                          { label: "自动", value: "auto" },
+                          { label: "OCR 优先", value: "ocr" }
+                        ]}
+                      />
+                    </Form.Item>
+                    <Form.Item label="输出变量键" name="fileExtractorOutputKey" rules={[{ required: true, message: "请输入输出变量键" }]}>
+                      <Input placeholder="例如：extracted_text" />
+                    </Form.Item>
+                    <Form.Item label="支持文件类型" name="fileExtractorTypes" rules={[{ required: true, message: "请选择至少一个文件类型" }]}>
+                      <Select
+                        mode="multiple"
+                        options={[
+                          { label: "PDF", value: "pdf" },
+                          { label: "DOCX", value: "docx" },
+                          { label: "PPTX", value: "pptx" },
+                          { label: "XLSX", value: "xlsx" },
+                          { label: "TXT", value: "txt" },
+                          { label: "Markdown", value: "md" },
+                          { label: "HTML", value: "html" }
+                        ]}
+                      />
+                    </Form.Item>
+                    <Form.Item label="最大文件大小(MB)" name="fileExtractorMaxSizeMB">
+                      <Input type="number" min={1} step={1} />
+                    </Form.Item>
+                  </>
+                );
+              }}
+            </Form.Item>
+
+            <Form.Item shouldUpdate noStyle>
+              {({ getFieldValue }) => {
+                const currentType = getFieldValue("type");
                 if (currentType !== BlockEnum.Code) return null;
                 return (
                   <>
@@ -2753,14 +2893,14 @@ function DifyWorkflowMigratedCanvasInner() {
   );
 }
 
-function DifyWorkflowMigratedCanvas() {
+function WorkflowCanvas() {
   return (
     <ReactFlowProvider>
-      <DifyWorkflowStoreProvider>
-        <DifyWorkflowMigratedCanvasInner />
-      </DifyWorkflowStoreProvider>
+      <WorkflowStoreProvider>
+        <WorkflowCanvasInner />
+      </WorkflowStoreProvider>
     </ReactFlowProvider>
   );
 }
 
-export default DifyWorkflowMigratedCanvas;
+export default WorkflowCanvas;

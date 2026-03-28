@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button, Space, Tooltip } from "antd";
 import { PlusOutlined, AimOutlined, DragOutlined } from "@ant-design/icons";
-import { useDifyWorkflowStore } from "../store";
+import { useWorkflowStore } from "../store";
 import MoreActions from "./MoreActions";
 
 type Props = {
@@ -12,7 +12,7 @@ type Props = {
 };
 
 function ControlBar({ onOpenBlockSelector, onAutoLayout, onFitView, onReset }: Props) {
-  const { controlMode, setControlMode } = useDifyWorkflowStore();
+  const { controlMode, setControlMode } = useWorkflowStore();
   const [hovered, setHovered] = useState(false);
 
   return (
