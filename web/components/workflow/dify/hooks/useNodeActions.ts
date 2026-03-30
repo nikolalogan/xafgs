@@ -1,0 +1,56 @@
+import { useCallback, type MutableRefObject } from 'react'
+import { CUSTOM_NODE } from '../core/constants'
+import { createDefaultNodeConfig } from '../core/node-config'
+import { BlockEnum, type DifyEdge, type DifyNode } from '../core/types'
+
+type UseNodeActionsParams = {
+  nodes: DifyNode[]
+  edges: DifyEdge[]
+  activeNode: DifyNode | null
+  idRef: MutableRefObject<number>
+  nodeTypeLabel: Record<BlockEnum, string>
+  setNodes: (nodes: DifyNode[]) => void
+  record: (snapshot: { nodes: DifyNode[]; edges: DifyEdge[] }) => void
+}
+
+export const useNodeActions = ({
+  nodes,
+  edges,
+  activeNode,
+  idRef,
+  nodeTypeLabel,
+  setNodes,
+  record,
+}: UseNodeActionsParams) => {
+  const addNode = useCallback((type: BlockEnum, preferredPosition?: { x: number; y: number }) => {
+    const id = `node-${idRef.current++}`
+    const nextNode: DifyNode = {
+      id,
+      type: CUSTOM_NODE,
+      position: preferredPosition ?? { x: 220 + (nodes.length % 5) * 180, y: 90 + (nodes.length % 4) * 120 },
+      data: {
+        title: `${nodeTypeLabel[type]}-${idRef.current}`,
+        desc: '',
+        type,
+        config: createDefaultNodeConfig(type),
+      },
+    }
+
+    const nextNodes = [...nodes, nextNode]
+    setNodes(nextNodes)
+    record({ nodes: nextNodes, edges })
+    return nextNode
+  }, [edges, idRef, nodeTypeLabel, nodes, record, setNodes])
+
+  const saveNode = useCallback(() => {
+    if (!activeNode) return
+    const nextNodes = nodes.map(item => (item.id === activeNode.id ? activeNode : item))
+    setNodes(nextNodes)
+    record({ nodes: nextNodes, edges })
+  }, [activeNode, edges, nodes, record, setNodes])
+
+  return {
+    addNode,
+    saveNode,
+  }
+}

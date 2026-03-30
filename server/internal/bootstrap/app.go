@@ -68,15 +68,18 @@ func NewApp() (*fiber.App, Config) {
 	api := app.Group("/api")
 	systemRepository := repository.NewSystemRepository(cfg.AppName)
 	userRepository := repository.NewUserRepository()
+	workflowRepository := repository.NewWorkflowRepository()
 	authRepository := repository.NewAuthRepository(cfg.APIToken)
 	systemService := service.NewSystemService(systemRepository)
 	userService := service.NewUserService(userRepository)
+	workflowService := service.NewWorkflowService(workflowRepository)
 	authService := service.NewAuthService(authRepository, userRepository)
 	authMiddleware := middleware.NewAuthMiddleware(authService)
 	healthHandler := handler.NewHealthHandler(systemService)
 	authHandler := handler.NewAuthHandler(authService)
 	userHandler := handler.NewUserHandler(userService)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	workflowHandler := handler.NewWorkflowHandler(workflowService)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, workflowHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

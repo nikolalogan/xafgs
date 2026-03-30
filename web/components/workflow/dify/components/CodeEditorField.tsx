@@ -1,0 +1,109 @@
+import { useMemo, useRef, useState } from 'react'
+import type { VariableScope, WorkflowVariableOption } from '../core/variables'
+
+type CodeEditorFieldProps = {
+  value: string
+  onChange: (nextValue: string) => void
+  options: WorkflowVariableOption[]
+  scope: VariableScope
+  onScopeChange: (scope: VariableScope) => void
+  placeholder?: string
+  className?: string
+  showVariableInsert?: boolean
+}
+
+const scopeOptions: Array<{ value: VariableScope; label: string }> = [
+  { value: 'all', label: 'all' },
+  { value: 'string', label: 'string' },
+  { value: 'number', label: 'number' },
+  { value: 'boolean', label: 'boolean' },
+  { value: 'object', label: 'object' },
+  { value: 'array', label: 'array' },
+  { value: 'file', label: 'file' },
+]
+
+export default function CodeEditorField({
+  value,
+  onChange,
+  options,
+  scope,
+  onScopeChange,
+  placeholder,
+  className = 'h-40 w-full rounded border border-gray-300 px-2 py-1.5 font-mono text-xs',
+  showVariableInsert = true,
+}: CodeEditorFieldProps) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const [selectedKey, setSelectedKey] = useState('')
+
+  const filteredOptions = useMemo(() => {
+    if (scope === 'all')
+      return options
+    return options.filter(option => option.valueType === scope)
+  }, [options, scope])
+
+  const insertVariable = () => {
+    const selected = filteredOptions.find(option => option.key === selectedKey)
+    if (!selected)
+      return
+
+    const token = selected.placeholder
+    const textarea = textareaRef.current
+    if (!textarea) {
+      onChange(`${value}${token}`)
+      return
+    }
+
+    const start = textarea.selectionStart ?? value.length
+    const end = textarea.selectionEnd ?? value.length
+    const nextValue = `${value.slice(0, start)}${token}${value.slice(end)}`
+    onChange(nextValue)
+
+    requestAnimationFrame(() => {
+      textarea.focus()
+      const caret = start + token.length
+      textarea.setSelectionRange(caret, caret)
+    })
+  }
+
+  return (
+    <div className="space-y-2">
+      {showVariableInsert && (
+        <div className="grid grid-cols-12 gap-2">
+          <select
+            className="col-span-4 rounded border border-gray-300 px-2 py-1.5 text-xs"
+            value={scope}
+            onChange={event => onScopeChange(event.target.value as VariableScope)}
+          >
+            {scopeOptions.map(item => (
+              <option key={item.value} value={item.value}>{item.label}</option>
+            ))}
+          </select>
+          <select
+            className="col-span-6 rounded border border-gray-300 px-2 py-1.5 text-xs"
+            value={selectedKey}
+            onChange={event => setSelectedKey(event.target.value)}
+          >
+            <option value="">选择参数（插入到代码）</option>
+            {filteredOptions.map(option => (
+              <option key={option.key} value={option.key}>{option.displayLabel}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="col-span-2 rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"
+            onClick={insertVariable}
+          >
+            插入
+          </button>
+        </div>
+      )}
+      <textarea
+        ref={textareaRef}
+        className={className}
+        value={value}
+        placeholder={placeholder}
+        onChange={event => onChange(event.target.value)}
+      />
+    </div>
+  )
+}

@@ -164,6 +164,35 @@ make down
 - `PUT /api/users/:userId`：管理员接口，更新用户
 - `DELETE /api/users/:userId`：管理员接口，删除用户
 
+## 工作流后端运行时（XState，可切换 Temporal）
+
+当前在 `web` 中新增了可替换运行时抽象：
+
+- 运行时接口：`web/lib/workflow-runtime/types.ts`
+- XState 实现：`web/lib/workflow-runtime/xstate-runtime.ts`
+- 运行时工厂：`web/lib/workflow-runtime/runtime-factory.ts`
+- 状态存储（当前内存版）：`web/lib/workflow-runtime/store.ts`
+
+### 运行时驱动切换
+
+- 环境变量：`WORKFLOW_RUNTIME_DRIVER`
+- 可选值：
+  - `xstate`（默认，已实现）
+  - `temporal`（预留适配器入口，未实现）
+
+### 执行状态流转
+
+- `running -> waiting_input -> running -> completed`
+- 异常：`running/waiting_input -> failed`
+- 取消：`running/waiting_input -> cancelled`
+
+### API（Next Route Handler）
+
+- `POST /api/workflow/executions`：创建并启动执行
+- `GET /api/workflow/executions/:id`：查询执行详情
+- `POST /api/workflow/executions/:id/resume`：提交输入并恢复执行
+- `DELETE /api/workflow/executions/:id`：取消执行
+
 ## 前端 API 客户端封装
 
 - 统一入口：`web/src/api.ts`

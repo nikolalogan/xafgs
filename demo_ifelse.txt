@@ -1,0 +1,939 @@
+{
+  "nodes": [
+    {
+      "id": "start",
+      "type": "custom",
+      "position": {
+        "x": 80,
+        "y": 240
+      },
+      "data": {
+        "title": "开始",
+        "desc": "债券业务准入指标输入",
+        "type": "start",
+        "config": {
+          "variables": [
+            {
+              "name": "city_budget_revenue",
+              "label": "地级市一般预算收入(亿元)",
+              "type": "number",
+              "required": true,
+              "defaultValue": 0
+            },
+            {
+              "name": "county_budget_revenue",
+              "label": "区县级一般预算收入(亿元)",
+              "type": "number",
+              "required": true,
+              "defaultValue": 0
+            },
+            {
+              "name": "fiscal_self_sufficiency_ratio",
+              "label": "财政自给率(0-1)",
+              "type": "number",
+              "required": true,
+              "defaultValue": 0
+            },
+            {
+              "name": "narrow_debt_ratio",
+              "label": "窄口径政府负债率(0-1)",
+              "type": "number",
+              "required": true,
+              "defaultValue": 0
+            },
+            {
+              "name": "has_unresolved_default_events",
+              "label": "是否存在未妥善处理的违约/代偿事件",
+              "type": "checkbox",
+              "required": true,
+              "defaultValue": false
+            },
+            {
+              "name": "in_hidden_debt_list",
+              "label": "是否在隐债名单/3899名单",
+              "type": "checkbox",
+              "required": true,
+              "defaultValue": false
+            },
+            {
+              "name": "meets_335_indicator",
+              "label": "是否满足335指标",
+              "type": "checkbox",
+              "required": true,
+              "defaultValue": true
+            },
+            {
+              "name": "real_estate_income_ratio",
+              "label": "房地产收入占比(0-1)",
+              "type": "number",
+              "required": true,
+              "defaultValue": 0
+            },
+            {
+              "name": "eliminated_industry_income_ratio",
+              "label": "淘汰类产业收入占比(0-1)",
+              "type": "number",
+              "required": true,
+              "defaultValue": 0
+            },
+            {
+              "name": "operating_years",
+              "label": "持续经营年限",
+              "type": "number",
+              "required": true,
+              "defaultValue": 0
+            },
+            {
+              "name": "shareholder_bad_credit",
+              "label": "大股东/实控人是否失信或重大负面舆情",
+              "type": "checkbox",
+              "required": true,
+              "defaultValue": false
+            },
+            {
+              "name": "has_overdue_commercial_paper_without_evidence",
+              "label": "是否存在无合理佐证的商票逾期",
+              "type": "checkbox",
+              "required": true,
+              "defaultValue": false
+            },
+            {
+              "name": "asset_liability_ratio",
+              "label": "资产负债率(0-1)",
+              "type": "number",
+              "required": true,
+              "defaultValue": 0
+            },
+            {
+              "name": "gov_receivables_ratio",
+              "label": "涉政府/国企应收款占总资产比例(0-1)",
+              "type": "number",
+              "required": true,
+              "defaultValue": 0
+            },
+            {
+              "name": "no_hematopoietic_and_refinancing_ability",
+              "label": "是否无造血功能且无再融资能力且近三年经营/筹资现金流均为负",
+              "type": "checkbox",
+              "required": true,
+              "defaultValue": false
+            },
+            {
+              "name": "non_standard_financing_ratio",
+              "label": "非标融资占比(0-1)",
+              "type": "number",
+              "required": true,
+              "defaultValue": 0
+            },
+            {
+              "name": "cashflow_covers_interest",
+              "label": "主营收入及经营现金流是否可覆盖利息",
+              "type": "checkbox",
+              "required": true,
+              "defaultValue": true
+            },
+            {
+              "name": "has_gap_supporter",
+              "label": "是否有具备资金实力和担保能力的差额补足人",
+              "type": "checkbox",
+              "required": true,
+              "defaultValue": true
+            },
+            {
+              "name": "business_type",
+              "label": "业务品种",
+              "type": "select",
+              "required": true,
+              "options": [
+                {
+                  "label": "普通债券",
+                  "value": "normal_bond"
+                },
+                {
+                  "label": "N+N储架ABS",
+                  "value": "n_plus_n_abs"
+                }
+              ],
+              "defaultValue": "normal_bond"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "code-flags",
+      "type": "custom",
+      "position": {
+        "x": 380,
+        "y": 240
+      },
+      "data": {
+        "title": "规则命中计算",
+        "desc": "预计算全部规则命中标志",
+        "type": "code",
+        "config": {
+          "language": "javascript",
+          "code": "function main(input) {\n  const toNum = (v) => Number(v || 0)\n  const toBool = (v) => Boolean(v)\n\n  const rule1_hit = toNum(input?.city_budget_revenue) < 50\n  const rule2_hit = toNum(input?.county_budget_revenue) < 20\n  const rule3_hit = toNum(input?.fiscal_self_sufficiency_ratio) <= 0.30 && toNum(input?.narrow_debt_ratio) >= 0.50\n  const rule4_hit = toBool(input?.has_unresolved_default_events)\n  const rule5_hit = toBool(input?.in_hidden_debt_list)\n  const rule6_hit = !toBool(input?.meets_335_indicator)\n  const rule7_hit = toNum(input?.real_estate_income_ratio) > 0.40\n  const rule8_hit = toNum(input?.eliminated_industry_income_ratio) > 0.50\n  const rule9_hit = toNum(input?.operating_years) < 1\n  const rule10_hit = toBool(input?.shareholder_bad_credit)\n  const rule11_hit = toBool(input?.has_overdue_commercial_paper_without_evidence)\n  const rule12_hit = toNum(input?.asset_liability_ratio) >= 0.75\n  const rule13_hit = toNum(input?.gov_receivables_ratio) > 0.80\n  const rule14_hit = toBool(input?.no_hematopoietic_and_refinancing_ability)\n  const rule15_hit = toNum(input?.non_standard_financing_ratio) > 0.60\n  const rule16_hit = !toBool(input?.cashflow_covers_interest)\n  const rule17_hit = !toBool(input?.has_gap_supporter)\n  const rule18_hit = String(input?.business_type || '') === 'n_plus_n_abs'\n\n  const hardRejectRules = []\n  if (rule1_hit) hardRejectRules.push('规则1: 地级市一般预算收入低于50亿元')\n  if (rule2_hit) hardRejectRules.push('规则2: 区县级一般预算收入低于20亿元')\n  if (rule3_hit) hardRejectRules.push('规则3: 财政自给率<=30%且窄口径政府负债率>=50%')\n  if (rule4_hit) hardRejectRules.push('规则4: 存在未妥善处理的担保代偿/融资债务违约/债券逾期事件')\n  if (rule5_hit) hardRejectRules.push('规则5: 在隐债名单/3899名单')\n  if (rule6_hit) hardRejectRules.push('规则6: 不满足335指标')\n  if (rule7_hit) hardRejectRules.push('规则7: 房地产收入占比超过40%')\n  if (rule8_hit) hardRejectRules.push('规则8: 淘汰类产业收入占比超过50%')\n  if (rule9_hit) hardRejectRules.push('规则9: 持续经营时间未满1年')\n  if (rule10_hit) hardRejectRules.push('规则10: 大股东或实控人失信/重大负面舆情')\n  if (rule11_hit) hardRejectRules.push('规则11: 存在无合理佐证材料的商票逾期')\n  if (rule12_hit) hardRejectRules.push('规则12: 资产负债率>=75%')\n  if (rule13_hit) hardRejectRules.push('规则13: 涉政府/国企应收款占总资产比例超过80%')\n  if (rule14_hit) hardRejectRules.push('规则14: 无造血功能和再融资能力且近三年经营/筹资净现金流均为负')\n  if (rule15_hit) hardRejectRules.push('规则15: 非标融资占比超过60%')\n  if (rule17_hit) hardRejectRules.push('规则17: 无具备资金实力和担保能力的差额补足人')\n  if (rule18_hit) hardRejectRules.push('规则18: 业务品种为N+N储架ABS')\n  const guidanceRules = []\n  if (rule16_hit) guidanceRules.push('规则16(窗口指导): 主营收入及现金流无法覆盖利息')\n\n  return {\n    rule1_hit, rule2_hit, rule3_hit, rule4_hit, rule5_hit, rule6_hit, rule7_hit, rule8_hit, rule9_hit, rule10_hit,\n    rule11_hit, rule12_hit, rule13_hit, rule14_hit, rule15_hit, rule16_hit, rule17_hit, rule18_hit,\n    hardRejectRules, guidanceRules,\n    rejectSummary: `不通过准入，触发${hardRejectRules.length}条硬性拒绝规则`,\n    passSummary: '通过准入（若存在窗口指导项需人工复核）',\n    source: 'demo/demo.xlsx - 准入指标'\n  }\n}",
+          "outputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"hardRejectRules\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}},\n    \"guidanceRules\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}},\n    \"rejectSummary\": {\"type\": \"string\"},\n    \"passSummary\": {\"type\": \"string\"},\n    \"source\": {\"type\": \"string\"}\n  }\n}",
+          "writebackMappings": [],
+          "outputs": [
+            "hardRejectRules",
+            "guidanceRules",
+            "rejectSummary",
+            "passSummary",
+            "source"
+          ]
+        }
+      }
+    },
+    {
+      "id": "if-rule-1",
+      "type": "custom",
+      "position": {
+        "x": 700,
+        "y": 240
+      },
+      "data": {
+        "title": "是否地级市一般预算收入<50亿",
+        "desc": "规则1: 地级市一般预算收入低于50亿元",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "地级市一般预算收入<50亿",
+              "left": "{{code-flags.rule1_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-2",
+      "type": "custom",
+      "position": {
+        "x": 970,
+        "y": 240
+      },
+      "data": {
+        "title": "是否区县级一般预算收入<20亿",
+        "desc": "规则2: 区县级一般预算收入低于20亿元",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "区县级一般预算收入<20亿",
+              "left": "{{code-flags.rule2_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-3",
+      "type": "custom",
+      "position": {
+        "x": 1240,
+        "y": 240
+      },
+      "data": {
+        "title": "是否财政自给率<=30%且窄口径负债率>=50%",
+        "desc": "规则3: 财政自给率<=30%且窄口径政府负债率>=50%",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "财政自给率<=30%且窄口径负债率>=50%",
+              "left": "{{code-flags.rule3_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-4",
+      "type": "custom",
+      "position": {
+        "x": 1510,
+        "y": 240
+      },
+      "data": {
+        "title": "是否存在未妥善处理违约/代偿事件",
+        "desc": "规则4: 存在未妥善处理的担保代偿/融资债务违约/债券逾期事件",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "存在未妥善处理违约/代偿事件",
+              "left": "{{code-flags.rule4_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-5",
+      "type": "custom",
+      "position": {
+        "x": 1780,
+        "y": 240
+      },
+      "data": {
+        "title": "是否命中隐债名单/3899名单",
+        "desc": "规则5: 在隐债名单/3899名单",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "命中隐债名单/3899名单",
+              "left": "{{code-flags.rule5_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-6",
+      "type": "custom",
+      "position": {
+        "x": 2050,
+        "y": 240
+      },
+      "data": {
+        "title": "是否不满足335指标",
+        "desc": "规则6: 不满足335指标",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "不满足335指标",
+              "left": "{{code-flags.rule6_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-7",
+      "type": "custom",
+      "position": {
+        "x": 2320,
+        "y": 240
+      },
+      "data": {
+        "title": "是否房地产收入占比>40%",
+        "desc": "规则7: 房地产收入占比超过40%",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "房地产收入占比>40%",
+              "left": "{{code-flags.rule7_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-8",
+      "type": "custom",
+      "position": {
+        "x": 2590,
+        "y": 240
+      },
+      "data": {
+        "title": "是否淘汰类产业收入占比>50%",
+        "desc": "规则8: 淘汰类产业收入占比超过50%",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "淘汰类产业收入占比>50%",
+              "left": "{{code-flags.rule8_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-9",
+      "type": "custom",
+      "position": {
+        "x": 2860,
+        "y": 240
+      },
+      "data": {
+        "title": "是否持续经营时间<1年",
+        "desc": "规则9: 持续经营时间未满1年",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "持续经营时间<1年",
+              "left": "{{code-flags.rule9_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-10",
+      "type": "custom",
+      "position": {
+        "x": 3130,
+        "y": 240
+      },
+      "data": {
+        "title": "是否大股东或实控人失信/重大负面舆情",
+        "desc": "规则10: 大股东或实控人失信/重大负面舆情",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "大股东或实控人失信/重大负面舆情",
+              "left": "{{code-flags.rule10_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-11",
+      "type": "custom",
+      "position": {
+        "x": 3400,
+        "y": 240
+      },
+      "data": {
+        "title": "是否存在无合理佐证的商票逾期",
+        "desc": "规则11: 存在无合理佐证材料的商票逾期",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "存在无合理佐证的商票逾期",
+              "left": "{{code-flags.rule11_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-12",
+      "type": "custom",
+      "position": {
+        "x": 3670,
+        "y": 240
+      },
+      "data": {
+        "title": "是否资产负债率>=75%",
+        "desc": "规则12: 资产负债率>=75%",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "资产负债率>=75%",
+              "left": "{{code-flags.rule12_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-13",
+      "type": "custom",
+      "position": {
+        "x": 3940,
+        "y": 240
+      },
+      "data": {
+        "title": "是否涉政府/国企应收款占比>80%",
+        "desc": "规则13: 涉政府/国企应收款占总资产比例超过80%",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "涉政府/国企应收款占比>80%",
+              "left": "{{code-flags.rule13_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-14",
+      "type": "custom",
+      "position": {
+        "x": 4210,
+        "y": 240
+      },
+      "data": {
+        "title": "是否无造血及再融资能力且近三年经营/筹资净现金流均负",
+        "desc": "规则14: 无造血功能和再融资能力且近三年经营/筹资净现金流均为负",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "无造血及再融资能力且近三年经营/筹资净现金流均负",
+              "left": "{{code-flags.rule14_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-15",
+      "type": "custom",
+      "position": {
+        "x": 4480,
+        "y": 240
+      },
+      "data": {
+        "title": "是否非标融资占比>60%",
+        "desc": "规则15: 非标融资占比超过60%",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "非标融资占比>60%",
+              "left": "{{code-flags.rule15_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-17",
+      "type": "custom",
+      "position": {
+        "x": 4750,
+        "y": 240
+      },
+      "data": {
+        "title": "是否无差额补足人",
+        "desc": "规则17: 无具备资金实力和担保能力的差额补足人",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "无差额补足人",
+              "left": "{{code-flags.rule17_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "if-rule-18",
+      "type": "custom",
+      "position": {
+        "x": 5020,
+        "y": 240
+      },
+      "data": {
+        "title": "是否业务品种=N+N储架ABS",
+        "desc": "规则18: 业务品种为N+N储架ABS",
+        "type": "if-else",
+        "config": {
+          "conditions": [
+            {
+              "name": "业务品种=N+N储架ABS",
+              "left": "{{code-flags.rule18_hit}}",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "elseBranchName": "下一条"
+        }
+      }
+    },
+    {
+      "id": "end-reject",
+      "type": "custom",
+      "position": {
+        "x": 5430,
+        "y": 120
+      },
+      "data": {
+        "title": "拒绝准入",
+        "desc": "命中硬性规则，拒绝准入",
+        "type": "end",
+        "config": {
+          "outputs": [
+            {
+              "name": "eligible",
+              "source": "false"
+            },
+            {
+              "name": "hard_reject_rules",
+              "source": "{{code-flags.hardRejectRules}}"
+            },
+            {
+              "name": "guidance_rules",
+              "source": "{{code-flags.guidanceRules}}"
+            },
+            {
+              "name": "summary",
+              "source": "{{code-flags.rejectSummary}}"
+            },
+            {
+              "name": "source",
+              "source": "{{code-flags.source}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "end-pass",
+      "type": "custom",
+      "position": {
+        "x": 5430,
+        "y": 360
+      },
+      "data": {
+        "title": "通过准入",
+        "desc": "未命中硬性规则",
+        "type": "end",
+        "config": {
+          "outputs": [
+            {
+              "name": "eligible",
+              "source": "true"
+            },
+            {
+              "name": "hard_reject_rules",
+              "source": "{{code-flags.hardRejectRules}}"
+            },
+            {
+              "name": "guidance_rules",
+              "source": "{{code-flags.guidanceRules}}"
+            },
+            {
+              "name": "summary",
+              "source": "{{code-flags.passSummary}}"
+            },
+            {
+              "name": "source",
+              "source": "{{code-flags.source}}"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-start-code-flags",
+      "source": "start",
+      "target": "code-flags",
+      "type": "custom"
+    },
+    {
+      "id": "e-code-flags-first-if",
+      "source": "code-flags",
+      "target": "if-rule-1",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-1-reject",
+      "source": "if-rule-1",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-1-next",
+      "source": "if-rule-1",
+      "sourceHandle": "if-else",
+      "target": "if-rule-2",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-2-reject",
+      "source": "if-rule-2",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-2-next",
+      "source": "if-rule-2",
+      "sourceHandle": "if-else",
+      "target": "if-rule-3",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-3-reject",
+      "source": "if-rule-3",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-3-next",
+      "source": "if-rule-3",
+      "sourceHandle": "if-else",
+      "target": "if-rule-4",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-4-reject",
+      "source": "if-rule-4",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-4-next",
+      "source": "if-rule-4",
+      "sourceHandle": "if-else",
+      "target": "if-rule-5",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-5-reject",
+      "source": "if-rule-5",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-5-next",
+      "source": "if-rule-5",
+      "sourceHandle": "if-else",
+      "target": "if-rule-6",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-6-reject",
+      "source": "if-rule-6",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-6-next",
+      "source": "if-rule-6",
+      "sourceHandle": "if-else",
+      "target": "if-rule-7",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-7-reject",
+      "source": "if-rule-7",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-7-next",
+      "source": "if-rule-7",
+      "sourceHandle": "if-else",
+      "target": "if-rule-8",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-8-reject",
+      "source": "if-rule-8",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-8-next",
+      "source": "if-rule-8",
+      "sourceHandle": "if-else",
+      "target": "if-rule-9",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-9-reject",
+      "source": "if-rule-9",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-9-next",
+      "source": "if-rule-9",
+      "sourceHandle": "if-else",
+      "target": "if-rule-10",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-10-reject",
+      "source": "if-rule-10",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-10-next",
+      "source": "if-rule-10",
+      "sourceHandle": "if-else",
+      "target": "if-rule-11",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-11-reject",
+      "source": "if-rule-11",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-11-next",
+      "source": "if-rule-11",
+      "sourceHandle": "if-else",
+      "target": "if-rule-12",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-12-reject",
+      "source": "if-rule-12",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-12-next",
+      "source": "if-rule-12",
+      "sourceHandle": "if-else",
+      "target": "if-rule-13",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-13-reject",
+      "source": "if-rule-13",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-13-next",
+      "source": "if-rule-13",
+      "sourceHandle": "if-else",
+      "target": "if-rule-14",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-14-reject",
+      "source": "if-rule-14",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-14-next",
+      "source": "if-rule-14",
+      "sourceHandle": "if-else",
+      "target": "if-rule-15",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-15-reject",
+      "source": "if-rule-15",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-15-next",
+      "source": "if-rule-15",
+      "sourceHandle": "if-else",
+      "target": "if-rule-17",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-17-reject",
+      "source": "if-rule-17",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-17-next",
+      "source": "if-rule-17",
+      "sourceHandle": "if-else",
+      "target": "if-rule-18",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-18-reject",
+      "source": "if-rule-18",
+      "sourceHandle": "if-branch-0",
+      "target": "end-reject",
+      "type": "custom"
+    },
+    {
+      "id": "e-if-rule-18-pass",
+      "source": "if-rule-18",
+      "sourceHandle": "if-else",
+      "target": "end-pass",
+      "type": "custom"
+    }
+  ],
+  "globalVariables": [
+    {
+      "name": "workflow_id",
+      "valueType": "string",
+      "defaultValue": "bond_access_ifelse_v2",
+      "description": "当前工作流ID"
+    }
+  ],
+  "workflowParameters": [],
+  "workflowVariableScopes": {},
+  "viewport": {
+    "x": -60,
+    "y": -30,
+    "zoom": 0.45
+  }
+}

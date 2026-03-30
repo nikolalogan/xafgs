@@ -1,8 +1,10 @@
 node_modules
 dist
+.next
 .DS_Store
 .env
 coverage
 *.log
 server/tmp
+.tmp
 /demo
