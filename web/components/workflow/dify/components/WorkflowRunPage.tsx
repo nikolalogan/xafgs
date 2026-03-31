@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Checkbox, Empty, Form, Input, InputNumber, Select } from 'antd'
 import ReactFlow, { Background, Controls, MiniMap } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { CUSTOM_EDGE, CUSTOM_NODE } from '../core/constants'
@@ -237,6 +238,46 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
   const [endRendered, setEndRendered] = useState<Record<string, { html: string; outputType: 'text' | 'html'; templateName: string; executionId: string }>>({})
   const [endRenderLoading, setEndRenderLoading] = useState<Record<string, boolean>>({})
   const [endRenderError, setEndRenderError] = useState<Record<string, string>>({})
+  const [endRenderedHeights, setEndRenderedHeights] = useState<Record<string, number>>({})
+  const iframeResizeObserversRef = useRef<Record<string, ResizeObserver>>({})
+
+  const injectNoScrollStyleForIframe = (rawHtml: string) => {
+    const style = `
+<style>
+  /* 目标：让文档高度可随内容增长，从而通过 scrollHeight 计算出真实高度，避免截断 */
+  html, body {
+    margin: 0;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  /* 兜底：避免常见的“固定高度/滚动容器”导致 scrollHeight 失真或内容被裁剪 */
+  #__next, #app, #root, .app, .page, .container, .content, .main, .wrap {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  *[style*="height:100vh"], *[style*="height: 100vh"], *[style*="min-height:100vh"], *[style*="min-height: 100vh"] {
+    height: auto !important;
+    min-height: 0 !important;
+  }
+  *[style*="overflow:hidden"], *[style*="overflow: hidden"], *[style*="overflow:auto"], *[style*="overflow: auto"], *[style*="overflow:scroll"], *[style*="overflow: scroll"] {
+    overflow: visible !important;
+  }
+  *[style*="max-height"], *[style*="max-height:"] {
+    max-height: none !important;
+  }
+</style>
+`
+    if (/<\/head>/i.test(rawHtml))
+      return rawHtml.replace(/<\/head>/i, `${style}</head>`)
+    if (/<html[\s>]/i.test(rawHtml))
+      return rawHtml.replace(/<html[\s>]/i, match => `${match}\n<head>${style}</head>`)
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/>${style}</head><body>${rawHtml}</body></html>`
+  }
 
   useEffect(() => {
     visibleNodeIdsRef.current = visibleNodeIds
@@ -287,8 +328,22 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
     setEndRendered({})
     setEndRenderLoading({})
     setEndRenderError({})
+    setEndRenderedHeights({})
     setAutoRunTriggered(false)
   }, [nodes, edges])
+
+  useEffect(() => {
+    return () => {
+      Object.values(iframeResizeObserversRef.current).forEach((observer) => {
+        try {
+          observer.disconnect()
+        }
+        catch {
+        }
+      })
+      iframeResizeObserversRef.current = {}
+    }
+  }, [])
 
   const nodeMap = useMemo(() => {
     return new Map(nodes.map(node => [node.id, node]))
@@ -674,15 +729,20 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
       if (!previewResponse.ok || !previewPayload.data)
         throw new Error(previewPayload.message || '渲染模板失败')
 
+      const normalizedHtml = detail.outputType === 'text'
+        ? (previewPayload.data?.rendered || '')
+        : injectNoScrollStyleForIframe(previewPayload.data?.rendered || '')
+
       setEndRendered(prev => ({
         ...prev,
         [node.id]: {
-          html: previewPayload.data?.rendered || '',
+          html: normalizedHtml,
           outputType: detail.outputType === 'text' ? 'text' : 'html',
           templateName: detail.name || detail.templateKey || String(detail.id),
           executionId: execution.id,
         },
       }))
+      setEndRenderedHeights(prev => ({ ...prev, [node.id]: 0 }))
     }
     catch (requestError) {
       setEndRenderError(prev => ({ ...prev, [node.id]: requestError instanceof Error ? requestError.message : '渲染模板失败' }))
@@ -742,10 +802,148 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
     setEndRendered({})
     setEndRenderLoading({})
     setEndRenderError({})
+    setEndRenderedHeights({})
     setVisibleNodeIds([])
     setFocusedNodeId('')
     setOpenPanels({})
     setAutoRunTriggered(false)
+  }
+
+  const exportRenderedToPdf = (nodeId: string) => {
+    void (async () => {
+      if (typeof window === 'undefined')
+        return
+      const rendered = endRendered[nodeId]
+      if (!rendered)
+        return
+
+      const normalizeToHtmlDocument = (raw: string) => {
+        const isFullDoc = /<!doctype/i.test(raw) || /<html[\s>]/i.test(raw)
+        if (isFullDoc)
+          return raw
+        return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/><title>${rendered.templateName || '导出'}</title></head><body>${raw}</body></html>`
+      }
+
+      const raw = rendered.outputType === 'text'
+        ? `<pre style="white-space:pre-wrap; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; margin: 0;">${String(rendered.html ?? '')}</pre>`
+        : String(rendered.html ?? '')
+
+      const htmlDoc = normalizeToHtmlDocument(raw)
+
+      const ensureFileName = (name: string) => {
+        const base = String(name || '导出').trim() || '导出'
+        return base.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 64)
+      }
+
+      const renderHtmlToCanvas = async (html: string) => {
+        const [{ default: html2canvas }] = await Promise.all([
+          import('html2canvas'),
+        ])
+
+        const iframe = document.createElement('iframe')
+        iframe.setAttribute('sandbox', 'allow-same-origin')
+        iframe.setAttribute('scrolling', 'no')
+        iframe.style.position = 'fixed'
+        iframe.style.left = '-100000px'
+        iframe.style.top = '0'
+        iframe.style.width = '1024px'
+        iframe.style.height = '10px'
+        iframe.style.border = '0'
+        iframe.style.background = 'white'
+        iframe.srcdoc = html
+        document.body.appendChild(iframe)
+
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const timer = window.setTimeout(() => reject(new Error('渲染超时')), 8000)
+            iframe.onload = () => {
+              window.clearTimeout(timer)
+              resolve()
+            }
+          })
+
+          const doc = iframe.contentWindow?.document
+          if (!doc)
+            throw new Error('无法读取渲染文档')
+
+          const body = doc.body
+          const docEl = doc.documentElement
+          const height = Math.max(
+            body?.scrollHeight ?? 0,
+            body?.offsetHeight ?? 0,
+            docEl?.scrollHeight ?? 0,
+            docEl?.offsetHeight ?? 0,
+          )
+          iframe.style.height = `${Math.min(Math.max(height + 16, 200), 20000)}px`
+
+          const target = (docEl || body) as unknown as HTMLElement
+          const canvas = await html2canvas(target, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: null,
+            windowWidth: 1024,
+          })
+          return canvas
+        }
+        finally {
+          document.body.removeChild(iframe)
+        }
+      }
+
+      const canvasToPdf = async (canvas: HTMLCanvasElement, filename: string) => {
+        const [{ jsPDF }] = await Promise.all([
+          import('jspdf'),
+        ])
+
+        const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+        const pageWidth = pdf.internal.pageSize.getWidth()
+        const pageHeight = pdf.internal.pageSize.getHeight()
+
+        const imgData = canvas.toDataURL('image/png', 1.0)
+        const imgWidth = pageWidth
+        const imgHeight = (canvas.height * imgWidth) / canvas.width
+
+        if (imgHeight <= pageHeight) {
+          pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight)
+          pdf.save(`${filename}.pdf`)
+          return
+        }
+
+        // 多页：按 A4 高度切片
+        const pageHeightPx = (canvas.width * pageHeight) / pageWidth
+        let renderedHeightPx = 0
+        let pageIndex = 0
+        while (renderedHeightPx < canvas.height - 1) {
+          const sliceHeightPx = Math.min(pageHeightPx, canvas.height - renderedHeightPx)
+          const pageCanvas = document.createElement('canvas')
+          pageCanvas.width = canvas.width
+          pageCanvas.height = Math.ceil(sliceHeightPx)
+          const ctx = pageCanvas.getContext('2d')
+          if (!ctx)
+            break
+          ctx.drawImage(canvas, 0, -renderedHeightPx)
+          const pageImg = pageCanvas.toDataURL('image/png', 1.0)
+          if (pageIndex > 0)
+            pdf.addPage()
+          const pageImgHeight = (pageCanvas.height * imgWidth) / pageCanvas.width
+          pdf.addImage(pageImg, 'PNG', 0, 0, imgWidth, pageImgHeight)
+          renderedHeightPx += sliceHeightPx
+          pageIndex += 1
+          if (pageIndex > 60)
+            break
+        }
+
+        pdf.save(`${filename}.pdf`)
+      }
+
+      try {
+        const canvas = await renderHtmlToCanvas(htmlDoc)
+        await canvasToPdf(canvas, ensureFileName(rendered.templateName || '导出'))
+      }
+      catch (pdfError) {
+        setError(pdfError instanceof Error ? `导出 PDF 失败：${pdfError.message}` : '导出 PDF 失败')
+      }
+    })()
   }
 
   useEffect(() => {
@@ -908,9 +1106,9 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
                     </div>
                   </button>
 
-                  {panelOpen && (
-                    <div className="space-y-2 border-t border-gray-200 px-3 py-3">
-                      {state.error && <div className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700">{state.error}</div>}
+	              {panelOpen && (
+	                    <div className="space-y-2 border-t border-gray-200 px-3 py-3">
+	                      {state.error && <div className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700">{state.error}</div>}
 
                       {node.data.type === 'http-request' && (
                         <>
@@ -943,47 +1141,124 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
                         </div>
                       )}
 
-                      <div className="text-xs text-gray-500">节点输出</div>
-                      <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">{renderJson(nodeOutput)}</pre>
+	                      {node.data.type === BlockEnum.End && (
+	                        <div className="space-y-2">
+	                          <div className="flex items-center justify-between gap-2">
+	                            <div className="text-xs text-gray-500">模板渲染</div>
+	                            {endRendered[node.id] && (
+	                              <button
+	                                type="button"
+	                                onClick={() => exportRenderedToPdf(node.id)}
+	                                className="rounded border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
+	                              >
+	                                导出 PDF
+	                              </button>
+	                            )}
+	                          </div>
+	                          {endRenderLoading[node.id] && (
+	                            <div className="rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600">渲染中...</div>
+	                          )}
+	                          {endRenderError[node.id] && (
+	                            <div className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700">{endRenderError[node.id]}</div>
+	                          )}
+	                          {endRendered[node.id] && (
+	                            <div className="rounded border border-gray-200 bg-white p-2">
+	                              <div className="mb-2 text-[11px] text-gray-500">模板：{endRendered[node.id].templateName}</div>
+	                              {endRendered[node.id].outputType === 'html'
+	                                ? (
+	                                    <iframe
+	                                      title={`end-template-${node.id}`}
+	                                      sandbox="allow-same-origin"
+	                                      scrolling="no"
+	                                      srcDoc={endRendered[node.id].html}
+	                                      onLoad={(event) => {
+	                                        const iframe = event.currentTarget
+	                                        try {
+	                                        const doc = iframe.contentWindow?.document
+	                                        if (!doc)
+	                                          return
+	                                        const body = doc.body
+	                                        const docEl = doc.documentElement
 
-                      {node.data.type === BlockEnum.End && (
-                        <div className="space-y-2">
-                          <div className="text-xs text-gray-500">模板渲染</div>
-                          {endRenderLoading[node.id] && (
-                            <div className="rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600">渲染中...</div>
-                          )}
-                          {endRenderError[node.id] && (
-                            <div className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700">{endRenderError[node.id]}</div>
-                          )}
-                          {endRendered[node.id] && (
-                            <div className="rounded border border-gray-200 bg-white p-2">
-                              <div className="mb-2 text-[11px] text-gray-500">模板：{endRendered[node.id].templateName}</div>
-                              {endRendered[node.id].outputType === 'html'
-                                ? (
-                                    <iframe
-                                      title={`end-template-${node.id}`}
-                                      sandbox=""
-                                      srcDoc={endRendered[node.id].html}
-                                      className="h-[520px] w-full rounded border border-gray-200 bg-white"
-                                    />
-                                  )
-                                : (
-                                    <pre className="h-[520px] w-full overflow-auto rounded border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-700">
-                                      {endRendered[node.id].html}
-                                    </pre>
-                                  )}
-                            </div>
-                          )}
-                          {!endRendered[node.id] && !endRenderLoading[node.id] && !endRenderError[node.id] && (
-                            <div className="text-[11px] text-gray-400">未配置模板或尚未完成执行。</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+	                                        const computeHeight = () => {
+	                                          let maxBottom = 0
+	                                          try {
+	                                            const elements = body?.querySelectorAll?.('*') ?? []
+	                                            const cap = Math.min(elements.length, 4000)
+	                                            for (let i = 0; i < cap; i += 1) {
+	                                              const el = elements[i] as Element
+	                                              const rect = (el as HTMLElement).getBoundingClientRect?.()
+	                                              if (!rect)
+	                                                continue
+	                                              if (Number.isFinite(rect.bottom))
+	                                                maxBottom = Math.max(maxBottom, rect.bottom)
+	                                            }
+	                                          }
+	                                          catch {
+	                                          }
+
+	                                            const bodyRect = body?.getBoundingClientRect()
+	                                            const docRect = docEl?.getBoundingClientRect()
+	                                            const height = Math.max(
+	                                              body?.scrollHeight ?? 0,
+	                                              body?.offsetHeight ?? 0,
+	                                              Math.ceil(bodyRect?.height ?? 0),
+	                                              docEl?.scrollHeight ?? 0,
+	                                              docEl?.offsetHeight ?? 0,
+	                                              Math.ceil(docRect?.height ?? 0),
+	                                              Math.ceil(maxBottom),
+	                                            )
+	                                            if (height > 0) {
+	                                              const next = Math.min(Math.max(height + 8, 240), 20000)
+	                                              setEndRenderedHeights(prev => ({ ...prev, [node.id]: next }))
+	                                            }
+	                                          }
+
+	                                          computeHeight()
+	                                          window.setTimeout(computeHeight, 60)
+	                                          window.setTimeout(computeHeight, 240)
+
+	                                          const existing = iframeResizeObserversRef.current[node.id]
+	                                          if (existing) {
+	                                            try {
+	                                              existing.disconnect()
+	                                            }
+	                                            catch {
+	                                            }
+	                                          }
+	                                          if (typeof ResizeObserver !== 'undefined') {
+	                                            const observer = new ResizeObserver(() => computeHeight())
+	                                            iframeResizeObserversRef.current[node.id] = observer
+	                                            observer.observe(docEl)
+	                                          }
+	                                        }
+	                                        catch {
+	                                        }
+	                                      }}
+	                                      className="w-full rounded border border-gray-200 bg-white"
+	                                      style={{ height: `${endRenderedHeights[node.id] || 520}px`, display: 'block' }}
+	                                    />
+	                                  )
+	                                : (
+	                                    <pre className="w-full rounded border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-700 whitespace-pre-wrap">
+	                                      {endRendered[node.id].html}
+	                                    </pre>
+	                                  )}
+	                            </div>
+	                          )}
+	                          {!endRendered[node.id] && !endRenderLoading[node.id] && !endRenderError[node.id] && (
+	                            <div className="text-[11px] text-gray-400">未配置模板或尚未完成执行。</div>
+	                          )}
+	                        </div>
+	                      )}
+
+	                      <div className="text-xs text-gray-500">节点输出</div>
+	                      <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">{renderJson(nodeOutput)}</pre>
+	                    </div>
+	                  )}
+	                </div>
+	              )
+	            })}
           </div>
         )}
       </div>
@@ -1002,73 +1277,64 @@ function DynamicForm({
   onChange: (nextValues: Record<string, unknown>) => void
 }) {
   if (!fields.length)
-    return <div className="text-xs text-gray-500">当前无可配置字段。</div>
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前无可配置字段" />
 
-  const inputClass = 'w-full rounded border border-gray-300 px-2 py-1.5 text-sm'
+  const [form] = Form.useForm()
+  useEffect(() => {
+    form.setFieldsValue(values)
+  }, [form, values])
+
   return (
-    <div className="space-y-2">
+    <Form
+      form={form}
+      layout="vertical"
+      requiredMark={false}
+      onValuesChange={(_changed, allValues) => onChange(allValues)}
+      className="m-0"
+    >
       {fields.map((field) => {
-        const value = values[field.name] ?? ''
+        const label = `${field.label || field.name}${field.required ? ' *' : ''}`
+        if (field.type === 'checkbox') {
+          return (
+            <Form.Item key={field.name} name={field.name} label={label} valuePropName="checked">
+              <Checkbox>勾选</Checkbox>
+            </Form.Item>
+          )
+        }
+        if (field.type === 'paragraph') {
+          return (
+            <Form.Item key={field.name} name={field.name} label={label}>
+              <Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} />
+            </Form.Item>
+          )
+        }
+        if (field.type === 'number') {
+          return (
+            <Form.Item key={field.name} name={field.name} label={label}>
+              <InputNumber style={{ width: '100%' }} />
+            </Form.Item>
+          )
+        }
+        if (field.type === 'select') {
+          return (
+            <Form.Item key={field.name} name={field.name} label={label}>
+              <Select
+                allowClear
+                placeholder="请选择"
+                options={field.options.map(option => ({
+                  label: option.label || option.value,
+                  value: option.value,
+                }))}
+              />
+            </Form.Item>
+          )
+        }
         return (
-          <div key={field.name} className="space-y-1">
-            <label className="block text-xs text-gray-600">
-              {field.label || field.name}
-              {field.required ? ' *' : ''}
-            </label>
-
-            {field.type === 'paragraph' && (
-              <textarea
-                className={`${inputClass} h-24`}
-                value={String(value)}
-                onChange={event => onChange({ ...values, [field.name]: event.target.value })}
-              />
-            )}
-
-            {field.type === 'number' && (
-              <input
-                className={inputClass}
-                type="number"
-                value={String(value)}
-                onChange={event => onChange({ ...values, [field.name]: event.target.value })}
-              />
-            )}
-
-            {field.type === 'select' && (
-              <select
-                className={inputClass}
-                value={String(value)}
-                onChange={event => onChange({ ...values, [field.name]: event.target.value })}
-              >
-                <option value="">请选择</option>
-                {field.options.map(option => (
-                  <option key={`${field.name}-${option.value}`} value={option.value}>
-                    {option.label || option.value}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            {field.type === 'checkbox' && (
-              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={Boolean(value)}
-                  onChange={event => onChange({ ...values, [field.name]: event.target.checked })}
-                />
-                勾选
-              </label>
-            )}
-
-            {(field.type === 'text') && (
-              <input
-                className={inputClass}
-                value={String(value)}
-                onChange={event => onChange({ ...values, [field.name]: event.target.value })}
-              />
-            )}
-          </div>
+          <Form.Item key={field.name} name={field.name} label={label}>
+            <Input />
+          </Form.Item>
         )
       })}
-    </div>
+    </Form>
   )
 }
