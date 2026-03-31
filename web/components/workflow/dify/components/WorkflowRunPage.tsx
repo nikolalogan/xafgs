@@ -230,6 +230,7 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
   const [visibleNodeIds, setVisibleNodeIds] = useState<string[]>([])
   const visibleNodeIdsRef = useRef<string[]>([])
   const focusedNodeIdRef = useRef('')
+  const nodeCardRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const startFields = useMemo(() => normalizeStartFields(nodes), [nodes])
   const [startInput, setStartInput] = useState<Record<string, unknown>>({})
   const waitingFields = useMemo(() => normalizeWaitingFields(execution?.waitingInput?.schema), [execution?.waitingInput?.schema])
@@ -285,6 +286,23 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
 
   useEffect(() => {
     focusedNodeIdRef.current = focusedNodeId
+  }, [focusedNodeId])
+
+  useEffect(() => {
+    if (!focusedNodeId)
+      return
+    if (typeof window === 'undefined')
+      return
+    const element = nodeCardRefs.current[focusedNodeId]
+    if (!element)
+      return
+    window.requestAnimationFrame(() => {
+      try {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+      catch {
+      }
+    })
   }, [focusedNodeId])
 
   useEffect(() => {
@@ -1090,7 +1108,7 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
               const nodeConfig: Record<string, unknown> = isObject(node.data.config) ? node.data.config : {}
 
               return (
-                <div key={node.id} className="rounded border border-gray-200">
+                <div key={node.id} ref={(el) => { nodeCardRefs.current[node.id] = el }} className="rounded border border-gray-200">
                   <button
                     type="button"
                     onClick={() => {

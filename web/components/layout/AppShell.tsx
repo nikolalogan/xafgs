@@ -1,8 +1,9 @@
 'use client'
 
-import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
+import { Breadcrumb, Button, Drawer, Grid, Layout, Menu, Space, Tag, Typography } from 'antd'
+import type { MenuProps } from 'antd'
 
 type ConsoleRole = 'admin' | 'user' | 'guest'
 
@@ -32,7 +33,6 @@ type ApiResponse<T> = {
 const menuItems: MenuItem[] = [
   { key: 'home', label: '控制台', href: '/app', roles: ['admin', 'user', 'guest'] as ConsoleRole[] },
   { key: 'workflow-config', label: '工作流配置', href: '/app/workflows', roles: ['admin'] as ConsoleRole[] },
-  { key: 'workflow', label: '工作流', href: '/app/workflow', roles: ['admin'] as ConsoleRole[] },
   { key: 'reserve', label: '储备', href: '/app/workflows?menuKey=reserve', roles: ['admin'] as ConsoleRole[] },
   { key: 'review', label: '评审', href: '/app/workflows?menuKey=review', roles: ['admin'] as ConsoleRole[] },
   { key: 'postloan', label: '保后', href: '/app/workflows?menuKey=postloan', roles: ['admin'] as ConsoleRole[] },
@@ -46,7 +46,24 @@ const roleLabelMap: Record<ConsoleRole, string> = {
   guest: '访客',
 }
 
-const getPageTitle = (pathname: string) => {
+const getWorkflowMenuLabel = (menuKey: string) => {
+  if (menuKey === 'reserve')
+    return '储备'
+  if (menuKey === 'review')
+    return '评审'
+  if (menuKey === 'postloan')
+    return '保后'
+  return ''
+}
+
+const getPageTitle = (pathname: string, search: string) => {
+  if (pathname.startsWith('/app/workflows')) {
+    const params = new URLSearchParams(search || '')
+    const menuKey = params.get('menuKey') || ''
+    const menuLabel = getWorkflowMenuLabel(menuKey)
+    if (menuLabel)
+      return menuLabel
+  }
   if (pathname.startsWith('/app/users'))
     return '用户管理'
   if (pathname.startsWith('/app/templates'))
@@ -63,10 +80,22 @@ const getPageTitle = (pathname: string) => {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [collapsed, setCollapsed] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [openKeys, setOpenKeys] = useState<string[]>([])
   const [role, setRole] = useState<ConsoleRole>('guest')
   const [workflows, setWorkflows] = useState<WorkflowDTO[]>([])
-  const pageTitle = getPageTitle(pathname)
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    if (typeof window === 'undefined')
+      return
+    setSearch(window.location.search || '')
+  }, [pathname])
+
+  const pageTitle = getPageTitle(pathname, search)
   const visibleMenuItems = useMemo(() => {
     const base = menuItems.filter(item => item.roles.includes(role))
     if (role !== 'admin')
@@ -104,6 +133,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return out
   }, [role, workflows])
   const breadcrumbs = useMemo(() => {
+    if (pathname.startsWith('/app/workflows')) {
+      const params = new URLSearchParams(search || '')
+      const menuKey = params.get('menuKey') || ''
+      const menuLabel = getWorkflowMenuLabel(menuKey)
+      if (menuLabel)
+        return ['控制台', menuLabel]
+    }
     if (pathname.startsWith('/app/users'))
       return ['控制台', '用户管理']
     if (pathname.startsWith('/app/templates'))
@@ -180,69 +216,208 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     run()
   }, [role])
 
-  return (
-    <div className="flex min-h-screen bg-gray-50">
-      <aside className={`${collapsed ? 'w-[72px]' : 'w-60'} relative shrink-0 border-r border-gray-200 bg-white transition-all`}>
-        <div className="flex h-14 items-center border-b border-gray-200 px-4">
-          {!collapsed && <div className="text-sm font-semibold text-gray-900">SXFG Console</div>}
-        </div>
-        <nav className="space-y-1 p-3">
-          {visibleMenuItems.map((item) => {
-            const baseHref = item.href.split('?')[0]
-            const isActive = pathname === baseHref || pathname.startsWith(`${baseHref}/`)
-            return (
-              <Link
-                key={item.key}
-                href={item.href}
-                className={`block rounded px-3 py-2 text-sm transition ${collapsed ? 'text-center' : ''} ${item.indent && !collapsed ? 'pl-7 text-xs' : ''} ${
-                  isActive
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-                }`}
-                title={item.label}
-              >
-                {collapsed ? (item.indent ? '·' : item.label.slice(0, 1)) : item.label}
-              </Link>
-            )
-          })}
-        </nav>
-        <button
-          type="button"
-          onClick={() => setCollapsed(prev => !prev)}
-          className="absolute -right-3 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm hover:bg-gray-50 hover:text-gray-700"
-          title={collapsed ? '展开侧栏' : '收起侧栏'}
-        >
-          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-none stroke-current" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            {collapsed
-              ? <path d="m9 6 6 6-6 6" />
-              : <path d="m15 6-6 6 6 6" />}
-          </svg>
-        </button>
-      </aside>
+  const workflowChildren = useMemo(() => {
+    const safeWorkflows = Array.isArray(workflows) ? workflows : []
+    const activeWorkflows = safeWorkflows.filter(w => w && w.status === 'active' && Number(w.currentPublishedVersionNo) > 0)
+    const childrenByKey: Record<Exclude<WorkflowMenuKey, ''>, Array<{ id: number; name: string }>> = {
+      reserve: [],
+      review: [],
+      postloan: [],
+    }
+    for (const workflow of activeWorkflows) {
+      if (workflow.menuKey !== 'reserve' && workflow.menuKey !== 'review' && workflow.menuKey !== 'postloan')
+        continue
+      childrenByKey[workflow.menuKey].push({ id: workflow.id, name: workflow.name })
+    }
+    return childrenByKey
+  }, [workflows])
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center justify-between border-b border-gray-200 bg-white px-4">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-gray-900">{pageTitle}</div>
-            <div className="truncate text-xs text-gray-500">
-              {breadcrumbs.join(' / ')}
+  const menuTree = useMemo(() => {
+    const items: MenuProps['items'] = []
+    const pushIfVisible = (key: string) => {
+      const item = visibleMenuItems.find(entry => entry.key === key)
+      if (!item)
+        return
+      items.push({ key: item.key, label: item.label })
+    }
+
+    pushIfVisible('home')
+    pushIfVisible('workflow-config')
+
+    if (role === 'admin') {
+      const buildSubMenu = (menuKey: Exclude<WorkflowMenuKey, ''>, title: string) => {
+        const children: MenuProps['items'] = [
+          ...(workflowChildren[menuKey] ?? []).map(w => ({
+            key: `workflow-run-${w.id}`,
+            label: w.name,
+          })),
+        ]
+        return { key: `${menuKey}-submenu`, label: title, children }
+      }
+      items.push(buildSubMenu('reserve', '储备'))
+      items.push(buildSubMenu('review', '评审'))
+      items.push(buildSubMenu('postloan', '保后'))
+    }
+
+    pushIfVisible('templates')
+    pushIfVisible('users')
+
+    return items
+  }, [role, visibleMenuItems, workflowChildren])
+
+  const selectedMenuKeys = useMemo(() => {
+    if (pathname === '/app')
+      return ['home']
+    if (pathname.startsWith('/app/templates'))
+      return ['templates']
+    if (pathname.startsWith('/app/users'))
+      return ['users']
+    if (pathname.startsWith('/app/workflows/')) {
+      const match = pathname.match(/^\/app\/workflows\/(\d+)\/run$/)
+      if (match?.[1])
+        return [`workflow-run-${match[1]}`]
+      return ['workflow-config']
+    }
+    if (pathname.startsWith('/app/workflows')) {
+      const params = new URLSearchParams(search || '')
+      const menuKey = params.get('menuKey') || ''
+      if (menuKey === 'reserve' || menuKey === 'review' || menuKey === 'postloan')
+        return [menuKey]
+      return ['workflow-config']
+    }
+    return []
+  }, [pathname, search])
+
+  useEffect(() => {
+    const selected = selectedMenuKeys[0] || ''
+    if (selected === 'reserve' || selected === 'review' || selected === 'postloan') {
+      setOpenKeys([`${selected}-submenu`])
+      return
+    }
+    if (selected.startsWith('workflow-run-')) {
+      const id = Number(selected.slice('workflow-run-'.length))
+      const matched = workflows.find(w => Number(w.id) === id)
+      if (matched?.menuKey === 'reserve' || matched?.menuKey === 'review' || matched?.menuKey === 'postloan') {
+        setOpenKeys([`${matched.menuKey}-submenu`])
+        return
+      }
+    }
+  }, [selectedMenuKeys, workflows])
+
+  const handleMenuClick: MenuProps['onClick'] = (info) => {
+    const key = String(info.key)
+    if (key === 'home')
+      router.push('/app')
+    else if (key === 'workflow-config')
+      router.push('/app/workflows')
+    else if (key === 'templates')
+      router.push('/app/templates')
+    else if (key === 'users')
+      router.push('/app/users')
+    else if (key === 'reserve' || key === 'review' || key === 'postloan')
+      router.push(`/app/workflows?menuKey=${key}`)
+    else if (key.startsWith('workflow-run-')) {
+      const id = Number(key.slice('workflow-run-'.length))
+      if (Number.isFinite(id) && id > 0)
+        router.push(`/app/workflows/${id}/run?auto=1`)
+    }
+
+    if (isMobile)
+      setDrawerOpen(false)
+  }
+
+  const sideMenu = (
+    <Menu
+      mode="inline"
+      items={menuTree}
+      selectedKeys={selectedMenuKeys}
+      openKeys={openKeys}
+      onOpenChange={(next) => setOpenKeys(next.map(String))}
+      onClick={handleMenuClick}
+      style={{ borderInlineEnd: 'none' }}
+    />
+  )
+
+  return (
+    <Layout style={{ minHeight: '100vh' }}>
+      {!isMobile && (
+        <Layout.Sider
+          collapsible
+          collapsed={collapsed}
+          onCollapse={setCollapsed}
+          width={240}
+          theme="light"
+          style={{ borderInlineEnd: '1px solid #f0f0f0' }}
+        >
+          <div style={{ height: 56, display: 'flex', alignItems: 'center', paddingInline: 16, borderBottom: '1px solid #f0f0f0' }}>
+            <Typography.Text strong ellipsis style={{ width: '100%' }}>
+              SXFG Console
+            </Typography.Text>
+          </div>
+          <div style={{ padding: 8 }}>
+            {sideMenu}
+          </div>
+        </Layout.Sider>
+      )}
+
+      {isMobile && (
+        <Drawer
+          open={drawerOpen}
+          placement="left"
+          size={280}
+          closable={false}
+          onClose={() => setDrawerOpen(false)}
+          styles={{ body: { padding: 8 } }}
+        >
+          <div style={{ height: 56, display: 'flex', alignItems: 'center', paddingInline: 8 }}>
+            <Typography.Text strong>SXFG Console</Typography.Text>
+          </div>
+          {sideMenu}
+        </Drawer>
+      )}
+
+      <Layout>
+        <Layout.Header style={{ paddingInline: isMobile ? 12 : 16, background: '#fff', borderBottom: '1px solid #f0f0f0', height: 56 }}>
+          <div style={{ height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <Space size={10} style={{ minWidth: 0 }}>
+              {isMobile && (
+                <Button size="small" onClick={() => setDrawerOpen(true)}>
+                  菜单
+                </Button>
+              )}
+              <div style={{ minWidth: 0 }}>
+                <Typography.Text strong ellipsis style={{ display: 'block', maxWidth: isMobile ? 200 : 420 }}>
+                  {pageTitle}
+                </Typography.Text>
+                {!isMobile && (
+                  <Breadcrumb
+                    items={breadcrumbs.map(item => ({ title: item }))}
+                    style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)' }}
+                  />
+                )}
+              </div>
+            </Space>
+
+            <Space size={8}>
+              <Tag color={role === 'admin' ? 'blue' : role === 'user' ? 'default' : 'orange'}>
+                {roleLabelMap[role]}
+              </Tag>
+              <Button size="small" onClick={logout}>
+                退出登录
+              </Button>
+            </Space>
+          </div>
+        </Layout.Header>
+
+        <Layout.Content style={{ padding: isMobile ? 12 : 16 }}>
+          {isMobile && (
+            <div style={{ marginBottom: 8 }}>
+              <Breadcrumb items={breadcrumbs.map(item => ({ title: item }))} style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)' }} />
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-600">{roleLabelMap[role]}</div>
-            <button
-              type="button"
-              onClick={logout}
-              className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100"
-            >
-              退出登录
-            </button>
-          </div>
-        </header>
-        <main className="min-h-0 flex-1 overflow-auto p-4">
-          <div className="mx-auto w-full">{children}</div>
-        </main>
-      </div>
-    </div>
+          )}
+          <div style={{ width: '100%' }}>{children}</div>
+        </Layout.Content>
+      </Layout>
+    </Layout>
   )
 }
