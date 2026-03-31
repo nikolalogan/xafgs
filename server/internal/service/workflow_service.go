@@ -59,10 +59,17 @@ func (service *workflowService) Create(
 	request.WorkflowKey = strings.TrimSpace(request.WorkflowKey)
 	request.Name = strings.TrimSpace(request.Name)
 	request.Description = strings.TrimSpace(request.Description)
+	request.MenuKey = strings.TrimSpace(request.MenuKey)
 	request.Status = strings.TrimSpace(request.Status)
 
 	if request.WorkflowKey == "" || request.Name == "" {
 		return model.WorkflowDTO{}, model.NewAPIError(400, response.CodeBadRequest, "workflowKey、name 不能为空")
+	}
+	if request.MenuKey == "" {
+		request.MenuKey = model.WorkflowMenuKeyReserve
+	}
+	if !model.IsValidWorkflowMenuKey(request.MenuKey) {
+		return model.WorkflowDTO{}, model.NewAPIError(400, response.CodeBadRequest, "menuKey 仅支持 reserve/review/postloan")
 	}
 	if request.Status == "" {
 		request.Status = model.WorkflowStatusActive
@@ -82,6 +89,7 @@ func (service *workflowService) Create(
 		WorkflowKey:               request.WorkflowKey,
 		Name:                      request.Name,
 		Description:               request.Description,
+		MenuKey:                   request.MenuKey,
 		Status:                    request.Status,
 		CurrentDraftVersionNo:     1,
 		CurrentPublishedVersionNo: 0,
@@ -97,10 +105,17 @@ func (service *workflowService) Update(
 ) (model.WorkflowDTO, *model.APIError) {
 	request.Name = strings.TrimSpace(request.Name)
 	request.Description = strings.TrimSpace(request.Description)
+	request.MenuKey = strings.TrimSpace(request.MenuKey)
 	request.Status = strings.TrimSpace(request.Status)
 
 	if request.Name == "" {
 		return model.WorkflowDTO{}, model.NewAPIError(400, response.CodeBadRequest, "name 不能为空")
+	}
+	if request.MenuKey == "" {
+		request.MenuKey = model.WorkflowMenuKeyReserve
+	}
+	if !model.IsValidWorkflowMenuKey(request.MenuKey) {
+		return model.WorkflowDTO{}, model.NewAPIError(400, response.CodeBadRequest, "menuKey 仅支持 reserve/review/postloan")
 	}
 	if request.Status == "" {
 		request.Status = model.WorkflowStatusActive
@@ -121,6 +136,7 @@ func (service *workflowService) Update(
 	updatedWorkflow, ok := service.workflowRepository.Update(workflowID, model.Workflow{
 		Name:        request.Name,
 		Description: request.Description,
+		MenuKey:     request.MenuKey,
 		Status:      request.Status,
 		DSL:         dsl,
 	})

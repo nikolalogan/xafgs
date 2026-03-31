@@ -15,6 +15,7 @@ services:
       PORT: "8080"
       APP_NAME: "sxfgssever-api"
       API_TOKEN: "dev-token"
+      DATABASE_URL: "postgres://sxfg:sxfg_password@postgres:5432/sxfg?sslmode=disable"
     depends_on:
       postgres:
         condition: service_healthy
@@ -36,12 +37,16 @@ services:
 
   postgres:
     image: postgres:17-alpine
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: sxfg
       POSTGRES_USER: sxfg
       POSTGRES_PASSWORD: sxfg_password
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    command: ["postgres", "-c", "listen_addresses=*", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sxfg -d sxfg"]
       interval: 5s

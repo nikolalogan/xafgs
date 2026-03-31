@@ -1,12 +1,15 @@
 'use client'
 
 import type { DifyEdge, DifyNode } from '../core/types'
+import type { WorkflowParameter } from '../core/types'
+import { createPortal } from 'react-dom'
 import WorkflowRunPage from './WorkflowRunPage'
 
 type WorkflowRunModalProps = {
   open: boolean
   nodes: DifyNode[]
   edges: DifyEdge[]
+  workflowParameters?: WorkflowParameter[]
   onClose: () => void
 }
 
@@ -14,12 +17,13 @@ export default function WorkflowRunModal({
   open,
   nodes,
   edges,
+  workflowParameters = [],
   onClose,
 }: WorkflowRunModalProps) {
   if (!open)
     return null
 
-  return (
+  const modal = (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
       <div className="h-[92vh] w-[94vw] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
@@ -36,9 +40,14 @@ export default function WorkflowRunModal({
           </button>
         </div>
         <div className="h-[calc(92vh-64px)] p-3">
-          <WorkflowRunPage nodes={nodes} edges={edges} />
+          <WorkflowRunPage nodes={nodes} edges={edges} workflowParameters={workflowParameters} />
         </div>
       </div>
     </div>
   )
+
+  if (typeof document === 'undefined')
+    return modal
+
+  return createPortal(modal, document.body)
 }

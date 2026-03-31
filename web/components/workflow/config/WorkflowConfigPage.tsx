@@ -6,6 +6,7 @@ import { Button, Form, Input, Select, message } from 'antd'
 import WorkflowCanvas from '../WorkflowCanvas'
 import { parseDifyWorkflowDSL, toDifyWorkflowDSL } from '../dify/core/dsl'
 import type { DifyWorkflowDSL } from '../dify/core/types'
+import { BlockEnum } from '../dify/core/types'
 
 type WorkflowStatus = 'active' | 'disabled'
 
@@ -14,6 +15,7 @@ type WorkflowDetailDTO = {
   workflowKey: string
   name: string
   description: string
+  menuKey: string
   status: WorkflowStatus
   dsl: Record<string, unknown>
 }
@@ -23,6 +25,7 @@ type WorkflowDTO = {
   workflowKey: string
   name: string
   description: string
+  menuKey: string
   status: WorkflowStatus
 }
 
@@ -31,7 +34,7 @@ type ApiResponse<T> = {
   data?: T
 }
 
-const defaultDSL = {
+const defaultDSL: DifyWorkflowDSL = {
   nodes: [
     {
       id: 'start',
@@ -39,12 +42,24 @@ const defaultDSL = {
       position: { x: 80, y: 200 },
       data: {
         title: '开始',
-        type: 'start',
+        type: BlockEnum.Start,
         config: { variables: [] },
       },
     },
+    {
+      id: 'end',
+      type: 'custom',
+      position: { x: 420, y: 200 },
+      data: {
+        title: '结束',
+        type: BlockEnum.End,
+        config: { outputs: [{ name: 'result', source: '{{start}}' }] },
+      },
+    },
   ],
-  edges: [],
+  edges: [
+    { id: 'e-start-end', source: 'start', target: 'end', type: 'custom' },
+  ],
   viewport: { x: 0, y: 0, zoom: 1 },
 }
 
@@ -124,6 +139,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
         workflowKey: '',
         name: '',
         description: '',
+        menuKey: 'reserve',
         status: 'active',
       })
       const dsl = parseDifyWorkflowDSL(defaultDSL)
@@ -141,9 +157,10 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
           workflowKey: detail.workflowKey,
           name: detail.name,
           description: detail.description,
+          menuKey: detail.menuKey || 'reserve',
           status: detail.status,
         })
-        const dsl = parseDifyWorkflowDSL(detail.dsl ?? defaultDSL)
+        const dsl = parseDifyWorkflowDSL((detail.dsl as unknown as DifyWorkflowDSL) ?? defaultDSL)
         setInitialCanvasDSL(dsl)
         setEditedCanvasDSL(dsl)
         setAdvancedDSLText(toDifyWorkflowDSL(dsl))
@@ -171,6 +188,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
             workflowKey: values.workflowKey,
             name: values.name,
             description: values.description,
+            menuKey: values.menuKey,
             status: values.status,
             dsl: parsedDSL,
           }),
@@ -185,6 +203,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
         body: JSON.stringify({
           name: values.name,
           description: values.description,
+          menuKey: values.menuKey,
           status: values.status,
           dsl: parsedDSL,
         }),
@@ -237,6 +256,17 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
     )
   }
 
+  if (currentRole !== 'admin') {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-6">
+        {contextHolder}
+        <Form form={form} style={{ display: 'none' }} />
+        <div className="text-base font-semibold text-gray-900">无权限访问</div>
+        <div className="mt-2 text-sm text-gray-500">工作流配置仅管理员可访问。</div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-3">
       {contextHolder}
@@ -257,6 +287,19 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
             rules={[{ required: true, message: '请输入 workflowKey' }]}
           >
             <Input placeholder="例如：order_risk_check" disabled={!isCreate} />
+          </Form.Item>
+          <Form.Item
+            label="上级菜单"
+            name="menuKey"
+            rules={[{ required: true, message: '请选择上级菜单' }]}
+          >
+            <Select
+              options={[
+                { label: '储备', value: 'reserve' },
+                { label: '评审', value: 'review' },
+                { label: '保后', value: 'postloan' },
+              ]}
+            />
           </Form.Item>
           <Form.Item
             label="名称"

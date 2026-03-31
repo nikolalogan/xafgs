@@ -6,10 +6,37 @@ import { useEffect, useMemo, useState } from 'react'
 
 type ConsoleRole = 'admin' | 'user' | 'guest'
 
-const menuItems = [
+type MenuItem = {
+  key: string
+  label: string
+  href: string
+  roles: ConsoleRole[]
+  indent?: boolean
+}
+
+type WorkflowMenuKey = '' | 'reserve' | 'review' | 'postloan'
+
+type WorkflowDTO = {
+  id: number
+  name: string
+  menuKey: WorkflowMenuKey
+  status: 'active' | 'disabled'
+  currentPublishedVersionNo: number
+}
+
+type ApiResponse<T> = {
+  message?: string
+  data?: T
+}
+
+const menuItems: MenuItem[] = [
   { key: 'home', label: '控制台', href: '/app', roles: ['admin', 'user', 'guest'] as ConsoleRole[] },
-  { key: 'workflow-config', label: '工作流配置', href: '/app/workflows', roles: ['admin', 'user'] as ConsoleRole[] },
-  { key: 'workflow', label: '工作流', href: '/app/workflow', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'workflow-config', label: '工作流配置', href: '/app/workflows', roles: ['admin'] as ConsoleRole[] },
+  { key: 'workflow', label: '工作流', href: '/app/workflow', roles: ['admin'] as ConsoleRole[] },
+  { key: 'reserve', label: '储备', href: '/app/workflows?menuKey=reserve', roles: ['admin'] as ConsoleRole[] },
+  { key: 'review', label: '评审', href: '/app/workflows?menuKey=review', roles: ['admin'] as ConsoleRole[] },
+  { key: 'postloan', label: '保后', href: '/app/workflows?menuKey=postloan', roles: ['admin'] as ConsoleRole[] },
+  { key: 'templates', label: '模板配置', href: '/app/templates', roles: ['admin'] as ConsoleRole[] },
   { key: 'users', label: '用户管理', href: '/app/users', roles: ['admin'] as ConsoleRole[] },
 ]
 
@@ -22,6 +49,8 @@ const roleLabelMap: Record<ConsoleRole, string> = {
 const getPageTitle = (pathname: string) => {
   if (pathname.startsWith('/app/users'))
     return '用户管理'
+  if (pathname.startsWith('/app/templates'))
+    return '模板配置'
   if (pathname.startsWith('/app/workflows'))
     return '工作流配置'
   if (pathname.startsWith('/app/workflow'))
@@ -36,14 +65,49 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
   const [role, setRole] = useState<ConsoleRole>('guest')
+  const [workflows, setWorkflows] = useState<WorkflowDTO[]>([])
   const pageTitle = getPageTitle(pathname)
-  const visibleMenuItems = useMemo(
-    () => menuItems.filter(item => item.roles.includes(role)),
-    [role],
-  )
+  const visibleMenuItems = useMemo(() => {
+    const base = menuItems.filter(item => item.roles.includes(role))
+    if (role !== 'admin')
+      return base
+
+    const safeWorkflows = Array.isArray(workflows) ? workflows : []
+    const activeWorkflows = safeWorkflows.filter(w => w && w.status === 'active' && Number(w.currentPublishedVersionNo) > 0)
+    const childrenByKey: Record<Exclude<WorkflowMenuKey, ''>, MenuItem[]> = {
+      reserve: [],
+      review: [],
+      postloan: [],
+    }
+    for (const workflow of activeWorkflows) {
+      if (workflow.menuKey !== 'reserve' && workflow.menuKey !== 'review' && workflow.menuKey !== 'postloan')
+        continue
+      childrenByKey[workflow.menuKey].push({
+        key: `workflow-run-${workflow.id}`,
+        label: `· ${workflow.name}`,
+        href: `/app/workflows/${workflow.id}/run?auto=1`,
+        roles: ['admin'],
+        indent: true,
+      })
+    }
+
+    const out: MenuItem[] = []
+    for (const item of base) {
+      out.push(item)
+      if (item.key === 'reserve')
+        out.push(...childrenByKey.reserve)
+      if (item.key === 'review')
+        out.push(...childrenByKey.review)
+      if (item.key === 'postloan')
+        out.push(...childrenByKey.postloan)
+    }
+    return out
+  }, [role, workflows])
   const breadcrumbs = useMemo(() => {
     if (pathname.startsWith('/app/users'))
       return ['控制台', '用户管理']
+    if (pathname.startsWith('/app/templates'))
+      return ['控制台', '模板配置']
     if (pathname.startsWith('/app/workflows'))
       return ['控制台', '工作流配置']
     if (pathname.startsWith('/app/workflow'))
@@ -77,6 +141,45 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('storage', syncRole)
   }, [])
 
+  useEffect(() => {
+    if (role !== 'admin') {
+      setWorkflows([])
+      return
+    }
+
+    const token = (window.localStorage.getItem('sxfg_access_token')
+      || window.localStorage.getItem('access_token')
+      || window.localStorage.getItem('token')
+      || '').trim()
+    if (!token) {
+      setWorkflows([])
+      return
+    }
+
+    const run = async () => {
+      try {
+        const response = await fetch('/api/workflows', {
+          method: 'GET',
+          headers: {
+            'content-type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          credentials: 'include',
+        })
+        const payload = await response.json() as ApiResponse<WorkflowDTO[]>
+        if (!response.ok || !Array.isArray(payload.data)) {
+          setWorkflows([])
+          return
+        }
+        setWorkflows(payload.data)
+      }
+      catch {
+        setWorkflows([])
+      }
+    }
+    run()
+  }, [role])
+
   return (
     <div className="flex min-h-screen bg-gray-50">
       <aside className={`${collapsed ? 'w-[72px]' : 'w-60'} relative shrink-0 border-r border-gray-200 bg-white transition-all`}>
@@ -84,20 +187,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {!collapsed && <div className="text-sm font-semibold text-gray-900">SXFG Console</div>}
         </div>
         <nav className="space-y-1 p-3">
-          {visibleMenuItems.map(item => (
-            <Link
-              key={item.key}
-              href={item.href}
-              className={`block rounded px-3 py-2 text-sm transition ${collapsed ? 'text-center' : ''} ${
-                pathname === item.href || pathname.startsWith(`${item.href}/`)
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-              }`}
-              title={item.label}
-            >
-              {collapsed ? item.label.slice(0, 1) : item.label}
-            </Link>
-          ))}
+          {visibleMenuItems.map((item) => {
+            const baseHref = item.href.split('?')[0]
+            const isActive = pathname === baseHref || pathname.startsWith(`${baseHref}/`)
+            return (
+              <Link
+                key={item.key}
+                href={item.href}
+                className={`block rounded px-3 py-2 text-sm transition ${collapsed ? 'text-center' : ''} ${item.indent && !collapsed ? 'pl-7 text-xs' : ''} ${
+                  isActive
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                }`}
+                title={item.label}
+              >
+                {collapsed ? (item.indent ? '·' : item.label.slice(0, 1)) : item.label}
+              </Link>
+            )
+          })}
         </nav>
         <button
           type="button"

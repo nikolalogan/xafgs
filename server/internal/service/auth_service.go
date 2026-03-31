@@ -45,23 +45,21 @@ func (service *authService) Login(_ context.Context, username, password string) 
 		return model.LoginResponse{}, model.NewAPIError(400, response.CodeBadRequest, "用户名和密码不能为空")
 	}
 
-	token, ok := service.authRepository.FindTokenByCredentials(username, password)
-	if !ok {
+	user, ok := service.userRepository.FindByUsername(username)
+	if !ok || user.ID <= 0 {
+		return model.LoginResponse{}, model.NewAPIError(401, response.CodeUnauthorized, "用户名或密码错误")
+	}
+	if user.Password != password {
 		return model.LoginResponse{}, model.NewAPIError(401, response.CodeUnauthorized, "用户名或密码错误")
 	}
 
-	userID, ok := service.authRepository.FindUserIDByToken(token)
+	token, ok := service.authRepository.IssueToken(user.ID)
 	if !ok {
-		return model.LoginResponse{}, model.NewAPIError(401, response.CodeUnauthorized, "令牌无效")
-	}
-
-	user, ok := service.userRepository.FindByID(userID)
-	if !ok {
-		return model.LoginResponse{}, model.NewAPIError(401, response.CodeUnauthorized, "用户不存在")
+		return model.LoginResponse{}, model.NewAPIError(500, response.CodeInternal, "生成访问令牌失败")
 	}
 
 	return model.LoginResponse{
 		AccessToken: token,
-		User:        user,
+		User:        user.ToDTO(),
 	}, nil
 }

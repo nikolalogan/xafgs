@@ -369,7 +369,25 @@ class PassthroughExecutor implements NodeExecutor {
 
 class EndNodeExecutor implements NodeExecutor {
   async execute(ctx: NodeExecutorContext): Promise<NodeExecutorResult> {
-    return { type: 'success', output: { ...ctx.variables } }
+    const config = toObject(ctx.node.data.config)
+    const outputs = Array.isArray(config.outputs) ? config.outputs : []
+    if (outputs.length === 0)
+      return { type: 'success', output: { ...ctx.variables } }
+
+    const resolved: Record<string, unknown> = {}
+    outputs.forEach((item) => {
+      const entry = toObject(item)
+      const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+      if (!name)
+        return
+      const source = entry.source
+      resolved[name] = resolveValue(source, ctx.variables)
+    })
+
+    if (Object.keys(resolved).length === 0)
+      return { type: 'success', output: { ...ctx.variables } }
+
+    return { type: 'success', output: resolved }
   }
 }
 

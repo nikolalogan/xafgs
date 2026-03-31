@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import StartNodeFormConfig from './StartNodeFormConfig'
 import VariableValueInput from './VariableValueInput'
 import CodeEditorField from './CodeEditorField'
@@ -38,6 +38,11 @@ const labelClass = 'block text-xs text-gray-500'
 const inputClass = 'w-full rounded border border-gray-300 px-2 py-1.5 text-sm'
 const sectionClass = 'space-y-2 rounded border border-gray-200 p-2'
 
+type TemplateOption = {
+  label: string
+  value: number
+}
+
 export default function NodeConfigPanel({
   nodes,
   workflowParameters,
@@ -49,6 +54,7 @@ export default function NodeConfigPanel({
   onFocusIterationRegion,
   onSave,
 }: NodeConfigPanelProps) {
+  const [templateOptions, setTemplateOptions] = useState<TemplateOption[]>([])
   const variableOptions = useMemo(
     () => buildWorkflowVariableOptions(nodes, workflowParameters, globalVariables, activeNode),
     [activeNode, globalVariables, nodes, workflowParameters],
@@ -57,6 +63,46 @@ export default function NodeConfigPanel({
     () => variableOptions.filter(option => option.nodeId === 'workflow' || option.nodeId === 'global'),
     [variableOptions],
   )
+
+  useEffect(() => {
+    const token = typeof window !== 'undefined'
+      ? (window.localStorage.getItem('sxfg_access_token')
+          || window.localStorage.getItem('access_token')
+          || window.localStorage.getItem('token')
+          || '')
+      : ''
+    if (!token)
+      return
+
+    const run = async () => {
+      try {
+        const response = await fetch('/api/templates', {
+          method: 'GET',
+          headers: {
+            'content-type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          credentials: 'include',
+        })
+        const payload = await response.json() as { data?: Array<{ id: number; name: string; templateKey: string }>; message?: string }
+        if (!response.ok || !Array.isArray(payload.data)) {
+          setTemplateOptions([])
+          return
+        }
+        const options = payload.data
+          .map(item => ({
+            value: Number(item.id),
+            label: `${item.name || item.templateKey || item.id}（ID:${item.id}）`,
+          }))
+          .filter(item => Number.isFinite(item.value) && item.value > 0)
+        setTemplateOptions(options)
+      }
+      catch {
+        setTemplateOptions([])
+      }
+    }
+    run()
+  }, [])
 
   const getScope = (fieldKey: string, fallback: VariableScope = 'all') => workflowVariableScopes[fieldKey] ?? fallback
   const setScope = (fieldKey: string, scope: VariableScope) => {
@@ -801,6 +847,23 @@ export default function NodeConfigPanel({
     return (
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">结束节点输出</div>
+        <div className="space-y-1 rounded border border-gray-200 p-2">
+          <div className="text-xs text-gray-600">模板（可选，用于渲染结束页 HTML）</div>
+          <select
+            className={inputClass}
+            value={config.templateId ? String(config.templateId) : ''}
+            onChange={(event) => {
+              const next = event.target.value ? Number(event.target.value) : undefined
+              updateConfig({ ...config, templateId: Number.isFinite(next as number) && (next as number) > 0 ? (next as number) : undefined })
+            }}
+          >
+            <option value="">不使用模板</option>
+            {templateOptions.map(option => (
+              <option key={`end-template-${option.value}`} value={String(option.value)}>{option.label}</option>
+            ))}
+          </select>
+          {!templateOptions.length && <div className="text-[11px] text-gray-400">暂无模板（请先在“模板配置”中创建）。</div>}
+        </div>
         {config.outputs.map((item, index) => (
           <div key={`end-output-${index}`} className="space-y-1 rounded border border-gray-200 p-2">
             <input

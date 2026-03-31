@@ -1,13 +1,14 @@
 package repository
 
+import "github.com/google/uuid"
+
 type AuthRepository interface {
 	FindUserIDByToken(token string) (int64, bool)
-	FindTokenByCredentials(username, password string) (string, bool)
+	IssueToken(userID int64) (string, bool)
 }
 
 type authRepository struct {
-	tokenToUserID      map[string]int64
-	credentialsToToken map[string]string
+	tokenToUserID map[string]int64
 }
 
 func NewAuthRepository(apiToken string) AuthRepository {
@@ -16,12 +17,7 @@ func NewAuthRepository(apiToken string) AuthRepository {
 	}
 	return &authRepository{
 		tokenToUserID: map[string]int64{
-			apiToken:         1,
-			"normal-user-token": 2,
-		},
-		credentialsToToken: map[string]string{
-			"developer:123456":   apiToken,
-			"normal-user:123456": "normal-user-token",
+			apiToken: 1,
 		},
 	}
 }
@@ -31,7 +27,11 @@ func (repository *authRepository) FindUserIDByToken(token string) (int64, bool) 
 	return userID, ok
 }
 
-func (repository *authRepository) FindTokenByCredentials(username, password string) (string, bool) {
-	token, ok := repository.credentialsToToken[username+":"+password]
-	return token, ok
+func (repository *authRepository) IssueToken(userID int64) (string, bool) {
+	if userID <= 0 {
+		return "", false
+	}
+	token := uuid.NewString()
+	repository.tokenToUserID[token] = userID
+	return token, true
 }

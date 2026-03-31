@@ -23,13 +23,22 @@ export const useNodeActions = ({
   record,
 }: UseNodeActionsParams) => {
   const addNode = useCallback((type: BlockEnum, preferredPosition?: { x: number; y: number }) => {
+    // Keep a single Start/End node to match Dify-style workflows.
+    if (type === BlockEnum.Start || type === BlockEnum.End) {
+      const existing = nodes.find(node => node.data.type === type)
+      if (existing)
+        return existing
+    }
+
     const id = `node-${idRef.current++}`
     const nextNode: DifyNode = {
       id,
       type: CUSTOM_NODE,
       position: preferredPosition ?? { x: 220 + (nodes.length % 5) * 180, y: 90 + (nodes.length % 4) * 120 },
       data: {
-        title: `${nodeTypeLabel[type]}-${idRef.current}`,
+        title: type === BlockEnum.Start || type === BlockEnum.End
+          ? nodeTypeLabel[type]
+          : `${nodeTypeLabel[type]}-${idRef.current}`,
         desc: '',
         type,
         config: createDefaultNodeConfig(type),

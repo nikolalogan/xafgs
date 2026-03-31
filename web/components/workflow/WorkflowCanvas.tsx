@@ -20,7 +20,7 @@ import WorkflowRunModal from './dify/components/WorkflowRunModal'
 import { demoDSL, edgeTypes, nodeTypeLabel, nodeTypes } from './dify/config/workflowPreset'
 import { CUSTOM_EDGE, CUSTOM_NODE, ITERATION_CHILDREN_Z_INDEX } from './dify/core/constants'
 import { ensureNodeConfig } from './dify/core/node-config'
-import { BlockEnum, type DifyEdge, type DifyNode, type IterationNodeConfig } from './dify/core/types'
+import { BlockEnum, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowParameter } from './dify/core/types'
 import { validateWorkflow } from './dify/core/validation'
 import { useClipboardInteractions } from './dify/hooks/useClipboardInteractions'
 import { useContextMenuInteractions } from './dify/hooks/useContextMenuInteractions'
@@ -32,6 +32,7 @@ import { useNodeActions } from './dify/hooks/useNodeActions'
 import { useSelectionInteractions } from './dify/hooks/useSelectionInteractions'
 import { parseDifyWorkflowDSL } from './dify/core/dsl'
 import type { DifyWorkflowDSL } from './dify/core/types'
+import { IF_ELSE_FALLBACK_HANDLE, parseIfElseBranchIndex } from '@/lib/workflow-ifelse'
 import {
   useWorkflowClipboardStore,
   useWorkflowHistoryStore,
@@ -49,6 +50,132 @@ const ITERATION_CHILD_NODE_ESTIMATED_HEIGHT = 130
 
 const buildChildNodeId = (parentId: string, childId: string) => `${ITERATION_CHILD_NODE_PREFIX}${parentId}::${childId}`
 const buildChildEdgeId = (parentId: string, childEdgeId: string) => `${ITERATION_CHILD_EDGE_PREFIX}${parentId}::${childEdgeId}`
+
+const sortIfElseEdges = (edges: DifyEdge[]) => {
+  const order = (edge: DifyEdge) => {
+    if (edge.sourceHandle === IF_ELSE_FALLBACK_HANDLE)
+      return 10000
+    const index = parseIfElseBranchIndex(edge.sourceHandle)
+    if (index >= 0)
+      return index
+    if (!edge.sourceHandle)
+      return 9000
+    return 9500
+  }
+  return [...edges].sort((a, b) => order(a) - order(b))
+}
+
+const autoLayoutNodes = (nodes: DifyNode[], edges: DifyEdge[]) => {
+  const filteredNodes = nodes.filter(node => !node.id.startsWith(ITERATION_CHILD_NODE_PREFIX))
+  if (filteredNodes.length === 0)
+    return nodes
+
+  const nodeById = new Map(filteredNodes.map(node => [node.id, node]))
+  const outgoing = new Map<string, DifyEdge[]>()
+  edges.forEach((edge) => {
+    if (!nodeById.has(edge.source) || !nodeById.has(edge.target))
+      return
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge])
+  })
+
+  const startNode = filteredNodes.find(node => node.data.type === BlockEnum.Start) ?? filteredNodes[0]
+  const getOutgoing = (nodeId: string) => {
+    const list = outgoing.get(nodeId) ?? []
+    const node = nodeById.get(nodeId)
+    if (node?.data.type === BlockEnum.IfElse)
+      return sortIfElseEdges(list)
+    return list
+  }
+
+  const visitOrder = new Map<string, number>()
+  {
+    let cursor = 0
+    const queue: string[] = [startNode.id]
+    const visited = new Set<string>()
+    while (queue.length > 0) {
+      const nodeId = queue.shift()
+      if (!nodeId || visited.has(nodeId))
+        continue
+      visited.add(nodeId)
+      visitOrder.set(nodeId, cursor)
+      cursor += 1
+      getOutgoing(nodeId).forEach((edge) => {
+        if (!visited.has(edge.target))
+          queue.push(edge.target)
+      })
+    }
+  }
+
+  const level = new Map<string, number>()
+  {
+    level.set(startNode.id, 0)
+    const queue: string[] = [startNode.id]
+    while (queue.length > 0) {
+      const source = queue.shift()
+      if (!source)
+        continue
+      const base = level.get(source) ?? 0
+      getOutgoing(source).forEach((edge) => {
+        const next = base + 1
+        const current = level.get(edge.target)
+        if (current === undefined || next > current) {
+          level.set(edge.target, next)
+          queue.push(edge.target)
+        }
+      })
+    }
+
+    let maxLevel = 0
+    level.forEach(v => { maxLevel = Math.max(maxLevel, v) })
+    filteredNodes.forEach((node) => {
+      if (level.has(node.id))
+        return
+      maxLevel += 1
+      level.set(node.id, maxLevel)
+    })
+  }
+
+  const groups = new Map<number, DifyNode[]>()
+  filteredNodes.forEach((node) => {
+    const lv = level.get(node.id) ?? 0
+    groups.set(lv, [...(groups.get(lv) ?? []), node])
+  })
+
+  const levels = [...groups.keys()].sort((a, b) => a - b)
+  const xGap = 320
+  const yGap = 170
+  const baseX = startNode.position.x
+  const baseY = startNode.position.y
+
+  const nextPos = new Map<string, { x: number; y: number }>()
+  levels.forEach((lv) => {
+    const list = groups.get(lv) ?? []
+    const sorted = [...list].sort((a, b) => {
+      const ao = visitOrder.get(a.id)
+      const bo = visitOrder.get(b.id)
+      if (ao !== undefined && bo !== undefined)
+        return ao - bo
+      if (ao !== undefined)
+        return -1
+      if (bo !== undefined)
+        return 1
+      return a.position.y - b.position.y
+    })
+    sorted.forEach((node, index) => {
+      nextPos.set(node.id, { x: baseX + lv * xGap, y: baseY + index * yGap })
+    })
+  })
+
+  return nodes.map((node) => {
+    const pos = nextPos.get(node.id)
+    if (!pos)
+      return node
+    return {
+      ...node,
+      position: pos,
+    }
+  })
+}
 
 const parseChildNodeId = (id: string): { parentId: string; childId: string } | null => {
   if (!id.startsWith(ITERATION_CHILD_NODE_PREFIX))
@@ -86,8 +213,18 @@ type WorkflowCanvasInnerProps = {
   onDSLChange?: (dsl: DifyWorkflowDSL) => void
 }
 
+type WorkflowRunSnapshot = {
+  nodes: DifyNode[]
+  edges: DifyEdge[]
+  workflowParameters: WorkflowParameter[]
+}
+
 function WorkflowCanvasInner({ initialDSL, onDSLChange }: WorkflowCanvasInnerProps) {
   const [runModalOpen, setRunModalOpen] = useState(false)
+  const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ nodes: [], edges: [], workflowParameters: [] })
+  const latestNodesRef = useRef<DifyNode[]>([])
+  const latestEdgesRef = useRef<DifyEdge[]>([])
+  const latestWorkflowParametersRef = useRef<WorkflowParameter[]>([])
   const lastReportedDSLRef = useRef('')
   const {
     parsed,
@@ -141,11 +278,29 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange }: WorkflowCanvasInnerPro
   }, [parsed.edges, parsed.nodes, resetHistory])
 
   useEffect(() => {
-    const openRunModal = () => setRunModalOpen(true)
+    latestNodesRef.current = nodes
+    latestEdgesRef.current = edges
+    latestWorkflowParametersRef.current = workflowParameters
+  }, [edges, nodes, workflowParameters])
+
+  useEffect(() => {
+    const openRunModal = () => {
+      setRunSnapshot({
+        nodes: JSON.parse(JSON.stringify(latestNodesRef.current)) as DifyNode[],
+        edges: JSON.parse(JSON.stringify(latestEdgesRef.current)) as DifyEdge[],
+        workflowParameters: JSON.parse(JSON.stringify(latestWorkflowParametersRef.current)) as WorkflowParameter[],
+      })
+      setRunModalOpen(true)
+    }
     window.addEventListener('workflow-open-run', openRunModal)
 
     const params = new URLSearchParams(window.location.search)
     if (params.get('run') === '1') {
+      setRunSnapshot({
+        nodes: JSON.parse(JSON.stringify(latestNodesRef.current)) as DifyNode[],
+        edges: JSON.parse(JSON.stringify(latestEdgesRef.current)) as DifyEdge[],
+        workflowParameters: JSON.parse(JSON.stringify(latestWorkflowParametersRef.current)) as WorkflowParameter[],
+      })
       setRunModalOpen(true)
       params.delete('run')
       const search = params.toString()
@@ -615,6 +770,13 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange }: WorkflowCanvasInnerPro
     fitView({ nodes: [{ id: node.id }], duration: 220, padding: 0.28 })
   }
 
+  const handleAutoLayout = () => {
+    const nextNodes = autoLayoutNodes(nodes, edges)
+    setNodes(nextNodes)
+    record({ nodes: nextNodes, edges })
+    fitView({ duration: 260, padding: 0.22 })
+  }
+
   return (
     <div className="space-y-3">
       <WorkflowToolbar
@@ -624,7 +786,15 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange }: WorkflowCanvasInnerPro
         onAddNode={handleAddNode}
         onUndo={doUndo}
         onRedo={doRedo}
-        onRun={() => setRunModalOpen(true)}
+        onLayout={handleAutoLayout}
+        onRun={() => {
+          setRunSnapshot({
+            nodes: JSON.parse(JSON.stringify(nodes)) as DifyNode[],
+            edges: JSON.parse(JSON.stringify(edges)) as DifyEdge[],
+            workflowParameters: JSON.parse(JSON.stringify(workflowParameters)) as typeof workflowParameters,
+          })
+          setRunModalOpen(true)
+        }}
         onOpenGlobalParams={() => setGlobalVariableOpen(true)}
         onOpenChecklist={() => setChecklistOpen(true)}
         onExport={exportDSL}
@@ -746,8 +916,9 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange }: WorkflowCanvasInnerPro
       />
       <WorkflowRunModal
         open={runModalOpen}
-        nodes={nodes}
-        edges={edges}
+        nodes={runSnapshot.nodes}
+        edges={runSnapshot.edges}
+        workflowParameters={runSnapshot.workflowParameters}
         onClose={() => setRunModalOpen(false)}
       />
     </div>

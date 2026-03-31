@@ -25,22 +25,28 @@ export const useClipboardInteractions = ({
   setClipboard,
   record,
 }: UseClipboardInteractionsParams) => {
+  const protectedNodeIds = useCallback(() => {
+    return new Set(nodes.filter(node => node.data.type === 'start' || node.data.type === 'end').map(node => node.id))
+  }, [nodes])
+
   const copySelection = useCallback((selectionNodeIds?: string[]) => {
     const selectedNodes = selectionNodeIds?.length
       ? nodes.filter(node => selectionNodeIds.includes(node.id))
       : nodes.filter(node => node.selected)
-    if (!selectedNodes.length) return
+    const protectedIds = protectedNodeIds()
+    const copyableNodes = selectedNodes.filter(node => !protectedIds.has(node.id))
+    if (!copyableNodes.length) return
 
-    const selectedNodeIdsSet = new Set(selectedNodes.map(node => node.id))
+    const selectedNodeIdsSet = new Set(copyableNodes.map(node => node.id))
     const selectedEdges = edges.filter(edge =>
       selectedNodeIdsSet.has(edge.source) && selectedNodeIdsSet.has(edge.target),
     )
 
     setClipboard({
-      nodes: selectedNodes.map(node => ({ ...node, selected: false })),
+      nodes: copyableNodes.map(node => ({ ...node, selected: false })),
       edges: selectedEdges.map(edge => ({ ...edge, selected: false })),
     })
-  }, [edges, nodes, setClipboard])
+  }, [edges, nodes, protectedNodeIds, setClipboard])
 
   const pasteClipboard = useCallback((at?: { left: number; top: number }) => {
     if (!clipboard.nodes.length) return
@@ -93,6 +99,10 @@ export const useClipboardInteractions = ({
       ? new Set(selectionEdgeIds)
       : new Set(edges.filter(edge => edge.selected).map(edge => edge.id))
 
+    // Do not allow deleting Start/End nodes.
+    const protectedIds = protectedNodeIds()
+    protectedIds.forEach(id => selectedNodes.delete(id))
+
     const nextNodes = nodes.filter(node => !selectedNodes.has(node.id))
     const nextEdges = edges.filter(edge =>
       !selectedEdges.has(edge.id) && !selectedNodes.has(edge.source) && !selectedNodes.has(edge.target),
@@ -101,15 +111,17 @@ export const useClipboardInteractions = ({
     setNodes(nextNodes)
     setEdges(nextEdges)
     record({ nodes: nextNodes, edges: nextEdges })
-  }, [edges, nodes, record, setEdges, setNodes])
+  }, [edges, nodes, protectedNodeIds, record, setEdges, setNodes])
 
   const duplicateSelection = useCallback((selectionNodeIds?: string[]) => {
     const selectedNodes = selectionNodeIds?.length
       ? nodes.filter(node => selectionNodeIds.includes(node.id))
       : nodes.filter(node => node.selected)
-    if (!selectedNodes.length) return
+    const protectedIds = protectedNodeIds()
+    const duplicableNodes = selectedNodes.filter(node => !protectedIds.has(node.id))
+    if (!duplicableNodes.length) return
 
-    const selectedNodeIdsSet = new Set(selectedNodes.map(node => node.id))
+    const selectedNodeIdsSet = new Set(duplicableNodes.map(node => node.id))
     const selectedEdges = edges.filter(edge =>
       selectedNodeIdsSet.has(edge.source) && selectedNodeIdsSet.has(edge.target),
     )
@@ -117,7 +129,7 @@ export const useClipboardInteractions = ({
     const now = Date.now()
     const idMap = new Map<string, string>()
 
-    const newNodes = selectedNodes.map((node, index) => {
+    const newNodes = duplicableNodes.map((node, index) => {
       const nextId = `${node.id}-copy-${now}-${index}`
       idMap.set(node.id, nextId)
       return {
@@ -145,11 +157,11 @@ export const useClipboardInteractions = ({
     setNodes(nextNodes)
     setEdges(nextEdges)
     setClipboard({
-      nodes: selectedNodes.map(node => ({ ...node, selected: false })),
+      nodes: duplicableNodes.map(node => ({ ...node, selected: false })),
       edges: selectedEdges.map(edge => ({ ...edge, selected: false })),
     })
     record({ nodes: nextNodes, edges: nextEdges })
-  }, [edges, nodes, record, setClipboard, setEdges, setNodes])
+  }, [edges, nodes, protectedNodeIds, record, setClipboard, setEdges, setNodes])
 
   return {
     copySelection,

@@ -1,16 +1,18 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button, Form, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd'
 
 type WorkflowStatus = 'active' | 'disabled'
+type WorkflowMenuKey = '' | 'reserve' | 'review' | 'postloan'
 
 type WorkflowDTO = {
   id: number
   workflowKey: string
   name: string
   description: string
+  menuKey: WorkflowMenuKey
   status: WorkflowStatus
   currentDraftVersionNo: number
   currentPublishedVersionNo: number
@@ -49,8 +51,9 @@ const getToken = () => {
     || ''
 }
 
-export default function WorkflowsPage() {
+function WorkflowsPageInner() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [msgApi, contextHolder] = message.useMessage()
   const [loading, setLoading] = useState(false)
   const [workflows, setWorkflows] = useState<WorkflowDTO[]>([])
@@ -123,6 +126,29 @@ export default function WorkflowsPage() {
   useEffect(() => {
     fetchWorkflows()
   }, [])
+
+  const selectedMenuKey = useMemo(() => {
+    const raw = (searchParams.get('menuKey') || '').toLowerCase()
+    if (raw === 'reserve' || raw === 'review' || raw === 'postloan')
+      return raw as WorkflowMenuKey
+    return ''
+  }, [searchParams])
+
+  const filteredWorkflows = useMemo(() => {
+    if (!selectedMenuKey)
+      return workflows
+    return workflows.filter(item => item.menuKey === selectedMenuKey)
+  }, [selectedMenuKey, workflows])
+
+  const menuKeyLabel = useMemo(() => {
+    if (selectedMenuKey === 'reserve')
+      return '储备'
+    if (selectedMenuKey === 'review')
+      return '评审'
+    if (selectedMenuKey === 'postloan')
+      return '保后'
+    return ''
+  }, [selectedMenuKey])
 
   const remove = async (workflow: WorkflowDTO) => {
     try {
@@ -231,23 +257,49 @@ export default function WorkflowsPage() {
     )
   }
 
+  if (currentRole !== 'admin') {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-6">
+        <Form form={rollbackForm} style={{ display: 'none' }} />
+        <div className="text-base font-semibold text-gray-900">无权限访问</div>
+        <div className="mt-2 text-sm text-gray-500">工作流配置仅管理员可访问。</div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-3">
       {contextHolder}
       <div className="rounded-xl border border-gray-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm font-semibold text-gray-900">工作流配置列表</div>
+          <div className="text-sm font-semibold text-gray-900">
+            工作流配置列表{menuKeyLabel ? `（${menuKeyLabel}）` : ''}
+          </div>
           <Button type="primary" onClick={() => router.push('/app/workflows/new')}>新增工作流</Button>
         </div>
         <Table<WorkflowDTO>
           rowKey="id"
           loading={loading}
-          dataSource={workflows}
+          dataSource={filteredWorkflows}
           pagination={{ pageSize: 8, showSizeChanger: false }}
           columns={[
             { title: 'ID', dataIndex: 'id', width: 90 },
             { title: 'Key', dataIndex: 'workflowKey', width: 220 },
             { title: '名称', dataIndex: 'name', width: 180 },
+            {
+              title: '菜单',
+              dataIndex: 'menuKey',
+              width: 110,
+              render: (value: WorkflowMenuKey) => {
+                if (value === 'reserve')
+                  return '储备'
+                if (value === 'review')
+                  return '评审'
+                if (value === 'postloan')
+                  return '保后'
+                return value
+              },
+            },
             {
               title: '状态',
               dataIndex: 'status',
@@ -272,7 +324,7 @@ export default function WorkflowsPage() {
               render: (_, record) => (
                 <Space>
                   <Button size="small" onClick={() => router.push(`/app/workflows/${record.id}`)}>修改</Button>
-                  <Button size="small" onClick={() => router.push(`/app/workflows/${record.id}?run=1`)}>运行</Button>
+                  <Button size="small" onClick={() => router.push(`/app/workflows/${record.id}/run`)}>运行</Button>
                   {record.currentPublishedVersionNo > 0
                     ? <Button size="small" onClick={() => offline(record)}>下线</Button>
                     : <Button size="small" onClick={() => publish(record)}>发布</Button>}
@@ -331,5 +383,19 @@ export default function WorkflowsPage() {
         </Form>
       </Modal>
     </div>
+  )
+}
+
+export default function WorkflowsPage() {
+  return (
+    <Suspense
+      fallback={(
+        <div className="rounded-xl border border-gray-200 bg-white p-6">
+          <div className="text-sm text-gray-500">加载中...</div>
+        </div>
+      )}
+    >
+      <WorkflowsPageInner />
+    </Suspense>
   )
 }

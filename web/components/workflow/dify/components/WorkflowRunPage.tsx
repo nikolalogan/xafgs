@@ -1,13 +1,14 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider } from 'reactflow'
+import ReactFlow, { Background, Controls, MiniMap } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { CUSTOM_EDGE, CUSTOM_NODE } from '../core/constants'
 import { ensureNodeConfig } from '../core/node-config'
 import { edgeTypes, nodeTypes } from '../config/workflowPreset'
-import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig } from '../core/types'
+import { validateWorkflow } from '../core/validation'
+import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowParameter } from '../core/types'
 
 type RuntimeNodeStatus = 'pending' | 'running' | 'waiting_input' | 'succeeded' | 'failed' | 'skipped'
 
@@ -53,6 +54,21 @@ type DynamicField = {
 type WorkflowRunPageProps = {
   nodes: DifyNode[]
   edges: DifyEdge[]
+  workflowParameters?: WorkflowParameter[]
+  autoRun?: boolean
+}
+
+type TemplateDetailDTO = {
+  id: number
+  name: string
+  templateKey: string
+  outputType: 'text' | 'html'
+  content: string
+  defaultContextJson: Record<string, unknown>
+}
+
+type TemplatePreviewResponse = {
+  rendered: string
 }
 
 const ITERATION_CHILD_NODE_PREFIX = 'iter-child::'
@@ -137,34 +153,28 @@ const getNodePreviewStyle = (status: RuntimeNodeStatus | undefined) => {
 }
 
 const normalizeStartFields = (nodes: DifyNode[]): DynamicField[] => {
-  const startNode = nodes.find(node => node.data.type === 'start')
-  const config = startNode?.data.config
-  if (!startNode || !isObject(config))
+  const startNode = nodes.find(node => String(node.data.type).toLowerCase() === BlockEnum.Start)
+  if (!startNode)
     return []
-  const rawVariables = (config as Record<string, unknown>).variables
-  const raw = Array.isArray(rawVariables) ? rawVariables : []
-  return raw.map((item) => {
-    const entry = isObject(item) ? item : {}
-    const type = typeof entry.type === 'string' ? entry.type : 'text-input'
-    const optionsRaw = Array.isArray(entry.options) ? entry.options : []
-    const options = optionsRaw
-      .map((option) => {
-        if (!isObject(option))
-          return { label: '', value: '' }
-        const label = typeof option.label === 'string' ? option.label : ''
-        const value = typeof option.value === 'string' ? option.value : ''
-        return { label, value }
-      })
-      .filter(option => option.label || option.value)
-    return {
-      name: typeof entry.name === 'string' ? entry.name : '',
-      label: typeof entry.label === 'string' ? entry.label : '',
-      type: type === 'paragraph' ? 'paragraph' : type === 'number' ? 'number' : type === 'select' ? 'select' : type === 'checkbox' ? 'checkbox' : 'text',
-      required: Boolean(entry.required),
-      options,
-      defaultValue: entry.defaultValue,
-    } satisfies DynamicField
-  }).filter(field => field.name)
+
+  const config = ensureNodeConfig(BlockEnum.Start, startNode.data.config)
+  const raw = Array.isArray(config.variables) ? config.variables : []
+  return raw.map(item => ({
+    name: item.name,
+    label: item.label,
+    type: item.type === 'paragraph'
+      ? 'paragraph'
+      : item.type === 'number'
+        ? 'number'
+        : item.type === 'select'
+          ? 'select'
+          : item.type === 'checkbox'
+            ? 'checkbox'
+            : 'text',
+    required: Boolean(item.required),
+    options: Array.isArray(item.options) ? item.options : [],
+    defaultValue: item.defaultValue,
+  }) satisfies DynamicField).filter(field => field.name)
 }
 
 const normalizeWaitingFields = (schema?: Record<string, unknown>): DynamicField[] => {
@@ -203,29 +213,38 @@ const renderJson = (value: unknown) => {
   }
 }
 
-export default function WorkflowRunPage({ nodes, edges }: WorkflowRunPageProps) {
-  return (
-    <ReactFlowProvider>
-      <WorkflowRunPageInner nodes={nodes} edges={edges} />
-    </ReactFlowProvider>
-  )
+export default function WorkflowRunPage({ nodes, edges, workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
+  return <WorkflowRunPageInner nodes={nodes} edges={edges} workflowParameters={workflowParameters} autoRun={autoRun} />
 }
 
-function WorkflowRunPageInner({ nodes, edges }: WorkflowRunPageProps) {
+function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
   const router = useRouter()
   const [execution, setExecution] = useState<WorkflowExecution | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [authToken, setAuthToken] = useState('')
-  const [loginForm, setLoginForm] = useState({ username: 'developer', password: '123456' })
-  const [loginLoading, setLoginLoading] = useState(false)
-  const [loginError, setLoginError] = useState('')
-  const [previewOpen, setPreviewOpen] = useState(false)
-  const [expandedPanels, setExpandedPanels] = useState<Record<string, boolean>>({})
+  const [previewCollapsed, setPreviewCollapsed] = useState(true)
+  const [focusedNodeId, setFocusedNodeId] = useState('')
+  const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({})
+  const [visibleNodeIds, setVisibleNodeIds] = useState<string[]>([])
+  const visibleNodeIdsRef = useRef<string[]>([])
+  const focusedNodeIdRef = useRef('')
   const startFields = useMemo(() => normalizeStartFields(nodes), [nodes])
   const [startInput, setStartInput] = useState<Record<string, unknown>>({})
   const waitingFields = useMemo(() => normalizeWaitingFields(execution?.waitingInput?.schema), [execution?.waitingInput?.schema])
   const [waitingInput, setWaitingInput] = useState<Record<string, unknown>>({})
+  const [autoRunTriggered, setAutoRunTriggered] = useState(false)
+  const [endRendered, setEndRendered] = useState<Record<string, { html: string; outputType: 'text' | 'html'; templateName: string; executionId: string }>>({})
+  const [endRenderLoading, setEndRenderLoading] = useState<Record<string, boolean>>({})
+  const [endRenderError, setEndRenderError] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    visibleNodeIdsRef.current = visibleNodeIds
+  }, [visibleNodeIds])
+
+  useEffect(() => {
+    focusedNodeIdRef.current = focusedNodeId
+  }, [focusedNodeId])
 
   useEffect(() => {
     const cached = typeof window !== 'undefined'
@@ -263,6 +282,108 @@ function WorkflowRunPageInner({ nodes, edges }: WorkflowRunPageProps) {
     })
     setWaitingInput(nextInput)
   }, [waitingFields])
+
+  useEffect(() => {
+    setEndRendered({})
+    setEndRenderLoading({})
+    setEndRenderError({})
+    setAutoRunTriggered(false)
+  }, [nodes, edges])
+
+  const nodeMap = useMemo(() => {
+    return new Map(nodes.map(node => [node.id, node]))
+  }, [nodes])
+
+  useEffect(() => {
+    if (!execution)
+      return
+    if (typeof window === 'undefined')
+      return
+
+    visibleNodeIds.forEach((nodeId) => {
+      const node = nodeMap.get(nodeId)
+      if (!node || node.data.type !== BlockEnum.End)
+        return
+      const state = execution.nodeStates?.[nodeId]
+      if (!state)
+        return
+      if (state.status !== 'succeeded' && execution.status !== 'completed')
+        return
+      const output = execution.variables?.[nodeId]
+      void renderEndTemplateIfNeeded(node, output)
+    })
+  }, [execution, nodeMap, visibleNodeIds])
+
+  const executedNodeSequence = useMemo(() => {
+    if (!execution)
+      return []
+    const events = Array.isArray(execution.events) ? execution.events : []
+    const sorted = [...events].sort((a, b) => {
+      const at = a?.at ? new Date(a.at).getTime() : Number.MAX_SAFE_INTEGER
+      const bt = b?.at ? new Date(b.at).getTime() : Number.MAX_SAFE_INTEGER
+      return at - bt
+    })
+    const sequence: string[] = []
+    const seen = new Set<string>()
+    sorted.forEach((event) => {
+      if (!event || typeof event.type !== 'string')
+        return
+      if (!event.type.startsWith('node.'))
+        return
+      if (event.type === 'node.skipped')
+        return
+      const nodeId = typeof event.payload?.nodeId === 'string' ? event.payload.nodeId : ''
+      if (!nodeId)
+        return
+      const status = execution.nodeStates?.[nodeId]?.status
+      if (status === 'skipped')
+        return
+      if (seen.has(nodeId))
+        return
+      seen.add(nodeId)
+      sequence.push(nodeId)
+    })
+    return sequence
+  }, [execution])
+
+  useEffect(() => {
+    if (!execution) {
+      setVisibleNodeIds([])
+      setFocusedNodeId('')
+      setOpenPanels({})
+      return
+    }
+
+    const existing = new Set(visibleNodeIdsRef.current)
+    const pending = executedNodeSequence.filter(nodeId => !existing.has(nodeId))
+    if (pending.length === 0)
+      return
+
+    const stepMs = pending.length <= 12 ? 180 : 80
+    let cursor = 0
+    const timer = window.setInterval(() => {
+      const nodeId = pending[cursor]
+      if (!nodeId) {
+        window.clearInterval(timer)
+        return
+      }
+      setVisibleNodeIds(prev => (prev.includes(nodeId) ? prev : [...prev, nodeId]))
+      setFocusedNodeId(nodeId)
+      setOpenPanels((prev) => {
+        const next = { ...prev }
+        const prevFocused = focusedNodeIdRef.current
+        if (prevFocused)
+          next[prevFocused] = false
+        next[nodeId] = true
+        return next
+      })
+      cursor += 1
+      if (cursor >= pending.length)
+        window.clearInterval(timer)
+    }, stepMs)
+
+    return () => window.clearInterval(timer)
+  }, [executedNodeSequence, execution?.id, execution?.updatedAt])
 
   const runtimeDsl = useMemo(() => {
     return {
@@ -375,6 +496,10 @@ function WorkflowRunPageInner({ nodes, edges }: WorkflowRunPageProps) {
   const previewEdges = useMemo(() => {
     const nodeStates = execution?.nodeStates ?? {}
     const nodeMap = new Map(renderPreviewGraph.nodes.map(node => [node.id, node]))
+    const outgoingEdgesMap = new Map<string, DifyEdge[]>()
+    renderPreviewGraph.edges.forEach((edge) => {
+      outgoingEdgesMap.set(edge.source, [...(outgoingEdgesMap.get(edge.source) ?? []), edge])
+    })
     const branchHandleByNode = new Map<string, string>()
     ;(execution?.events ?? []).forEach((event) => {
       if (event.type !== 'node.branch' || !event.payload)
@@ -395,70 +520,188 @@ function WorkflowRunPageInner({ nodes, edges }: WorkflowRunPageProps) {
         return NodeRunningStatus.Running
       return NodeRunningStatus.Idle
     }
+    const isTraversedEdge = (edge: DifyEdge) => {
+      const sourceStatus = nodeStates[edge.source]?.status
+      const targetStatus = nodeStates[edge.target]?.status
+      if (!isNodeEntered(sourceStatus) || !isNodeEntered(targetStatus))
+        return false
+
+      const sourceNodeType = nodeMap.get(edge.source)?.data.type
+      if (sourceNodeType !== BlockEnum.IfElse)
+        return true
+
+      const outgoingEdges = outgoingEdgesMap.get(edge.source) ?? []
+      const chosenHandle = branchHandleByNode.get(edge.source)
+      if (chosenHandle) {
+        const hasHandleEdge = outgoingEdges.some(item => item.sourceHandle)
+        if (hasHandleEdge)
+          return edge.sourceHandle === chosenHandle
+      }
+
+      if (outgoingEdges.some(item => item.sourceHandle))
+        return false
+
+      const enteredOutgoingEdges = outgoingEdges.filter(item => isNodeEntered(nodeStates[item.target]?.status))
+      if (enteredOutgoingEdges.length > 0)
+        return enteredOutgoingEdges.some(item => item.id === edge.id)
+
+      return outgoingEdges[0]?.id === edge.id
+    }
     return renderPreviewGraph.edges.map(edge => ({
       ...edge,
       type: CUSTOM_EDGE,
       data: {
         ...(edge.data ?? {}),
-        _sourceRunningStatus: (() => {
-          const sourceStatus = nodeStates[edge.source]?.status
+        _forceStroke: (() => {
+          if (!execution)
+            return '#98A2B3'
+          if (!isTraversedEdge(edge))
+            return '#98A2B3'
           const targetStatus = nodeStates[edge.target]?.status
-          if (!isNodeEntered(sourceStatus))
-            return NodeRunningStatus.Idle
-
-          const sourceNodeType = nodeMap.get(edge.source)?.data.type
-          if (sourceNodeType === BlockEnum.IfElse) {
-            const chosenHandle = branchHandleByNode.get(edge.source)
-            if (!chosenHandle)
-              return isNodeEntered(targetStatus) ? mapNodeStatus(edge.source) : NodeRunningStatus.Idle
-            return edge.sourceHandle === chosenHandle ? mapNodeStatus(edge.source) : NodeRunningStatus.Idle
-          }
-
-          return isNodeEntered(targetStatus) ? mapNodeStatus(edge.source) : NodeRunningStatus.Idle
+          if (targetStatus === 'failed')
+            return '#F04438'
+          const sourceStatus = nodeStates[edge.source]?.status
+          if (sourceStatus === 'running' || sourceStatus === 'waiting_input' || targetStatus === 'running' || targetStatus === 'waiting_input')
+            return '#2970FF'
+          return '#12B76A'
+        })(),
+        _sourceRunningStatus: (() => {
+          return isTraversedEdge(edge) ? mapNodeStatus(edge.source) : NodeRunningStatus.Idle
         })(),
         _targetRunningStatus: (() => {
-          const sourceStatus = nodeStates[edge.source]?.status
-          const targetStatus = nodeStates[edge.target]?.status
-          if (!isNodeEntered(sourceStatus))
-            return NodeRunningStatus.Idle
-
-          const sourceNodeType = nodeMap.get(edge.source)?.data.type
-          if (sourceNodeType === BlockEnum.IfElse) {
-            const chosenHandle = branchHandleByNode.get(edge.source)
-            if (!chosenHandle)
-              return isNodeEntered(targetStatus) ? mapNodeStatus(edge.target) : NodeRunningStatus.Idle
-            return edge.sourceHandle === chosenHandle ? mapNodeStatus(edge.target) : NodeRunningStatus.Idle
-          }
-
-          return isNodeEntered(targetStatus) ? mapNodeStatus(edge.target) : NodeRunningStatus.Idle
+          return isTraversedEdge(edge) ? mapNodeStatus(edge.target) : NodeRunningStatus.Idle
         })(),
       },
     }))
   }, [execution?.events, execution?.nodeStates, renderPreviewGraph.edges, renderPreviewGraph.nodes])
 
-  const enteredNodes = useMemo(() => {
+  const previewGraph = useMemo(() => ({
+    nodes: clonePlainValue(previewNodes),
+    edges: clonePlainValue(previewEdges),
+  }), [previewEdges, previewNodes])
+
+  const validateBeforeRun = () => {
+    const issues = validateWorkflow(nodes, edges, workflowParameters)
+    const errors = issues.filter(item => item.level === 'error')
+    if (errors.length === 0)
+      return true
+    const head = errors.slice(0, 4).map(item => `- ${item.title}：${item.message}`).join('\n')
+    setError(`错误检查未通过（${errors.length}项）：\n${head}`)
+    return false
+  }
+
+  const hasMissingRequiredStartInput = useMemo(() => {
+    if (!startFields.length)
+      return false
+    return startFields.some((field) => {
+      if (!field.required)
+        return false
+      const value = startInput[field.name]
+      if (field.type === 'checkbox')
+        return value === undefined || value === null
+      return String(value ?? '').trim() === ''
+    })
+  }, [startFields, startInput])
+
+  const resolveAuthToken = () => {
+    const current = authToken.trim()
+    if (current)
+      return current
+    if (typeof window === 'undefined')
+      return ''
+    return (window.localStorage.getItem('sxfg_access_token')
+      || window.localStorage.getItem('access_token')
+      || window.localStorage.getItem('token')
+      || '').trim()
+  }
+
+  const renderEndTemplateIfNeeded = async (node: DifyNode, output: unknown) => {
     if (!execution)
-      return []
-    return nodes
-      .map((node) => {
-        const state = execution.nodeStates[node.id]
-        return { node, state }
+      return
+    if (node.data.type !== BlockEnum.End)
+      return
+    const endConfig = ensureNodeConfig(BlockEnum.End, node.data.config) as { templateId?: number }
+    const templateId = Number(endConfig.templateId)
+    if (!Number.isFinite(templateId) || templateId <= 0)
+      return
+    if (endRendered[node.id]?.executionId === execution.id)
+      return
+    if (endRenderLoading[node.id])
+      return
+
+    const token = resolveAuthToken()
+    if (!token)
+      return
+
+    setEndRenderLoading(prev => ({ ...prev, [node.id]: true }))
+    setEndRenderError(prev => ({ ...prev, [node.id]: '' }))
+    try {
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      }
+
+      const detailResponse = await fetch(`/api/templates/${templateId}`, {
+        method: 'GET',
+        headers,
+        credentials: 'include',
       })
-      .filter(item => item.state && item.state.status !== 'pending')
-      .sort((a, b) => {
-        const at = a.state?.startedAt ? new Date(a.state.startedAt).getTime() : Number.MAX_SAFE_INTEGER
-        const bt = b.state?.startedAt ? new Date(b.state.startedAt).getTime() : Number.MAX_SAFE_INTEGER
-        return at - bt
+      const detailPayload = await detailResponse.json() as { data?: TemplateDetailDTO; message?: string }
+      if (detailResponse.status === 401) {
+        router.push('/login?redirect=/app/workflow')
+        return
+      }
+      if (!detailResponse.ok || !detailPayload.data)
+        throw new Error(detailPayload.message || '加载模板失败')
+
+      const detail = detailPayload.data
+      const runtimeContext = (() => {
+        if (isObject(output))
+          return output
+        return { output }
+      })()
+
+      const previewResponse = await fetch('/api/templates/preview', {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({
+          content: detail.content,
+          contextJson: runtimeContext,
+        }),
       })
-  }, [execution, nodes])
+      const previewPayload = await previewResponse.json() as { data?: TemplatePreviewResponse; message?: string }
+      if (!previewResponse.ok || !previewPayload.data)
+        throw new Error(previewPayload.message || '渲染模板失败')
+
+      setEndRendered(prev => ({
+        ...prev,
+        [node.id]: {
+          html: previewPayload.data?.rendered || '',
+          outputType: detail.outputType === 'text' ? 'text' : 'html',
+          templateName: detail.name || detail.templateKey || String(detail.id),
+          executionId: execution.id,
+        },
+      }))
+    }
+    catch (requestError) {
+      setEndRenderError(prev => ({ ...prev, [node.id]: requestError instanceof Error ? requestError.message : '渲染模板失败' }))
+    }
+    finally {
+      setEndRenderLoading(prev => ({ ...prev, [node.id]: false }))
+    }
+  }
 
   const runWorkflow = async () => {
+    if (!validateBeforeRun())
+      return
     setLoading(true)
     setError('')
     try {
       const headers: Record<string, string> = { 'content-type': 'application/json' }
-      if (authToken.trim())
-        headers.Authorization = `Bearer ${authToken.trim()}`
+      const token = resolveAuthToken()
+      if (token)
+        headers.Authorization = `Bearer ${token}`
       const response = await fetch('/workflow-api/executions', {
         method: 'POST',
         credentials: 'include',
@@ -477,12 +720,12 @@ function WorkflowRunPageInner({ nodes, edges }: WorkflowRunPageProps) {
         throw new Error(payload.error || '运行失败')
       const executionData = payload.data
       setExecution(executionData)
-      const opened: Record<string, boolean> = {}
-      Object.keys(executionData.nodeStates).forEach((nodeId) => {
-        if (executionData.nodeStates[nodeId]?.status !== 'pending')
-          opened[nodeId] = true
-      })
-      setExpandedPanels(opened)
+      setEndRendered({})
+      setEndRenderLoading({})
+      setEndRenderError({})
+      setVisibleNodeIds([])
+      setFocusedNodeId('')
+      setOpenPanels({})
     }
     catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '运行失败')
@@ -492,15 +735,46 @@ function WorkflowRunPageInner({ nodes, edges }: WorkflowRunPageProps) {
     }
   }
 
+  const restartWorkflow = () => {
+    setExecution(null)
+    setLoading(false)
+    setError('')
+    setEndRendered({})
+    setEndRenderLoading({})
+    setEndRenderError({})
+    setVisibleNodeIds([])
+    setFocusedNodeId('')
+    setOpenPanels({})
+    setAutoRunTriggered(false)
+  }
+
+  useEffect(() => {
+    if (!autoRun || autoRunTriggered)
+      return
+    if (loading || execution)
+      return
+    if (startFields.length > 0) {
+      setAutoRunTriggered(true)
+      return
+    }
+    if (typeof window === 'undefined')
+      return
+    setAutoRunTriggered(true)
+    runWorkflow()
+  }, [autoRun, autoRunTriggered, execution, loading, runWorkflow, startFields.length])
+
   const submitWaitingInput = async () => {
     if (!execution?.waitingInput)
+      return
+    if (!validateBeforeRun())
       return
     setLoading(true)
     setError('')
     try {
       const headers: Record<string, string> = { 'content-type': 'application/json' }
-      if (authToken.trim())
-        headers.Authorization = `Bearer ${authToken.trim()}`
+      const token = resolveAuthToken()
+      if (token)
+        headers.Authorization = `Bearer ${token}`
       const response = await fetch(`/workflow-api/executions/${execution.id}/resume`, {
         method: 'POST',
         credentials: 'include',
@@ -519,10 +793,6 @@ function WorkflowRunPageInner({ nodes, edges }: WorkflowRunPageProps) {
         throw new Error(payload.error || '提交输入失败')
       const executionData = payload.data
       setExecution(executionData)
-      setExpandedPanels(prev => ({
-        ...prev,
-        [execution.waitingInput!.nodeId]: true,
-      }))
     }
     catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '提交输入失败')
@@ -532,148 +802,90 @@ function WorkflowRunPageInner({ nodes, edges }: WorkflowRunPageProps) {
     }
   }
 
-  const login = async () => {
-    setLoginLoading(true)
-    setLoginError('')
-    try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(loginForm),
-      })
-      const payload = await response.json() as {
-        data?: { accessToken?: string; user?: { role?: string } }
-        message?: string
-      }
-      if (!response.ok || !payload.data?.accessToken)
-        throw new Error(payload.message || '登录失败')
-      setAuthToken(payload.data.accessToken)
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem('sxfg_access_token', payload.data.accessToken)
-        const role = payload.data.user?.role === 'admin' || payload.data.user?.role === 'user'
-          ? payload.data.user.role
-          : 'guest'
-        window.localStorage.setItem('sxfg_user_role', role)
-        window.localStorage.setItem('user_role', role)
-      }
-    }
-    catch (requestError) {
-      setLoginError(requestError instanceof Error ? requestError.message : '登录失败')
-    }
-    finally {
-      setLoginLoading(false)
-    }
-  }
-
   return (
     <div className="flex h-full flex-col gap-3">
       <div className="rounded-xl border border-gray-200 bg-white p-3">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="text-sm font-semibold text-gray-900">流程缩略图</div>
-          <button
-            type="button"
-            onClick={() => setPreviewOpen(true)}
-            className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100"
-          >
-            放大查看
-          </button>
-        </div>
-        <div className="h-[220px] overflow-hidden rounded border border-gray-200">
-          <ReactFlow
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            nodes={previewNodes}
-            edges={previewEdges}
-            fitView
-            nodesDraggable={false}
-            nodesConnectable={false}
-            elementsSelectable={false}
-            panOnDrag={false}
-            zoomOnScroll={false}
-            zoomOnPinch={false}
-            zoomOnDoubleClick={false}
-          >
-            <MiniMap pannable zoomable style={{ width: 96, height: 64 }} />
-            <Controls showInteractive={false} />
-            <Background gap={14} size={1.5} />
-          </ReactFlow>
-        </div>
+        <button
+          type="button"
+          onClick={() => setPreviewCollapsed(prev => !prev)}
+          className="mb-2 flex w-full items-center justify-between rounded px-1 py-1 text-left hover:bg-gray-50"
+        >
+          <div className="text-sm font-semibold text-gray-900">流程图</div>
+          <div className="text-xs text-gray-500">{previewCollapsed ? '▾' : '▴'}</div>
+        </button>
+        {!previewCollapsed && (
+          <div className="h-[360px] overflow-hidden rounded border border-gray-200">
+            <ReactFlow
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              nodes={previewGraph.nodes}
+              edges={previewGraph.edges}
+              fitView
+              nodesDraggable={false}
+              nodesConnectable={false}
+              elementsSelectable={false}
+            >
+              <MiniMap pannable zoomable style={{ width: 120, height: 80 }} />
+              <Controls />
+              <Background gap={14} size={1.5} />
+            </ReactFlow>
+          </div>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 bg-white p-3">
-        <div className="mb-3 rounded border border-gray-200 bg-gray-50 p-3">
-          <div className="mb-2 text-xs font-semibold text-gray-700">登录（用于后端鉴权场景）</div>
-          <div className="grid grid-cols-12 gap-2">
-            <input
-              className="col-span-3 rounded border border-gray-300 px-2 py-1.5 text-xs"
-              placeholder="用户名"
-              value={loginForm.username}
-              onChange={event => setLoginForm(prev => ({ ...prev, username: event.target.value }))}
-            />
-            <input
-              className="col-span-3 rounded border border-gray-300 px-2 py-1.5 text-xs"
-              type="password"
-              placeholder="密码"
-              value={loginForm.password}
-              onChange={event => setLoginForm(prev => ({ ...prev, password: event.target.value }))}
-            />
-            <button
-              type="button"
-              onClick={login}
-              disabled={loginLoading}
-              className="col-span-2 rounded bg-gray-800 px-2 py-1.5 text-xs text-white hover:bg-gray-900 disabled:cursor-not-allowed disabled:bg-gray-400"
-            >
-              {loginLoading ? '登录中...' : '登录获取令牌'}
-            </button>
-            <input
-              className="col-span-4 rounded border border-gray-300 px-2 py-1.5 text-xs"
-              placeholder="Access Token（可直接粘贴）"
-              value={authToken}
-              onChange={(event) => {
-                const token = event.target.value
-                setAuthToken(token)
-                if (typeof window !== 'undefined')
-                  window.localStorage.setItem('sxfg_access_token', token)
-              }}
-            />
-          </div>
-          {loginError && <div className="mt-2 text-xs text-rose-600">{loginError}</div>}
-        </div>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm font-semibold text-gray-900">流程执行</div>
           <div className="flex items-center gap-2">
             <span className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700">
               状态：{execution ? execution.status : '未运行'}
             </span>
-            <button
-              type="button"
-              onClick={runWorkflow}
-              disabled={loading}
-              className="rounded bg-violet-600 px-3 py-1.5 text-xs text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-            >
-              {loading ? '运行中...' : execution ? '重新运行' : '开始运行'}
-            </button>
+            {execution && (
+              <button
+                type="button"
+                onClick={restartWorkflow}
+                disabled={loading}
+                className="rounded bg-violet-600 px-3 py-1.5 text-xs text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+              >
+                {loading ? '运行中...' : '重新执行'}
+              </button>
+            )}
           </div>
         </div>
 
         {!execution && (
           <div className="space-y-3 rounded border border-dashed border-gray-300 p-3">
-            <div className="text-xs text-gray-600">开始/输入节点会在这里生成交互表单。先配置开始参数后点击“开始运行”。</div>
+            <div className="text-xs text-gray-600">开始/输入节点会在这里生成交互表单。填写后点击底部“提交并运行”。</div>
             <DynamicForm fields={startFields} values={startInput} onChange={setStartInput} />
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={runWorkflow}
+                disabled={loading}
+                className="rounded bg-violet-600 px-4 py-2 text-xs text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+              >
+                {loading ? '运行中...' : '提交并运行'}
+              </button>
+            </div>
           </div>
         )}
 
-        {error && <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        {error && <div className="mb-3 whitespace-pre-wrap rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
 
-        {execution && enteredNodes.length === 0 && (
+        {execution && visibleNodeIds.length === 0 && (
           <div className="rounded border border-dashed border-gray-300 p-3 text-xs text-gray-500">暂无执行节点。</div>
         )}
 
         {execution && (
           <div className="space-y-2">
-            {enteredNodes.map(({ node, state }) => {
-              const panelOpen = !!expandedPanels[node.id]
+            {visibleNodeIds.map((nodeId) => {
+              const node = nodeMap.get(nodeId)
+              const state = node ? execution.nodeStates[node.id] : undefined
+              if (!node || !state)
+                return null
+              if (state.status === 'skipped')
+                return null
+              const panelOpen = openPanels[node.id] ?? false
               const status = state.status
               const nodeOutput = execution.variables[node.id]
               const isWaitingCurrent = execution.waitingInput?.nodeId === node.id && status === 'waiting_input'
@@ -683,7 +895,10 @@ function WorkflowRunPageInner({ nodes, edges }: WorkflowRunPageProps) {
                 <div key={node.id} className="rounded border border-gray-200">
                   <button
                     type="button"
-                    onClick={() => setExpandedPanels(prev => ({ ...prev, [node.id]: !panelOpen }))}
+                    onClick={() => {
+                      setOpenPanels(prev => ({ ...prev, [node.id]: !(prev[node.id] ?? false) }))
+                      setFocusedNodeId(node.id)
+                    }}
                     className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-gray-50"
                   >
                     <div className="text-sm font-medium text-gray-800">{node.data.title}</div>
@@ -711,23 +926,59 @@ function WorkflowRunPageInner({ nodes, edges }: WorkflowRunPageProps) {
                         </>
                       )}
 
-                      {isWaitingCurrent && (
+                  {isWaitingCurrent && (
                         <div className="space-y-2 rounded border border-amber-200 bg-amber-50 p-2">
                           <div className="text-xs font-medium text-amber-800">节点等待输入，请提交后继续</div>
                           <DynamicForm fields={waitingFields} values={waitingInput} onChange={setWaitingInput} />
-                          <button
-                            type="button"
-                            onClick={submitWaitingInput}
-                            disabled={loading}
-                            className="rounded bg-amber-600 px-3 py-1.5 text-xs text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-                          >
-                            提交并继续
-                          </button>
+                          <div className="flex justify-end pt-1">
+                            <button
+                              type="button"
+                              onClick={submitWaitingInput}
+                              disabled={loading}
+                              className="rounded bg-amber-600 px-4 py-2 text-xs text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                            >
+                              {loading ? '提交中...' : '提交并继续'}
+                            </button>
+                          </div>
                         </div>
                       )}
 
                       <div className="text-xs text-gray-500">节点输出</div>
                       <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">{renderJson(nodeOutput)}</pre>
+
+                      {node.data.type === BlockEnum.End && (
+                        <div className="space-y-2">
+                          <div className="text-xs text-gray-500">模板渲染</div>
+                          {endRenderLoading[node.id] && (
+                            <div className="rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600">渲染中...</div>
+                          )}
+                          {endRenderError[node.id] && (
+                            <div className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700">{endRenderError[node.id]}</div>
+                          )}
+                          {endRendered[node.id] && (
+                            <div className="rounded border border-gray-200 bg-white p-2">
+                              <div className="mb-2 text-[11px] text-gray-500">模板：{endRendered[node.id].templateName}</div>
+                              {endRendered[node.id].outputType === 'html'
+                                ? (
+                                    <iframe
+                                      title={`end-template-${node.id}`}
+                                      sandbox=""
+                                      srcDoc={endRendered[node.id].html}
+                                      className="h-[520px] w-full rounded border border-gray-200 bg-white"
+                                    />
+                                  )
+                                : (
+                                    <pre className="h-[520px] w-full overflow-auto rounded border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-700">
+                                      {endRendered[node.id].html}
+                                    </pre>
+                                  )}
+                            </div>
+                          )}
+                          {!endRendered[node.id] && !endRenderLoading[node.id] && !endRenderError[node.id] && (
+                            <div className="text-[11px] text-gray-400">未配置模板或尚未完成执行。</div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -737,32 +988,6 @@ function WorkflowRunPageInner({ nodes, edges }: WorkflowRunPageProps) {
         )}
       </div>
 
-      {previewOpen && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
-          <div className="h-[86vh] w-[90vw] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-              <div className="text-sm font-semibold text-gray-900">流程放大图</div>
-              <button type="button" className="rounded border border-gray-300 px-2 py-1 text-xs" onClick={() => setPreviewOpen(false)}>关闭</button>
-            </div>
-            <div className="h-[calc(86vh-52px)]">
-              <ReactFlow
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                nodes={previewNodes}
-                edges={previewEdges}
-                fitView
-                nodesDraggable={false}
-                nodesConnectable={false}
-                elementsSelectable={false}
-              >
-                <MiniMap pannable zoomable style={{ width: 120, height: 80 }} />
-                <Controls showInteractive={false} />
-                <Background gap={14} size={1.5} />
-              </ReactFlow>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

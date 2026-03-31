@@ -47,6 +47,7 @@ func NewWorkflowRepository() WorkflowRepository {
 				WorkflowKey:               "demo_workflow",
 				Name:                      "示例工作流",
 				Description:               "默认初始化工作流",
+				MenuKey:                   model.WorkflowMenuKeyReserve,
 				Status:                    model.WorkflowStatusActive,
 				CurrentDraftVersionNo:     1,
 				CurrentPublishedVersionNo: 0,
@@ -149,6 +150,7 @@ func (repository *workflowRepository) Update(workflowID int64, update model.Work
 
 	existingWorkflow.Name = update.Name
 	existingWorkflow.Description = update.Description
+	existingWorkflow.MenuKey = update.MenuKey
 	existingWorkflow.Status = update.Status
 	if len(update.DSL) > 0 {
 		now := time.Now().UTC()

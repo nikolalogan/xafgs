@@ -6,6 +6,7 @@ type CreateWorkflowRequest struct {
 	WorkflowKey string          `json:"workflowKey"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
+	MenuKey     string          `json:"menuKey"`
 	Status      string          `json:"status"`
 	DSL         json.RawMessage `json:"dsl"`
 }
@@ -13,6 +14,7 @@ type CreateWorkflowRequest struct {
 type UpdateWorkflowRequest struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
+	MenuKey     string          `json:"menuKey"`
 	Status      string          `json:"status"`
 	DSL         json.RawMessage `json:"dsl"`
 }

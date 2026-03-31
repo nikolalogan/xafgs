@@ -86,6 +86,7 @@ func (handler *WorkflowHandler) CreateWorkflow(c *fiber.Ctx) error {
 	request.WorkflowKey = strings.TrimSpace(request.WorkflowKey)
 	request.Name = strings.TrimSpace(request.Name)
 	request.Description = strings.TrimSpace(request.Description)
+	request.MenuKey = strings.TrimSpace(request.MenuKey)
 	request.Status = strings.TrimSpace(request.Status)
 
 	workflow, apiError := handler.workflowService.Create(c.UserContext(), request)
@@ -111,6 +112,7 @@ func (handler *WorkflowHandler) UpdateWorkflow(c *fiber.Ctx) error {
 
 	request.Name = strings.TrimSpace(request.Name)
 	request.Description = strings.TrimSpace(request.Description)
+	request.MenuKey = strings.TrimSpace(request.MenuKey)
 	request.Status = strings.TrimSpace(request.Status)
 
 	workflow, apiError := handler.workflowService.Update(c.UserContext(), pathParams.WorkflowID, request)

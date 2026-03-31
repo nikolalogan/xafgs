@@ -29,6 +29,9 @@ const CustomEdge = ({ id, data, sourceX, sourceY, targetX, targetY, selected }: 
   }, [id, sourceStatus, targetStatus])
 
   const stroke = useMemo(() => {
+    if (data?._forceStroke)
+      return data._forceStroke
+
     if (selected)
       return getEdgeColor(NodeRunningStatus.Running)
 
@@ -39,7 +42,7 @@ const CustomEdge = ({ id, data, sourceX, sourceY, targetX, targetY, selected }: 
       return getEdgeColor(NodeRunningStatus.Running)
 
     return getEdgeColor()
-  }, [data?._connectedNodeIsHovering, linearGradientId, selected])
+  }, [data?._connectedNodeIsHovering, data?._forceStroke, linearGradientId, selected])
 
   return (
     <>

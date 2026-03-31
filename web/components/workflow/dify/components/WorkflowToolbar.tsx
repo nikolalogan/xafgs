@@ -8,6 +8,7 @@ type WorkflowToolbarProps = {
   onAddNode: (type: BlockEnum) => void
   onUndo: () => void
   onRedo: () => void
+  onLayout: () => void
   onOpenGlobalParams: () => void
   onOpenChecklist: () => void
   onRun: () => void
@@ -23,6 +24,7 @@ export default function WorkflowToolbar({
   onAddNode,
   onUndo,
   onRedo,
+  onLayout,
   onOpenGlobalParams,
   onOpenChecklist,
   onRun,
@@ -33,6 +35,7 @@ export default function WorkflowToolbar({
   const actionHandlers: Record<ToolbarActionKey, () => void> = {
     undo: onUndo,
     redo: onRedo,
+    layout: onLayout,
     run: onRun,
     globalParams: onOpenGlobalParams,
     check: onOpenChecklist,

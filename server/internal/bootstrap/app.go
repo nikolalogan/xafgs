@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"errors"
 	"os"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 
 	"sxfgssever/server/internal/handler"
+	"sxfgssever/server/internal/db"
 	"sxfgssever/server/internal/middleware"
 	"sxfgssever/server/internal/model"
 	"sxfgssever/server/internal/repository"
@@ -69,17 +71,33 @@ func NewApp() (*fiber.App, Config) {
 	systemRepository := repository.NewSystemRepository(cfg.AppName)
 	userRepository := repository.NewUserRepository()
 	workflowRepository := repository.NewWorkflowRepository()
+	templateRepository := repository.NewTemplateRepository()
 	authRepository := repository.NewAuthRepository(cfg.APIToken)
+
+	if result, ok, err := db.OpenFromEnv(); err == nil && ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := db.Migrate(ctx, result.DB); err == nil {
+			userRepository = repository.NewPostgresUserRepository(result.DB)
+			workflowRepository = repository.NewPostgresWorkflowRepository(result.DB)
+			templateRepository = repository.NewPostgresTemplateRepository(result.DB)
+			_ = db.Seed(ctx, result.DB)
+		}
+	}
+
 	systemService := service.NewSystemService(systemRepository)
 	userService := service.NewUserService(userRepository)
 	workflowService := service.NewWorkflowService(workflowRepository)
+	templateRenderer := service.NewGonjaTemplateRenderer()
+	templateService := service.NewTemplateService(templateRepository, templateRenderer)
 	authService := service.NewAuthService(authRepository, userRepository)
 	authMiddleware := middleware.NewAuthMiddleware(authService)
 	healthHandler := handler.NewHealthHandler(systemService)
 	authHandler := handler.NewAuthHandler(authService)
 	userHandler := handler.NewUserHandler(userService)
 	workflowHandler := handler.NewWorkflowHandler(workflowService)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, workflowHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	templateHandler := handler.NewTemplateHandler(templateService)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, workflowHandler, templateHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

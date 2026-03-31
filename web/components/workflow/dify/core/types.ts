@@ -49,6 +49,7 @@ export type EndNodeConfig = {
     name: string
     source: string
   }>
+  templateId?: number
 }
 
 export type LLMNodeConfig = {
@@ -198,6 +199,7 @@ export type DifyEdgeData = {
   _iterationParentId?: string
   _sourceRunningStatus?: NodeRunningStatus
   _targetRunningStatus?: NodeRunningStatus
+  _forceStroke?: string
   _connectedNodeIsHovering?: boolean
   _waitingRun?: boolean
 }

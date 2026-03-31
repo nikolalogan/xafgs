@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd'
+import { useConsoleRole } from '@/lib/useConsoleRole'
 
 type UserRole = 'admin' | 'user'
 
@@ -47,11 +48,7 @@ export default function UsersPage() {
   const [editingUser, setEditingUser] = useState<UserDTO | null>(null)
   const [form] = Form.useForm()
 
-  const currentRole = useMemo(() => {
-    if (typeof window === 'undefined')
-      return 'guest'
-    return (window.localStorage.getItem('sxfg_user_role') || window.localStorage.getItem('user_role') || 'guest') as 'admin' | 'user' | 'guest'
-  }, [])
+  const { role: currentRole, hydrated } = useConsoleRole()
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
@@ -174,9 +171,19 @@ export default function UsersPage() {
     }
   }
 
+  if (!hydrated) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-6">
+        {contextHolder}
+        <div className="text-sm text-gray-500">加载中...</div>
+      </div>
+    )
+  }
+
   if (currentRole !== 'admin') {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-6">
+        {contextHolder}
         <div className="text-base font-semibold text-gray-900">无权限访问</div>
         <div className="mt-2 text-sm text-gray-500">用户管理仅管理员可访问。</div>
       </div>

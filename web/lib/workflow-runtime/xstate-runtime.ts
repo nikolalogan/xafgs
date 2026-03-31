@@ -62,6 +62,30 @@ const getOutgoingEdgesMap = (edges: WorkflowEdge[]) => {
   return map
 }
 
+const getIncomingSourcesMap = (edges: WorkflowEdge[]) => {
+  const map = new Map<string, Set<string>>()
+  edges.forEach((edge) => {
+    if (!edge.source || !edge.target)
+      return
+    const set = map.get(edge.target) ?? new Set<string>()
+    set.add(edge.source)
+    map.set(edge.target, set)
+  })
+  return map
+}
+
+const shouldWaitAllIncoming = (node?: WorkflowNode) => {
+  if (!node)
+    return false
+  const config = node.data?.config
+  if (!config || typeof config !== 'object' || Array.isArray(config))
+    return false
+  const raw = config as Record<string, unknown>
+  const mode = typeof raw.joinMode === 'string' ? raw.joinMode : ''
+  const joinAll = raw.joinAll === true || mode === 'all' || mode === 'wait_all'
+  return joinAll
+}
+
 const selectIfElseNextEdges = (edges: WorkflowEdge[], handleId: string) => {
   const matched = edges.filter((edge) => edge.sourceHandle === handleId)
   if (matched.length > 0)
@@ -158,6 +182,7 @@ export class XStateWorkflowRuntime implements WorkflowRuntimePort {
       const plan = buildExecutionPlan(execution.workflowDsl)
       const nodeMap = new Map<string, WorkflowNode>(execution.workflowDsl.nodes.map(node => [node.id, node]))
       const outgoingEdgesMap = getOutgoingEdgesMap(execution.workflowDsl.edges)
+      const incomingSourcesMap = getIncomingSourcesMap(execution.workflowDsl.edges)
       const nextExecution: WorkflowExecution = {
         ...execution,
         nodeStates: { ...execution.nodeStates },
@@ -169,11 +194,27 @@ export class XStateWorkflowRuntime implements WorkflowRuntimePort {
       const maxSteps = Math.max(plan.length * 8, 32)
       const queue: string[] = []
       const pushed = new Set<string>()
+      const arrivedSources = new Map<string, Set<string>>()
       const enqueue = (nodeId?: string) => {
         if (!nodeId || pushed.has(nodeId))
           return
+        const node = nodeMap.get(nodeId)
+        if (shouldWaitAllIncoming(node)) {
+          const expected = incomingSourcesMap.get(nodeId)
+          if (expected && expected.size > 0) {
+            const arrived = arrivedSources.get(nodeId) ?? new Set<string>()
+            if (arrived.size < expected.size)
+              return
+          }
+        }
+
         queue.push(nodeId)
         pushed.add(nodeId)
+      }
+      const markArrived = (targetId: string, sourceId: string) => {
+        const set = arrivedSources.get(targetId) ?? new Set<string>()
+        set.add(sourceId)
+        arrivedSources.set(targetId, set)
       }
 
       if (options?.resumedNodeId)
@@ -251,7 +292,10 @@ export class XStateWorkflowRuntime implements WorkflowRuntimePort {
           })
           const outgoingEdges = outgoingEdgesMap.get(nodeId) ?? []
           const branchEdges = selectIfElseNextEdges(outgoingEdges, result.handleId)
-          branchEdges.forEach(edge => enqueue(edge.target))
+          branchEdges.forEach((edge) => {
+            markArrived(edge.target, nodeId)
+            enqueue(edge.target)
+          })
           continue
         }
 
@@ -297,7 +341,10 @@ export class XStateWorkflowRuntime implements WorkflowRuntimePort {
         })
 
         const outgoingEdges = outgoingEdgesMap.get(nodeId) ?? []
-        outgoingEdges.forEach(edge => enqueue(edge.target))
+        outgoingEdges.forEach((edge) => {
+          markArrived(edge.target, nodeId)
+          enqueue(edge.target)
+        })
       }
 
       Object.entries(nextExecution.nodeStates).forEach(([nodeId, state]) => {

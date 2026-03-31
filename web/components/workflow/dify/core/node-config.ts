@@ -103,6 +103,7 @@ const defaultEndConfig = (): EndNodeConfig => ({
   outputs: [
     { name: 'result', source: 'llm.text' },
   ],
+  templateId: undefined,
 })
 
 const defaultLLMConfig = (): LLMNodeConfig => ({
@@ -370,9 +371,19 @@ export const ensureNodeConfig = <K extends BlockEnum>(
     if (!config || !isObject(config))
       return fallback as DifyNodeConfigMap[K]
     const end = config as Partial<EndNodeConfig>
+    const rawTemplateId = (end as { templateId?: unknown } | undefined)?.templateId
+    const normalizedTemplateId = (() => {
+      if (rawTemplateId === undefined || rawTemplateId === null || rawTemplateId === '' || rawTemplateId === 0)
+        return undefined
+      if (typeof rawTemplateId === 'number')
+        return Number.isFinite(rawTemplateId) && rawTemplateId > 0 ? rawTemplateId : undefined
+      const parsed = Number(String(rawTemplateId))
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+    })()
     return {
       ...fallback,
       outputs: Array.isArray(end.outputs) ? end.outputs : fallback.outputs,
+      templateId: normalizedTemplateId,
     } as DifyNodeConfigMap[K]
   }
 
