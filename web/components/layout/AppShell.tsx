@@ -37,6 +37,8 @@ const menuItems: MenuItem[] = [
   { key: 'review', label: '评审', href: '/app/workflows?menuKey=review', roles: ['admin'] as ConsoleRole[] },
   { key: 'postloan', label: '保后', href: '/app/workflows?menuKey=postloan', roles: ['admin'] as ConsoleRole[] },
   { key: 'templates', label: '模板配置', href: '/app/templates', roles: ['admin'] as ConsoleRole[] },
+  { key: 'user-config', label: '用户配置', href: '/app/user-config', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'api-meta', label: 'API 查询', href: '/app/api-meta', roles: ['admin'] as ConsoleRole[] },
   { key: 'users', label: '用户管理', href: '/app/users', roles: ['admin'] as ConsoleRole[] },
 ]
 
@@ -68,6 +70,10 @@ const getPageTitle = (pathname: string, search: string) => {
     return '用户管理'
   if (pathname.startsWith('/app/templates'))
     return '模板配置'
+  if (pathname.startsWith('/app/user-config'))
+    return '用户配置'
+  if (pathname.startsWith('/app/api-meta'))
+    return 'API 查询'
   if (pathname.startsWith('/app/workflows'))
     return '工作流配置'
   if (pathname.startsWith('/app/workflow'))
@@ -144,6 +150,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['控制台', '用户管理']
     if (pathname.startsWith('/app/templates'))
       return ['控制台', '模板配置']
+    if (pathname.startsWith('/app/user-config'))
+      return ['控制台', '用户配置']
+    if (pathname.startsWith('/app/api-meta'))
+      return ['控制台', 'API 查询']
     if (pathname.startsWith('/app/workflows'))
       return ['控制台', '工作流配置']
     if (pathname.startsWith('/app/workflow'))
@@ -260,6 +270,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
 
     pushIfVisible('templates')
+    pushIfVisible('user-config')
+    pushIfVisible('api-meta')
     pushIfVisible('users')
 
     return items
@@ -270,6 +282,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['home']
     if (pathname.startsWith('/app/templates'))
       return ['templates']
+    if (pathname.startsWith('/app/user-config'))
+      return ['user-config']
+    if (pathname.startsWith('/app/api-meta'))
+      return ['api-meta']
     if (pathname.startsWith('/app/users'))
       return ['users']
     if (pathname.startsWith('/app/workflows/')) {
@@ -312,6 +328,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       router.push('/app/workflows')
     else if (key === 'templates')
       router.push('/app/templates')
+    else if (key === 'user-config')
+      router.push('/app/user-config')
+    else if (key === 'api-meta')
+      router.push('/app/api-meta')
     else if (key === 'users')
       router.push('/app/users')
     else if (key === 'reserve' || key === 'review' || key === 'postloan')

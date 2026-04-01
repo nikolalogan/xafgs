@@ -12,13 +12,15 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 
-	"sxfgssever/server/internal/handler"
 	"sxfgssever/server/internal/db"
+	"sxfgssever/server/internal/handler"
+	"sxfgssever/server/internal/apimeta"
 	"sxfgssever/server/internal/middleware"
 	"sxfgssever/server/internal/model"
 	"sxfgssever/server/internal/repository"
 	"sxfgssever/server/internal/response"
 	"sxfgssever/server/internal/service"
+	"sxfgssever/server/internal/workflowruntime"
 )
 
 type Config struct {
@@ -70,6 +72,7 @@ func NewApp() (*fiber.App, Config) {
 	api := app.Group("/api")
 	systemRepository := repository.NewSystemRepository(cfg.AppName)
 	userRepository := repository.NewUserRepository()
+	userConfigRepository := repository.NewUserConfigRepository()
 	workflowRepository := repository.NewWorkflowRepository()
 	templateRepository := repository.NewTemplateRepository()
 	authRepository := repository.NewAuthRepository(cfg.APIToken)
@@ -79,6 +82,7 @@ func NewApp() (*fiber.App, Config) {
 		defer cancel()
 		if err := db.Migrate(ctx, result.DB); err == nil {
 			userRepository = repository.NewPostgresUserRepository(result.DB)
+			userConfigRepository = repository.NewPostgresUserConfigRepository(result.DB)
 			workflowRepository = repository.NewPostgresWorkflowRepository(result.DB)
 			templateRepository = repository.NewPostgresTemplateRepository(result.DB)
 			_ = db.Seed(ctx, result.DB)
@@ -87,17 +91,30 @@ func NewApp() (*fiber.App, Config) {
 
 	systemService := service.NewSystemService(systemRepository)
 	userService := service.NewUserService(userRepository)
+	userConfigService := service.NewUserConfigService(userConfigRepository)
 	workflowService := service.NewWorkflowService(workflowRepository)
 	templateRenderer := service.NewGonjaTemplateRenderer()
 	templateService := service.NewTemplateService(templateRepository, templateRenderer)
+	executionStore := workflowruntime.NewInMemoryExecutionStore()
+	executionRuntime := workflowruntime.NewRuntime(executionStore)
+	workflowExecutionService := service.NewWorkflowExecutionService(executionRuntime)
 	authService := service.NewAuthService(authRepository, userRepository)
 	authMiddleware := middleware.NewAuthMiddleware(authService)
-	healthHandler := handler.NewHealthHandler(systemService)
-	authHandler := handler.NewAuthHandler(authService)
-	userHandler := handler.NewUserHandler(userService)
-	workflowHandler := handler.NewWorkflowHandler(workflowService)
-	templateHandler := handler.NewTemplateHandler(templateService)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, workflowHandler, templateHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	apiRegistry := apimeta.NewRegistry("/api")
+	healthHandler := handler.NewHealthHandler(systemService, apiRegistry)
+	authHandler := handler.NewAuthHandler(authService, apiRegistry)
+	userHandler := handler.NewUserHandler(userService, apiRegistry)
+	userConfigHandler := handler.NewUserConfigHandler(userConfigService, apiRegistry)
+	workflowHandler := handler.NewWorkflowHandler(workflowService, apiRegistry)
+	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, userConfigService, apiRegistry)
+	templateHandler := handler.NewTemplateHandler(templateService, apiRegistry)
+
+	traceStore := apimeta.NewTraceStore(300)
+	traceMiddleware := middleware.NewTraceMiddleware(traceStore)
+	app.Use(traceMiddleware.Handler())
+
+	apiMetaHandler := handler.NewAPIMetaHandler(apiRegistry, traceStore)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, workflowHandler, workflowExecutionHandler, templateHandler, apiMetaHandler, userConfigHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

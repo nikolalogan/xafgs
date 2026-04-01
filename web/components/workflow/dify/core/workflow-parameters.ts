@@ -5,9 +5,9 @@ export const defaultWorkflowParameters: WorkflowParameter[] = [
     name: 'query',
     label: '用户输入',
     valueType: 'string',
-    required: true,
+    required: false,
     defaultValue: '',
-    jsonSchema: '',
+    json: '',
     description: '流程主输入参数',
   },
 ]
@@ -28,9 +28,13 @@ export const normalizeWorkflowParameters = (input?: unknown): WorkflowParameter[
         name: typeof item.name === 'string' ? item.name : '',
         label: typeof item.label === 'string' ? item.label : '',
         valueType: valueType === 'number' || valueType === 'boolean' || valueType === 'array' || valueType === 'object' ? valueType : 'string',
-        required: !!item.required,
+        required: false,
         defaultValue: typeof item.defaultValue === 'string' ? item.defaultValue : '',
-        jsonSchema: typeof item.jsonSchema === 'string' ? item.jsonSchema : '',
+        json: typeof item.json === 'string'
+          ? item.json
+          : typeof (item as { jsonSchema?: unknown }).jsonSchema === 'string'
+            ? String((item as { jsonSchema?: unknown }).jsonSchema)
+            : '',
         description: typeof item.description === 'string' ? item.description : '',
       } satisfies WorkflowParameter
     })

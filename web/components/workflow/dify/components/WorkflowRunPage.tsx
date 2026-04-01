@@ -2,14 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Checkbox, Empty, Form, Input, InputNumber, Select } from 'antd'
+import { Checkbox, Collapse, Empty, Form, Input, InputNumber, Modal, Select, Tabs } from 'antd'
 import ReactFlow, { Background, Controls, MiniMap } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { CUSTOM_EDGE, CUSTOM_NODE } from '../core/constants'
 import { ensureNodeConfig } from '../core/node-config'
 import { edgeTypes, nodeTypes } from '../config/workflowPreset'
 import { validateWorkflow } from '../core/validation'
-import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowParameter } from '../core/types'
+import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowGlobalVariable, type WorkflowParameter } from '../core/types'
 
 type RuntimeNodeStatus = 'pending' | 'running' | 'waiting_input' | 'succeeded' | 'failed' | 'skipped'
 
@@ -55,6 +55,7 @@ type DynamicField = {
 type WorkflowRunPageProps = {
   nodes: DifyNode[]
   edges: DifyEdge[]
+  globalVariables?: WorkflowGlobalVariable[]
   workflowParameters?: WorkflowParameter[]
   autoRun?: boolean
 }
@@ -70,6 +71,13 @@ type TemplateDetailDTO = {
 
 type TemplatePreviewResponse = {
   rendered: string
+}
+
+type UserConfigDTO = {
+  warningAccount: string
+  warningPassword: string
+  aiBaseUrl: string
+  aiApiKey: string
 }
 
 const ITERATION_CHILD_NODE_PREFIX = 'iter-child::'
@@ -160,6 +168,23 @@ const normalizeStartFields = (nodes: DifyNode[]): DynamicField[] => {
 
   const config = ensureNodeConfig(BlockEnum.Start, startNode.data.config)
   const raw = Array.isArray(config.variables) ? config.variables : []
+  const normalizeOptions = (options: unknown) => {
+    if (!Array.isArray(options))
+      return []
+    return options.map((option) => {
+      if (typeof option === 'string') {
+        const value = option
+        return { label: value, value }
+      }
+      if (isObject(option)) {
+        const value = typeof option.value === 'string' ? option.value : String(option.value ?? '')
+        const label = typeof option.label === 'string' ? option.label : value
+        return { label, value }
+      }
+      const value = String(option ?? '')
+      return { label: value, value }
+    }).filter(item => item.value)
+  }
   return raw.map(item => ({
     name: item.name,
     label: item.label,
@@ -173,7 +198,7 @@ const normalizeStartFields = (nodes: DifyNode[]): DynamicField[] => {
             ? 'checkbox'
             : 'text',
     required: Boolean(item.required),
-    options: Array.isArray(item.options) ? item.options : [],
+    options: normalizeOptions(item.options),
     defaultValue: item.defaultValue,
   }) satisfies DynamicField).filter(field => field.name)
 }
@@ -214,15 +239,89 @@ const renderJson = (value: unknown) => {
   }
 }
 
-export default function WorkflowRunPage({ nodes, edges, workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
-  return <WorkflowRunPageInner nodes={nodes} edges={edges} workflowParameters={workflowParameters} autoRun={autoRun} />
+const validateDynamicInput = (
+  fields: DynamicField[],
+  values: Record<string, unknown>,
+) => {
+  const normalized: Record<string, unknown> = {}
+  for (const field of fields) {
+    const raw = values[field.name]
+    const candidate = raw !== undefined ? raw : field.defaultValue
+
+    const hasValue = (() => {
+      if (field.type === 'checkbox')
+        return candidate !== undefined && candidate !== null
+      return String(candidate ?? '').trim() !== ''
+    })()
+
+    if (field.required && !hasValue)
+      return { ok: false as const, normalized, message: `输入字段 ${field.name} 为必填` }
+
+    if (!hasValue) {
+      normalized[field.name] = candidate
+      continue
+    }
+
+    if (field.type === 'number') {
+      const parsed = typeof candidate === 'number' ? candidate : Number(candidate)
+      if (Number.isNaN(parsed))
+        return { ok: false as const, normalized, message: `输入字段 ${field.name} 需要 number` }
+      normalized[field.name] = parsed
+      continue
+    }
+
+    if (field.type === 'select' && field.options.length > 0) {
+      const allowed = new Set(field.options.map(option => option.value))
+      const valueStr = String(candidate ?? '')
+      if (!allowed.has(valueStr))
+        return { ok: false as const, normalized, message: `输入字段 ${field.name} 不在可选项中` }
+    }
+
+    normalized[field.name] = candidate
+  }
+  return { ok: true as const, normalized, message: '' }
 }
 
-function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
+const userConfigFields = [
+  { key: 'warningAccount', label: '预警通账号', hash: '#warningAccount' },
+  { key: 'warningPassword', label: '预警通密码', hash: '#warningPassword' },
+  { key: 'aiBaseUrl', label: 'AI 服务商地址', hash: '#aiBaseUrl' },
+  { key: 'aiApiKey', label: 'AI APIKey', hash: '#aiApiKey' },
+] as const
+
+type UserConfigFieldKey = typeof userConfigFields[number]['key']
+
+const detectRequiredUserConfigKeys = (dsl: unknown): UserConfigFieldKey[] => {
+  let raw = ''
+  try {
+    raw = JSON.stringify(dsl) || ''
+  }
+  catch {
+    raw = ''
+  }
+  if (!raw)
+    return []
+
+  const required = new Set<UserConfigFieldKey>()
+  userConfigFields.forEach((field) => {
+    const placeholder = new RegExp(`\\{\\{\\s*user\\.${field.key}\\s*\\}\\}`, 'i')
+    const bare = new RegExp(`["']\\s*user\\.${field.key}\\s*["']`, 'i')
+    if (placeholder.test(raw) || bare.test(raw))
+      required.add(field.key)
+  })
+  return [...required]
+}
+
+export default function WorkflowRunPage({ nodes, edges, globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
+  return <WorkflowRunPageInner nodes={nodes} edges={edges} globalVariables={globalVariables} workflowParameters={workflowParameters} autoRun={autoRun} />
+}
+
+function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
   const router = useRouter()
   const [execution, setExecution] = useState<WorkflowExecution | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [logModalOpen, setLogModalOpen] = useState(false)
   const [authToken, setAuthToken] = useState('')
   const [previewCollapsed, setPreviewCollapsed] = useState(true)
   const [focusedNodeId, setFocusedNodeId] = useState('')
@@ -240,6 +339,7 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
   const [endRenderLoading, setEndRenderLoading] = useState<Record<string, boolean>>({})
   const [endRenderError, setEndRenderError] = useState<Record<string, string>>({})
   const [endRenderedHeights, setEndRenderedHeights] = useState<Record<string, number>>({})
+  const [nodeOutputExpandedById, setNodeOutputExpandedById] = useState<Record<string, boolean>>({})
   const iframeResizeObserversRef = useRef<Record<string, ResizeObserver>>({})
 
   const injectNoScrollStyleForIframe = (rawHtml: string) => {
@@ -479,9 +579,11 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
         sourceHandle: edge.sourceHandle,
         targetHandle: edge.targetHandle,
       })),
+      globalVariables,
+      workflowParameters,
       viewport: { x: 0, y: 0, zoom: 1 },
     }
-  }, [edges, nodes])
+  }, [edges, globalVariables, nodes, workflowParameters])
 
   const renderPreviewGraph = useMemo(() => {
     const mergedNodes: DifyNode[] = []
@@ -773,6 +875,56 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
   const runWorkflow = async () => {
     if (!validateBeforeRun())
       return
+    const requiredKeys = detectRequiredUserConfigKeys(runtimeDsl)
+    if (requiredKeys.length > 0) {
+      const token = resolveAuthToken()
+      if (!token) {
+        router.push('/login?redirect=/app/workflow')
+        return
+      }
+      try {
+        const response = await fetch('/api/user-config', {
+          method: 'GET',
+          headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+          credentials: 'include',
+        })
+        const payload = await response.json() as { data?: UserConfigDTO; message?: string }
+        if (response.status === 401) {
+          router.push('/login?redirect=/app/workflow')
+          return
+        }
+        if (!response.ok)
+          throw new Error(payload.message || '加载用户配置失败')
+        const config = payload.data || { warningAccount: '', warningPassword: '', aiBaseUrl: '', aiApiKey: '' }
+        const missing = requiredKeys.filter((key) => String((config as any)[key] ?? '').trim() === '')
+        if (missing.length > 0) {
+          const missingLabels = missing
+            .map((key) => userConfigFields.find(item => item.key === key)?.label || key)
+            .join('、')
+          const first = missing[0]
+          const targetHash = userConfigFields.find(item => item.key === first)?.hash || ''
+          Modal.confirm({
+            title: '缺少用户配置',
+            content: `当前流程运行需要先配置：${missingLabels}`,
+            okText: '去配置',
+            cancelText: '取消',
+            onOk: () => {
+              router.push(`/app/user-config${targetHash}`)
+            },
+          })
+          return
+        }
+      }
+      catch (requestError) {
+        setError(requestError instanceof Error ? requestError.message : '加载用户配置失败')
+        return
+      }
+    }
+    const startValidation = validateDynamicInput(startFields, startInput)
+    if (!startValidation.ok) {
+      setError(startValidation.message)
+      return
+    }
     setLoading(true)
     setError('')
     try {
@@ -780,22 +932,22 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
       const token = resolveAuthToken()
       if (token)
         headers.Authorization = `Bearer ${token}`
-      const response = await fetch('/workflow-api/executions', {
+      const response = await fetch('/api/workflow/executions', {
         method: 'POST',
         credentials: 'include',
         headers,
         body: JSON.stringify({
           workflowDsl: runtimeDsl,
-          input: startInput,
+          input: startValidation.normalized,
         }),
       })
-      const payload = await response.json() as { data?: WorkflowExecution; error?: string }
+      const payload = await response.json() as { data?: WorkflowExecution; message?: string; error?: string }
       if (response.status === 401) {
         router.push('/login?redirect=/app/workflow')
         return
       }
       if (!response.ok || !payload.data)
-        throw new Error(payload.error || '运行失败')
+        throw new Error(payload.error || payload.message || '运行失败')
       const executionData = payload.data
       setExecution(executionData)
       setEndRendered({})
@@ -896,9 +1048,11 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
 
           const target = (docEl || body) as unknown as HTMLElement
           const canvas = await html2canvas(target, {
-            scale: 2,
+            // 之前用 PNG + 高 scale 会导致 PDF 体积极大（内容很少也可能到数 MB）。
+            // 这里降低 scale，并在后续用 JPEG 压缩。
+            scale: 1.25,
             useCORS: true,
-            backgroundColor: null,
+            backgroundColor: '#ffffff',
             windowWidth: 1024,
           })
           return canvas
@@ -913,16 +1067,16 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
           import('jspdf'),
         ])
 
-        const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+        const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true })
         const pageWidth = pdf.internal.pageSize.getWidth()
         const pageHeight = pdf.internal.pageSize.getHeight()
 
-        const imgData = canvas.toDataURL('image/png', 1.0)
+        const imgData = canvas.toDataURL('image/jpeg', 0.78)
         const imgWidth = pageWidth
         const imgHeight = (canvas.height * imgWidth) / canvas.width
 
         if (imgHeight <= pageHeight) {
-          pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight)
+          pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight, undefined, 'FAST')
           pdf.save(`${filename}.pdf`)
           return
         }
@@ -940,11 +1094,11 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
           if (!ctx)
             break
           ctx.drawImage(canvas, 0, -renderedHeightPx)
-          const pageImg = pageCanvas.toDataURL('image/png', 1.0)
+          const pageImg = pageCanvas.toDataURL('image/jpeg', 0.78)
           if (pageIndex > 0)
             pdf.addPage()
           const pageImgHeight = (pageCanvas.height * imgWidth) / pageCanvas.width
-          pdf.addImage(pageImg, 'PNG', 0, 0, imgWidth, pageImgHeight)
+          pdf.addImage(pageImg, 'JPEG', 0, 0, imgWidth, pageImgHeight, undefined, 'FAST')
           renderedHeightPx += sliceHeightPx
           pageIndex += 1
           if (pageIndex > 60)
@@ -984,6 +1138,11 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
       return
     if (!validateBeforeRun())
       return
+    const waitingValidation = validateDynamicInput(waitingFields, waitingInput)
+    if (!waitingValidation.ok) {
+      setError(waitingValidation.message)
+      return
+    }
     setLoading(true)
     setError('')
     try {
@@ -991,22 +1150,22 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
       const token = resolveAuthToken()
       if (token)
         headers.Authorization = `Bearer ${token}`
-      const response = await fetch(`/workflow-api/executions/${execution.id}/resume`, {
+      const response = await fetch(`/api/workflow/executions/${execution.id}/resume`, {
         method: 'POST',
         credentials: 'include',
         headers,
         body: JSON.stringify({
           nodeId: execution.waitingInput.nodeId,
-          input: waitingInput,
+          input: waitingValidation.normalized,
         }),
       })
-      const payload = await response.json() as { data?: WorkflowExecution; error?: string }
+      const payload = await response.json() as { data?: WorkflowExecution; message?: string; error?: string }
       if (response.status === 401) {
         router.push('/login?redirect=/app/workflow')
         return
       }
       if (!response.ok || !payload.data)
-        throw new Error(payload.error || '提交输入失败')
+        throw new Error(payload.error || payload.message || '提交输入失败')
       const executionData = payload.data
       setExecution(executionData)
     }
@@ -1020,6 +1179,49 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
 
   return (
     <div className="flex h-full flex-col gap-3">
+      <Modal
+        open={logModalOpen}
+        onCancel={() => setLogModalOpen(false)}
+        footer={null}
+        title="运行日志"
+        width={920}
+      >
+        {!execution && <div className="text-sm text-gray-500">暂无运行日志（尚未执行）。</div>}
+        {execution && (
+          <Tabs
+            items={[
+              {
+                key: 'events',
+                label: `事件（${execution.events?.length ?? 0}）`,
+                children: (
+                  <pre className="max-h-[520px] overflow-auto rounded bg-gray-50 p-3 text-[11px] text-gray-700 whitespace-pre-wrap">
+                    {renderJson(execution.events ?? [])}
+                  </pre>
+                ),
+              },
+              {
+                key: 'nodes',
+                label: '节点状态',
+                children: (
+                  <pre className="max-h-[520px] overflow-auto rounded bg-gray-50 p-3 text-[11px] text-gray-700 whitespace-pre-wrap">
+                    {renderJson(execution.nodeStates)}
+                  </pre>
+                ),
+              },
+              {
+                key: 'snapshot',
+                label: '执行快照',
+                children: (
+                  <pre className="max-h-[520px] overflow-auto rounded bg-gray-50 p-3 text-[11px] text-gray-700 whitespace-pre-wrap">
+                    {renderJson(execution)}
+                  </pre>
+                ),
+              },
+            ]}
+          />
+        )}
+      </Modal>
+
       <div className="rounded-xl border border-gray-200 bg-white p-3">
         <button
           type="button"
@@ -1053,6 +1255,14 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm font-semibold text-gray-900">流程执行</div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setLogModalOpen(true)}
+              disabled={!execution}
+              className="rounded border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+            >
+              日志
+            </button>
             <span className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700">
               状态：{execution ? execution.status : '未运行'}
             </span>
@@ -1270,8 +1480,28 @@ function WorkflowRunPageInner({ nodes, edges, workflowParameters = [], autoRun =
 	                        </div>
 	                      )}
 
-	                      <div className="text-xs text-gray-500">节点输出</div>
-	                      <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">{renderJson(nodeOutput)}</pre>
+	                      <Collapse
+	                        size="small"
+	                        bordered={false}
+	                        className="rounded border border-gray-200 bg-white"
+	                        activeKey={nodeOutputExpandedById[node.id] ? ['output'] : []}
+	                        onChange={(keys) => {
+	                          const list = Array.isArray(keys) ? keys : [keys]
+	                          const expanded = list.includes('output')
+	                          setNodeOutputExpandedById(prev => ({ ...prev, [node.id]: expanded }))
+	                        }}
+	                        items={[
+	                          {
+	                            key: 'output',
+	                            label: <span className="text-xs text-gray-600">节点输出（JSON）</span>,
+	                            children: (
+	                              <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">
+	                                {renderJson(nodeOutput)}
+	                              </pre>
+	                            ),
+	                          },
+	                        ]}
+	                      />
 	                    </div>
 	                  )}
 	                </div>

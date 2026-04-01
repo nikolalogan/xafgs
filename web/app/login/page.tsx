@@ -12,8 +12,8 @@ export default function LoginPage() {
     return params.get('redirect') || '/app/workflow'
   })
 
-  const [username, setUsername] = useState('developer')
-  const [password, setPassword] = useState('123456')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -56,7 +56,6 @@ export default function LoginPage() {
     <div className="mx-auto flex min-h-[80vh] max-w-md items-center px-4">
       <form onSubmit={onSubmit} className="w-full space-y-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
         <h1 className="text-lg font-semibold text-gray-900">登录</h1>
-        <p className="text-xs text-gray-500">请先登录，再继续运行工作流。</p>
         <input
           className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
           placeholder="用户名"

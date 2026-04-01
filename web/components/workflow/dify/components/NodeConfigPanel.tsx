@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Cascader } from 'antd'
 import StartNodeFormConfig from './StartNodeFormConfig'
 import VariableValueInput from './VariableValueInput'
 import CodeEditorField from './CodeEditorField'
@@ -8,6 +9,9 @@ import { adaptInputConfigToStartConfig, adaptStartConfigToInputConfig } from '..
 import { buildWorkflowVariableOptions, type VariableScope } from '../core/variables'
 import {
   BlockEnum,
+  type ApiRequestNodeConfig,
+  type ApiRequestParamDef,
+  type ApiRequestParamLocation,
   type CodeNodeConfig,
   type DifyNode,
   type EndNodeConfig,
@@ -43,6 +47,332 @@ type TemplateOption = {
   value: number
 }
 
+type APIRouteDoc = {
+  method: string
+  path: string
+  summary?: string
+  auth?: string
+  params?: ApiRequestParamDef[]
+  responses?: Array<{
+    httpStatus: number
+    code: string
+    contentType?: string
+    description?: string
+    dataShape?: string
+    example?: unknown
+  }>
+}
+
+type MappingCascaderOption = {
+  value: string
+  label: string
+  children?: MappingCascaderOption[]
+}
+
+const parseJsonAny = (rawText: string): { ok: true; value: unknown } | { ok: false; error: string } => {
+  const trimmed = String(rawText || '').trim()
+  if (!trimmed)
+    return { ok: true, value: null }
+  try {
+    return { ok: true, value: JSON.parse(trimmed) as unknown }
+  }
+  catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'JSON 解析失败' }
+  }
+}
+
+const stringifyPretty = (value: unknown) => {
+  try {
+    return JSON.stringify(value ?? {}, null, 2)
+  }
+  catch {
+    return '{}'
+  }
+}
+
+const extractPathsFromJson = (raw: unknown): string[] => {
+  const paths: string[] = []
+  const visit = (value: unknown, prefix: string) => {
+    if (value === null || value === undefined) {
+      if (prefix)
+        paths.push(prefix)
+      return
+    }
+
+    if (Array.isArray(value)) {
+      // 允许映射整个数组：data.list
+      if (prefix)
+        paths.push(prefix)
+      // 允许映射数组元素对象：data.list[]
+      if (prefix)
+        paths.push(`${prefix}[]`)
+      if (value.length === 0)
+        return
+      value.forEach((child) => {
+        visit(child, prefix ? `${prefix}[]` : '$[]')
+      })
+      return
+    }
+
+    if (typeof value === 'object') {
+      // 允许映射整个对象：data.baseInfo
+      if (prefix)
+        paths.push(prefix)
+      const entries = Object.entries(value as Record<string, unknown>)
+      if (entries.length === 0)
+        return
+      entries.forEach(([key, child]) => {
+        visit(child, prefix ? `${prefix}.${key}` : key)
+      })
+      return
+    }
+
+    if (prefix)
+      paths.push(prefix)
+  }
+
+  visit(raw, '')
+  return [...new Set(paths)].filter(Boolean)
+}
+
+const inferSchemaFromJson = (value: unknown): Record<string, unknown> => {
+  const infer = (raw: unknown): Record<string, unknown> => {
+    if (raw === null)
+      return { type: 'null' }
+    if (Array.isArray(raw)) {
+      const first = raw.length > 0 ? raw[0] : null
+      return {
+        type: 'array',
+        items: infer(first),
+      }
+    }
+    switch (typeof raw) {
+      case 'string':
+        return { type: 'string' }
+      case 'number':
+        return { type: 'number' }
+      case 'boolean':
+        return { type: 'boolean' }
+      case 'object': {
+        const properties: Record<string, unknown> = {}
+        Object.entries(raw as Record<string, unknown>).forEach(([key, child]) => {
+          properties[key] = infer(child)
+        })
+        return { type: 'object', properties }
+      }
+      default:
+        return { type: 'string' }
+    }
+  }
+  return infer(value)
+}
+
+const encodeParamValue = (value: unknown) => {
+  if (value === undefined)
+    return ''
+  if (value === null)
+    return 'null'
+  if (typeof value === 'string')
+    return value
+  try {
+    return JSON.stringify(value)
+  }
+  catch {
+    return String(value)
+  }
+}
+
+const parseJsonObject = (rawText: string): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } => {
+  const trimmed = String(rawText || '').trim()
+  if (!trimmed)
+    return { ok: true, value: {} }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      return { ok: false, error: '必须是 JSON 对象（例如 {"id":"1"}）' }
+    return { ok: true, value: parsed as Record<string, unknown> }
+  }
+  catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'JSON 解析失败' }
+  }
+}
+
+const toParamObject = (
+  paramDefs: ApiRequestParamDef[],
+  paramValues: Array<{ in: string; name: string; value: string }>,
+  location: ApiRequestParamLocation,
+) => {
+  const allowed = new Set(paramDefs.filter(p => p.in === location).map(p => p.name))
+  const obj: Record<string, unknown> = {}
+  paramValues.forEach((item) => {
+    if (item.in !== location)
+      return
+    if (!allowed.has(item.name))
+      return
+    const raw = String(item.value ?? '').trim()
+    if (!raw)
+      return
+    try {
+      obj[item.name] = JSON.parse(raw)
+    }
+    catch {
+      obj[item.name] = item.value
+    }
+  })
+  return obj
+}
+
+const upsertParamValuesFromObject = (
+  config: ApiRequestNodeConfig,
+  paramDefs: ApiRequestParamDef[],
+  location: ApiRequestParamLocation,
+  obj: Record<string, unknown>,
+) => {
+  const allowed = new Set(paramDefs.filter(p => p.in === location).map(p => p.name))
+  const next = config.paramValues
+    .filter(item => item.in !== location)
+    .slice()
+  Object.entries(obj).forEach(([key, value]) => {
+    if (!allowed.has(key))
+      return
+    next.push({
+      in: location,
+      name: key,
+      value: encodeParamValue(value),
+    })
+  })
+  return next
+}
+
+const extractPathsFromExample = (raw: unknown): string[] => {
+  const paths: string[] = []
+  const visit = (value: unknown, prefix: string) => {
+    if (value === null || value === undefined) {
+      if (prefix)
+        paths.push(prefix)
+      return
+    }
+    if (Array.isArray(value)) {
+      if (prefix)
+        paths.push(prefix)
+      if (value.length === 0) {
+        if (prefix)
+          paths.push(`${prefix}[]`)
+        return
+      }
+      value.forEach((child) => {
+        visit(child, prefix ? `${prefix}[]` : '$[]')
+      })
+      return
+    }
+    if (typeof value !== 'object') {
+      if (prefix)
+        paths.push(prefix)
+      return
+    }
+    if (prefix)
+      paths.push(prefix)
+    const entries = Object.entries(value as Record<string, unknown>)
+    if (entries.length === 0)
+      return
+    entries.forEach(([key, child]) => {
+      visit(child, prefix ? `${prefix}.${key}` : key)
+    })
+  }
+  visit(raw, '')
+  return [...new Set(paths)].filter(Boolean)
+}
+
+const buildMappingCascaderOptions = (options: Array<{ key: string; param: string; displayLabel: string }>): MappingCascaderOption[] => {
+  type TreeNode = {
+    value: string
+    label: string
+    children: Map<string, TreeNode>
+  }
+
+  const roots = new Map<string, TreeNode>()
+
+  const ensureRoot = (rootKey: string, label: string) => {
+    const existed = roots.get(rootKey)
+    if (existed)
+      return existed
+    const node: TreeNode = { value: rootKey, label: label || rootKey, children: new Map() }
+    roots.set(rootKey, node)
+    return node
+  }
+
+  for (const option of options) {
+    const key = String(option.key || '').trim()
+    const param = String(option.param || '').trim()
+    if (!key || !param)
+      continue
+
+    const segments = key.split('.').filter(Boolean)
+    const nodeId = segments[0] || ''
+    const baseParam = param.split('.').filter(Boolean)[0] || ''
+    if (!nodeId || !baseParam)
+      continue
+
+    const rootKey = `${nodeId}.${baseParam}`
+    const root = ensureRoot(rootKey, rootKey)
+    if (key === rootKey) {
+      root.label = String(option.displayLabel || rootKey)
+      continue
+    }
+    if (!key.startsWith(`${rootKey}.`))
+      continue
+
+    const remainder = key.slice(rootKey.length + 1)
+    const pathSegments = remainder.split('.').filter(Boolean)
+    let parent = root
+    let acc = rootKey
+    for (const seg of pathSegments) {
+      acc = `${acc}.${seg}`
+      if (!parent.children.has(seg)) {
+        parent.children.set(seg, {
+          value: acc,
+          label: seg,
+          children: new Map(),
+        })
+      }
+      parent = parent.children.get(seg)!
+    }
+  }
+
+  const toOption = (node: TreeNode): MappingCascaderOption => {
+    const children = [...node.children.values()]
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
+      .map(toOption)
+    return {
+      value: node.value,
+      label: node.label,
+      children: children.length ? children : undefined,
+    }
+  }
+
+  return [...roots.values()]
+    .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
+    .map(toOption)
+}
+
+const buildMappingCascaderValue = (targetPath: string): string[] => {
+  const trimmed = String(targetPath || '').trim()
+  if (!trimmed)
+    return []
+  const parts = trimmed.split('.').filter(Boolean)
+  if (parts.length <= 1)
+    return [trimmed]
+  const chain: string[] = []
+  let acc = `${parts[0]}.${parts[1] ?? ''}`.replace(/\.$/, '')
+  if (acc)
+    chain.push(acc)
+  for (let i = 2; i < parts.length; i += 1) {
+    acc = `${acc}.${parts[i]}`
+    chain.push(acc)
+  }
+  return chain
+}
+
 export default function NodeConfigPanel({
   nodes,
   workflowParameters,
@@ -55,6 +385,14 @@ export default function NodeConfigPanel({
   onSave,
 }: NodeConfigPanelProps) {
   const [templateOptions, setTemplateOptions] = useState<TemplateOption[]>([])
+  const [apiRoutes, setApiRoutes] = useState<APIRouteDoc[]>([])
+  const [apiRoutesError, setApiRoutesError] = useState('')
+  const [httpResponseJsonByNode, setHttpResponseJsonByNode] = useState<Record<string, string>>({})
+  const [httpResponseJsonErrorByNode, setHttpResponseJsonErrorByNode] = useState<Record<string, string>>({})
+  const [apiJsonDraftByNode, setApiJsonDraftByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
+  const [apiJsonErrorByNode, setApiJsonErrorByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
+  const [apiJsonInsertKeyByNode, setApiJsonInsertKeyByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
+  const apiJsonTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
   const variableOptions = useMemo(
     () => buildWorkflowVariableOptions(nodes, workflowParameters, globalVariables, activeNode),
     [activeNode, globalVariables, nodes, workflowParameters],
@@ -62,6 +400,10 @@ export default function NodeConfigPanel({
   const mappingTargetOptions = useMemo(
     () => variableOptions.filter(option => option.nodeId === 'workflow' || option.nodeId === 'global'),
     [variableOptions],
+  )
+  const mappingTargetCascaderOptions = useMemo(
+    () => buildMappingCascaderOptions(mappingTargetOptions),
+    [mappingTargetOptions],
   )
 
   useEffect(() => {
@@ -104,6 +446,61 @@ export default function NodeConfigPanel({
     run()
   }, [])
 
+  useEffect(() => {
+    const token = typeof window !== 'undefined'
+      ? (window.localStorage.getItem('sxfg_access_token')
+          || window.localStorage.getItem('access_token')
+          || window.localStorage.getItem('token')
+          || '')
+      : ''
+
+    const run = async () => {
+      try {
+        const response = await fetch('/api/meta/routes?includeTraces=0', {
+          method: 'GET',
+          headers: {
+            'content-type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          credentials: 'include',
+        })
+        if (response.status === 401) {
+          setApiRoutes([])
+          setApiRoutesError('未登录或登录已过期，无法加载 API 列表。请重新登录后刷新页面。')
+          return
+        }
+        if (response.status === 403) {
+          setApiRoutes([])
+          setApiRoutesError('无权限加载 API 列表（需要管理员权限）。')
+          return
+        }
+        const payload = await response.json() as { data?: { routes?: APIRouteDoc[] }; message?: string }
+        if (!response.ok || !payload.data?.routes || !Array.isArray(payload.data.routes)) {
+          setApiRoutes([])
+          setApiRoutesError(payload.message || '加载 API 列表失败')
+          return
+        }
+        const normalized = payload.data.routes
+          .map((route) => ({
+            method: String(route.method || '').toUpperCase(),
+            path: String(route.path || ''),
+            summary: typeof route.summary === 'string' ? route.summary : undefined,
+            auth: typeof route.auth === 'string' ? route.auth : undefined,
+            params: Array.isArray(route.params) ? route.params : [],
+            responses: Array.isArray(route.responses) ? route.responses : [],
+          }))
+          .filter(item => item.method && item.path)
+        setApiRoutes(normalized)
+        setApiRoutesError('')
+      }
+      catch {
+        setApiRoutes([])
+        setApiRoutesError('加载 API 列表失败（网络错误）')
+      }
+    }
+    run()
+  }, [])
+
   const getScope = (fieldKey: string, fallback: VariableScope = 'all') => workflowVariableScopes[fieldKey] ?? fallback
   const setScope = (fieldKey: string, scope: VariableScope) => {
     onChangeScopes({
@@ -127,6 +524,29 @@ export default function NodeConfigPanel({
       },
     })
   }, [activeNode, onChange])
+
+  useEffect(() => {
+    if (!activeNode || activeNode.data.type !== BlockEnum.ApiRequest)
+      return
+    const config = ensureNodeConfig(BlockEnum.ApiRequest, activeNode.data.config) as ApiRequestNodeConfig
+    const paramDefs = Array.isArray(config.params) ? config.params : []
+    const nodeId = activeNode.id
+    setApiJsonDraftByNode((prev) => {
+      const existing = prev[nodeId] ?? {}
+      const next = { ...existing }
+      ;(['path', 'query', 'body'] as ApiRequestParamLocation[]).forEach((location) => {
+        if (typeof next[location] === 'string')
+          return
+        if (!paramDefs.some(item => item.in === location))
+          return
+        next[location] = stringifyPretty(toParamObject(paramDefs, config.paramValues, location))
+      })
+      if (next === existing)
+        return prev
+      return { ...prev, [nodeId]: next }
+    })
+    setApiJsonErrorByNode(prev => ({ ...prev, [nodeId]: {} }))
+  }, [activeNode?.id, activeNode?.data.type])
 
   if (!activeNode) {
     return (
@@ -390,20 +810,21 @@ export default function NodeConfigPanel({
                 >
                   {mapping.sourcePath}
                 </div>
-                <select
-                  className={`${inputClass} col-span-5`}
-                  value={mapping.targetPath}
-                  onChange={(event) => {
+                <Cascader
+                  className="col-span-5"
+                  options={mappingTargetCascaderOptions}
+                  placeholder="选择全局/流程参数"
+                  value={buildMappingCascaderValue(mapping.targetPath)}
+                  allowClear
+                  changeOnSelect
+                  showSearch
+                  onChange={(value) => {
+                    const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
                     const next = [...config.writebackMappings]
-                    next[index] = { ...mapping, targetPath: event.target.value }
+                    next[index] = { ...mapping, targetPath: selected }
                     updateConfig({ ...config, writebackMappings: next })
                   }}
-                >
-                  <option value="">选择全局/流程参数</option>
-                  {mappingTargetOptions.map(option => (
-                    <option key={`code-map-${index}-${option.key}`} value={option.key}>{option.displayLabel}</option>
-                  ))}
-                </select>
+                />
                 <button
                   type="button"
                   className="col-span-2 rounded bg-red-50 px-2 py-1 text-xs text-red-600"
@@ -602,6 +1023,31 @@ export default function NodeConfigPanel({
         [key]: [...config[key], { key: '', value: '' }],
       })
     }
+
+    const responseJsonDraft = httpResponseJsonByNode[activeNode.id] ?? ''
+    const responseJsonError = httpResponseJsonErrorByNode[activeNode.id] ?? ''
+    const applyResponseJson = (mode: 'schema' | 'mappings') => {
+      const parsed = parseJsonAny(responseJsonDraft)
+      if (!parsed.ok) {
+        setHttpResponseJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: parsed.error }))
+        return
+      }
+      setHttpResponseJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: '' }))
+
+      if (mode === 'schema') {
+        const schema = inferSchemaFromJson(parsed.value)
+        updateConfig({ ...config, outputSchema: stringifyPretty(schema) })
+        return
+      }
+
+      const paths = extractPathsFromJson(parsed.value)
+      const normalized = paths.map(path => ({
+        sourcePath: path,
+        targetPath: '',
+      }))
+      updateConfig({ ...config, writebackMappings: normalized })
+    }
+
     return (
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">HTTP 请求</div>
@@ -794,6 +1240,34 @@ export default function NodeConfigPanel({
               按 Schema 生成映射
             </button>
           </div>
+
+          <label className={labelClass}>响应 JSON（导入，可选）</label>
+          <textarea
+            className="h-28 w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
+            placeholder='{"data":{"id":1,"name":"xx"}}'
+            value={responseJsonDraft}
+            onChange={(event) => {
+              setHttpResponseJsonByNode(prev => ({ ...prev, [activeNode.id]: event.target.value }))
+            }}
+          />
+          {!!responseJsonError && <div className="text-xs text-rose-600">JSON 错误：{responseJsonError}</div>}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
+              onClick={() => applyResponseJson('schema')}
+            >
+              从 JSON 生成 Schema
+            </button>
+            <button
+              type="button"
+              className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
+              onClick={() => applyResponseJson('mappings')}
+            >
+              按 JSON 生成映射
+            </button>
+          </div>
+
           <div className="space-y-2">
             {config.writebackMappings.length === 0 && (
               <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
@@ -803,26 +1277,27 @@ export default function NodeConfigPanel({
             {config.writebackMappings.map((mapping, index) => (
               <div key={`http-writeback-${index}`} className="grid grid-cols-12 gap-2">
                 <div
-                  className="col-span-5 truncate rounded border border-gray-300 bg-gray-50 px-2 py-1.5 text-xs text-gray-700"
+                  className="col-span-5 rounded border border-gray-300 bg-gray-50 px-2 py-1.5 text-xs text-gray-700 whitespace-normal break-all"
                   style={{ paddingLeft: `${8 + Math.max(0, mapping.sourcePath.split('.').length - 1) * 10}px` }}
                   title={mapping.sourcePath}
                 >
                   {mapping.sourcePath}
                 </div>
-                <select
-                  className={`${inputClass} col-span-5`}
-                  value={mapping.targetPath}
-                  onChange={(event) => {
+                <Cascader
+                  className="col-span-5"
+                  options={mappingTargetCascaderOptions}
+                  placeholder="选择全局/流程参数"
+                  value={buildMappingCascaderValue(mapping.targetPath)}
+                  allowClear
+                  changeOnSelect
+                  showSearch
+                  onChange={(value) => {
+                    const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
                     const next = [...config.writebackMappings]
-                    next[index] = { ...mapping, targetPath: event.target.value }
+                    next[index] = { ...mapping, targetPath: selected }
                     updateConfig({ ...config, writebackMappings: next })
                   }}
-                >
-                  <option value="">选择全局/流程参数</option>
-                  {mappingTargetOptions.map(option => (
-                    <option key={`http-map-${index}-${option.key}`} value={option.key}>{option.displayLabel}</option>
-                  ))}
-                </select>
+                />
                 <button
                   type="button"
                   className="col-span-2 rounded bg-red-50 px-2 py-1 text-xs text-red-600"
@@ -836,6 +1311,482 @@ export default function NodeConfigPanel({
               </div>
             ))}
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  const resolveAPIGroupKey = (path: string) => {
+    const trimmed = String(path || '').trim()
+    if (!trimmed)
+      return ''
+    const normalized = trimmed.startsWith('/') ? trimmed.slice(1) : trimmed
+    const parts = normalized.split('/').filter(Boolean)
+    const withoutApi = parts[0] === 'api' ? parts.slice(1) : parts
+    if (withoutApi.length === 0)
+      return ''
+    if (withoutApi[0] === 'workflow' && withoutApi[1])
+      return `${withoutApi[0]}/${withoutApi[1]}`
+    return withoutApi[0]
+  }
+
+  const renderApiRequestConfig = () => {
+    const config = ensureNodeConfig(BlockEnum.ApiRequest, activeNode.data.config) as ApiRequestNodeConfig
+    const updateConfig = (nextConfig: ApiRequestNodeConfig) => updateBase({ config: nextConfig })
+
+    const groupOptions = Array
+      .from(new Set(apiRoutes.map(route => resolveAPIGroupKey(route.path)).filter(Boolean)))
+      .sort()
+
+    const selectedGroup = resolveAPIGroupKey(config.route.path)
+    const filteredRoutes = selectedGroup
+      ? apiRoutes.filter(route => resolveAPIGroupKey(route.path) === selectedGroup)
+      : apiRoutes
+
+    const selectedRoute = apiRoutes.find(route => route.method === config.route.method && route.path === config.route.path) ?? null
+    const paramDefs = (selectedRoute?.params?.length ? selectedRoute.params : config.params) ?? []
+
+    const paramValueKey = (location: ApiRequestParamLocation, name: string) => `${location}:${name}`
+    const valueByKey = new Map<string, string>()
+    config.paramValues.forEach((item) => {
+      valueByKey.set(paramValueKey(item.in, item.name), item.value)
+    })
+
+    const upsertRoute = (route: APIRouteDoc | null) => {
+      if (!route) {
+        updateConfig({
+          ...config,
+          route: { ...config.route, path: '' },
+          params: [],
+          paramValues: [],
+        })
+        setApiJsonDraftByNode(prev => ({ ...prev, [activeNode.id]: {} }))
+        setApiJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: {} }))
+        return
+      }
+
+      const nextParams = Array.isArray(route.params) ? route.params : []
+      const nextValues = nextParams.map((param) => {
+        const key = paramValueKey(param.in as ApiRequestParamLocation, param.name)
+        const existing = valueByKey.get(key) ?? ''
+        return {
+          in: param.in as ApiRequestParamLocation,
+          name: param.name,
+          value: existing,
+        }
+      })
+
+      updateConfig({
+        ...config,
+        route: {
+          method: route.method as ApiRequestNodeConfig['route']['method'],
+          path: route.path,
+        },
+        params: nextParams,
+        paramValues: nextValues,
+      })
+
+      setApiJsonDraftByNode(prev => ({
+        ...prev,
+        [activeNode.id]: {
+          path: stringifyPretty(toParamObject(nextParams, nextValues, 'path')),
+          query: stringifyPretty(toParamObject(nextParams, nextValues, 'query')),
+          body: stringifyPretty(toParamObject(nextParams, nextValues, 'body')),
+        },
+      }))
+      setApiJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: {} }))
+    }
+
+    const updateParamValue = (location: ApiRequestParamLocation, name: string, value: string) => {
+      const next = config.paramValues.slice()
+      const index = next.findIndex(item => item.in === location && item.name === name)
+      if (index >= 0)
+        next[index] = { ...next[index], value }
+      else
+        next.push({ in: location, name, value })
+      updateConfig({ ...config, paramValues: next })
+    }
+
+    const missingRequired = paramDefs.filter((param) => {
+      const required = Boolean(param.validation?.required)
+      if (!required)
+        return false
+      const raw = valueByKey.get(paramValueKey(param.in as ApiRequestParamLocation, param.name)) ?? ''
+      return !raw.trim()
+    })
+
+    const applyDraft = (location: ApiRequestParamLocation) => {
+      const fallback = stringifyPretty(toParamObject(paramDefs, config.paramValues, location))
+      const text = apiJsonDraftByNode[activeNode.id]?.[location] ?? fallback
+      const parsed = parseJsonObject(text)
+      if (!parsed.ok) {
+        setApiJsonErrorByNode(prev => ({
+          ...prev,
+          [activeNode.id]: {
+            ...(prev[activeNode.id] ?? {}),
+            [location]: parsed.error,
+          },
+        }))
+        return
+      }
+      setApiJsonErrorByNode(prev => ({
+        ...prev,
+        [activeNode.id]: {
+          ...(prev[activeNode.id] ?? {}),
+          [location]: '',
+        },
+      }))
+      const nextParamValues = upsertParamValuesFromObject(config, paramDefs, location, parsed.value)
+      updateConfig({ ...config, params: paramDefs, paramValues: nextParamValues })
+    }
+
+    const fillRequiredTemplate = (location: ApiRequestParamLocation) => {
+      const requiredKeys = paramDefs
+        .filter(item => item.in === location && item.validation?.required)
+        .map(item => item.name)
+      const template: Record<string, unknown> = {}
+      requiredKeys.forEach((key) => {
+        template[key] = ''
+      })
+      setApiJsonDraftByNode(prev => ({
+        ...prev,
+        [activeNode.id]: {
+          ...(prev[activeNode.id] ?? {}),
+          [location]: stringifyPretty(template),
+        },
+      }))
+      setApiJsonErrorByNode(prev => ({
+        ...prev,
+        [activeNode.id]: {
+          ...(prev[activeNode.id] ?? {}),
+          [location]: '',
+        },
+      }))
+    }
+
+    const renderJsonParamSection = (title: string, location: ApiRequestParamLocation) => {
+      const list = paramDefs.filter(param => param.in === location)
+      if (!list.length)
+        return null
+
+      const requiredKeys = list.filter(item => item.validation?.required).map(item => item.name)
+      const allowedKeys = list.map(item => item.name)
+      const draft = apiJsonDraftByNode[activeNode.id]?.[location]
+        ?? stringifyPretty(toParamObject(paramDefs, config.paramValues, location))
+      const errorText = apiJsonErrorByNode[activeNode.id]?.[location] ?? ''
+      const selectedInsertKey = apiJsonInsertKeyByNode[activeNode.id]?.[location] ?? ''
+      const insertKey = `${activeNode.id}:${location}`
+
+      const insertVariable = () => {
+        const selected = variableOptions.find(option => option.key === selectedInsertKey)
+        if (!selected)
+          return
+        const token = selected.placeholder
+        const textarea = apiJsonTextareaRefs.current[insertKey]
+        const currentValue = apiJsonDraftByNode[activeNode.id]?.[location]
+          ?? stringifyPretty(toParamObject(paramDefs, config.paramValues, location))
+        if (!textarea) {
+          setApiJsonDraftByNode(prev => ({
+            ...prev,
+            [activeNode.id]: {
+              ...(prev[activeNode.id] ?? {}),
+              [location]: `${currentValue}${token}`,
+            },
+          }))
+          return
+        }
+
+        const start = textarea.selectionStart ?? currentValue.length
+        const end = textarea.selectionEnd ?? currentValue.length
+        const nextValue = `${currentValue.slice(0, start)}${token}${currentValue.slice(end)}`
+        setApiJsonDraftByNode(prev => ({
+          ...prev,
+          [activeNode.id]: {
+            ...(prev[activeNode.id] ?? {}),
+            [location]: nextValue,
+          },
+        }))
+
+        requestAnimationFrame(() => {
+          textarea.focus()
+          const caret = start + token.length
+          textarea.setSelectionRange(caret, caret)
+        })
+      }
+
+      return (
+        <div className="space-y-2 rounded border border-gray-200 p-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-semibold text-gray-700">{title}</div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
+                onClick={() => fillRequiredTemplate(location)}
+              >
+                生成必填模板
+              </button>
+              <button
+                type="button"
+                className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
+                onClick={() => applyDraft(location)}
+              >
+                应用
+              </button>
+            </div>
+          </div>
+          {requiredKeys.length > 0 && (
+            <div className="text-[11px] text-gray-500">必填：{requiredKeys.join('、')}</div>
+          )}
+          <div className="text-[11px] text-gray-400">可用字段：{allowedKeys.join('、')}</div>
+          <div className="grid grid-cols-12 gap-2">
+            <select
+              className="col-span-10 rounded border border-gray-300 px-2 py-1.5 text-xs"
+              value={selectedInsertKey}
+              onChange={event => setApiJsonInsertKeyByNode(prev => ({
+                ...prev,
+                [activeNode.id]: {
+                  ...(prev[activeNode.id] ?? {}),
+                  [location]: event.target.value,
+                },
+              }))}
+            >
+              <option value="">选择参数（插入到 JSON）</option>
+              {variableOptions.map(option => (
+                <option key={`api-json-insert-${location}-${option.key}`} value={option.key}>{option.displayLabel}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="col-span-2 rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"
+              onClick={insertVariable}
+            >
+              插入
+            </button>
+          </div>
+          <textarea
+            ref={(el) => {
+              apiJsonTextareaRefs.current[insertKey] = el
+            }}
+            className="h-36 w-full rounded border border-gray-300 px-2 py-1.5 font-mono text-xs"
+            value={draft}
+            placeholder='{"id":"{{workflow.id}}"}'
+            onChange={(event) => {
+              const nextText = event.target.value
+              setApiJsonDraftByNode(prev => ({
+                ...prev,
+                [activeNode.id]: {
+                  ...(prev[activeNode.id] ?? {}),
+                  [location]: nextText,
+                },
+              }))
+            }}
+            onBlur={() => applyDraft(location)}
+          />
+          {!!errorText && <div className="text-xs text-rose-600">JSON 错误：{errorText}</div>}
+        </div>
+      )
+    }
+
+    const successExampleDataPaths = (() => {
+      const success = (selectedRoute?.responses ?? []).find(item => item.httpStatus === 200) ?? (selectedRoute?.responses ?? [])[0]
+      const example = success?.example as any
+      const data = example?.data
+      return extractPathsFromExample(data)
+    })()
+
+    const appendMappingsFromExample = () => {
+      const paths = successExampleDataPaths
+      if (paths.length === 0)
+        return
+      const generated = paths.map(path => ({ sourcePath: `data.${path}`, targetPath: '' }))
+      updateConfig({ ...config, writebackMappings: [...config.writebackMappings, ...generated] })
+    }
+
+    const suggestedSourcePaths = [
+      'ok',
+      'statusCode',
+      'httpStatus',
+      'message',
+      'url',
+      'method',
+      'data',
+      'response',
+      ...successExampleDataPaths.map(path => `data.${path}`),
+    ]
+
+    return (
+      <div className={sectionClass}>
+        <div className="text-xs font-semibold text-gray-700">API 请求</div>
+        {!!apiRoutesError && (
+          <div className="rounded border border-rose-200 bg-rose-50 px-2 py-2 text-xs text-rose-700">
+            {apiRoutesError}
+          </div>
+        )}
+        <div className="grid grid-cols-12 gap-2">
+          <div className="col-span-4">
+            <label className={labelClass}>分组</label>
+            <select
+              className={inputClass}
+              value={selectedGroup}
+              onChange={(event) => {
+                const nextGroup = event.target.value
+                const nextRoutes = apiRoutes.filter(route => resolveAPIGroupKey(route.path) === nextGroup)
+                const next = nextRoutes[0] ?? null
+                upsertRoute(next)
+              }}
+              disabled={apiRoutes.length === 0}
+            >
+              <option value="">选择分组</option>
+              {groupOptions.map(group => (
+                <option key={`api-group-${group}`} value={group}>{group}</option>
+              ))}
+            </select>
+          </div>
+          <div className="col-span-8">
+            <label className={labelClass}>路由</label>
+            <select
+              className={inputClass}
+              value={`${config.route.method} ${config.route.path}`.trim()}
+              onChange={(event) => {
+                const raw = event.target.value
+                const [nextMethod, ...rest] = raw.split(' ')
+                const nextPath = rest.join(' ').trim()
+                const matched = apiRoutes.find(route => route.method === nextMethod && route.path === nextPath) ?? null
+                upsertRoute(matched)
+              }}
+              disabled={apiRoutes.length === 0}
+            >
+              <option value="">选择路由</option>
+              {filteredRoutes.map(route => (
+                <option key={`api-route-${route.method}-${route.path}`} value={`${route.method} ${route.path}`}>
+                  {route.method} {route.path}{route.summary ? ` · ${route.summary}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {!!missingRequired.length && (
+          <div className="rounded border border-rose-200 bg-rose-50 px-2 py-2 text-xs text-rose-700">
+            必填参数未配置：{missingRequired.map(item => `${item.in}.${item.name}`).join('，')}
+          </div>
+        )}
+
+        {renderJsonParamSection('Path 参数（JSON）', 'path')}
+        {renderJsonParamSection('Query 参数（JSON）', 'query')}
+        {renderJsonParamSection('Body 参数（JSON）', 'body')}
+
+        <div className="grid grid-cols-12 gap-2">
+          <div className="col-span-6">
+            <label className={labelClass}>成功 statusCode</label>
+            <input
+              className={inputClass}
+              type="number"
+              min="100"
+              max="599"
+              value={config.successStatusCode}
+              onChange={event => updateConfig({ ...config, successStatusCode: Number(event.target.value || 200) })}
+            />
+          </div>
+          <div className="col-span-6">
+            <label className={labelClass}>超时（秒）</label>
+            <input
+              className={inputClass}
+              type="number"
+              min="1"
+              value={config.timeout}
+              onChange={event => updateConfig({ ...config, timeout: Number(event.target.value || 30) })}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2 rounded border border-gray-200 p-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-semibold text-gray-700">响应写入参数</div>
+            <div className="flex items-center gap-2">
+              <select
+                className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700"
+                value=""
+                onChange={(event) => {
+                  const value = String(event.target.value || '').trim()
+                  if (!value)
+                    return
+                  updateConfig({
+                    ...config,
+                    writebackMappings: [...config.writebackMappings, { sourcePath: value, targetPath: '' }],
+                  })
+                }}
+              >
+                <option value="">快捷添加 sourcePath</option>
+                {suggestedSourcePaths.map(item => (
+                  <option key={`api-source-${item}`} value={item}>{item}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
+                onClick={() => updateConfig({
+                  ...config,
+                  writebackMappings: [...config.writebackMappings, { sourcePath: '', targetPath: '' }],
+                })}
+              >
+                新增映射
+              </button>
+              <button
+                type="button"
+                disabled={successExampleDataPaths.length === 0}
+                className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={appendMappingsFromExample}
+              >
+                从示例生成
+              </button>
+            </div>
+          </div>
+          {config.writebackMappings.length === 0 && (
+            <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
+              sourcePath 从节点输出读取（示例：data.id / response.data.id）。
+            </div>
+          )}
+          {config.writebackMappings.map((mapping, index) => (
+            <div key={`api-writeback-${index}`} className="grid grid-cols-12 gap-2">
+              <input
+                className={`${inputClass} col-span-5 font-mono text-xs`}
+                placeholder="sourcePath"
+                value={mapping.sourcePath}
+                onChange={(event) => {
+                  const next = [...config.writebackMappings]
+                  next[index] = { ...mapping, sourcePath: event.target.value }
+                  updateConfig({ ...config, writebackMappings: next })
+                }}
+              />
+              <Cascader
+                className="col-span-5"
+                options={mappingTargetCascaderOptions}
+                placeholder="选择全局/流程参数"
+                value={buildMappingCascaderValue(mapping.targetPath)}
+                allowClear
+                changeOnSelect
+                showSearch
+                onChange={(value) => {
+                  const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                  const next = [...config.writebackMappings]
+                  next[index] = { ...mapping, targetPath: selected }
+                  updateConfig({ ...config, writebackMappings: next })
+                }}
+              />
+              <button
+                type="button"
+                className="col-span-2 rounded bg-red-50 px-2 py-1 text-xs text-red-600"
+                onClick={() => updateConfig({
+                  ...config,
+                  writebackMappings: config.writebackMappings.filter((_, idx) => idx !== index),
+                })}
+              >
+                删除
+              </button>
+            </div>
+          ))}
         </div>
       </div>
     )
@@ -922,6 +1873,7 @@ export default function NodeConfigPanel({
     if (nodeType === BlockEnum.Iteration) return renderIterationConfig()
     if (nodeType === BlockEnum.Code) return renderCodeConfig()
     if (nodeType === BlockEnum.HttpRequest) return renderHttpConfig()
+    if (nodeType === BlockEnum.ApiRequest) return renderApiRequestConfig()
     if (nodeType === BlockEnum.End) return renderEndConfig()
     return null
   }

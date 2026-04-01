@@ -1,6 +1,7 @@
 import {
   BlockEnum,
   type CodeNodeConfig,
+  type ApiRequestNodeConfig,
   type DifyNodeConfig,
   type DifyNodeConfigMap,
   type EndNodeConfig,
@@ -178,6 +179,18 @@ const defaultHttpConfig = (): HttpNodeConfig => ({
   writebackMappings: [],
 })
 
+const defaultApiRequestConfig = (): ApiRequestNodeConfig => ({
+  route: {
+    method: 'GET',
+    path: '',
+  },
+  params: [],
+  paramValues: [],
+  timeout: 30,
+  successStatusCode: 200,
+  writebackMappings: [],
+})
+
 const defaultInputConfig = (): InputNodeConfig => ({
   fields: [
     {
@@ -199,6 +212,7 @@ const defaultFactories: { [K in BlockEnum]: () => DifyNodeConfigMap[K] } = {
   [BlockEnum.Iteration]: defaultIterationConfig,
   [BlockEnum.Code]: defaultCodeConfig,
   [BlockEnum.HttpRequest]: defaultHttpConfig,
+  [BlockEnum.ApiRequest]: defaultApiRequestConfig,
   [BlockEnum.Input]: defaultInputConfig,
 }
 
@@ -363,6 +377,64 @@ export const ensureNodeConfig = <K extends BlockEnum>(
         ...fallback.authorization,
         ...(isObject(http.authorization) ? http.authorization : {}),
       },
+    } as DifyNodeConfigMap[K]
+  }
+
+  if (type === BlockEnum.ApiRequest) {
+    const fallback = defaultApiRequestConfig()
+    if (!config || !isObject(config))
+      return fallback as DifyNodeConfigMap[K]
+    const api = config as Partial<ApiRequestNodeConfig>
+    const route = isObject(api.route) ? api.route as Partial<ApiRequestNodeConfig['route']> : {}
+    return {
+      ...fallback,
+      ...api,
+      route: {
+        ...fallback.route,
+        ...route,
+        method: (route.method === 'GET' || route.method === 'POST' || route.method === 'PUT' || route.method === 'PATCH' || route.method === 'DELETE')
+          ? route.method
+          : fallback.route.method,
+        path: typeof route.path === 'string' ? route.path : fallback.route.path,
+      },
+      params: Array.isArray(api.params)
+        ? api.params.map((item) => {
+            const def = isObject(item) ? item as Record<string, unknown> : {}
+            const validation = isObject(def.validation) ? def.validation as Record<string, unknown> : {}
+            return {
+              name: typeof def.name === 'string' ? def.name : '',
+              in: def.in === 'path' || def.in === 'query' || def.in === 'body' ? (def.in as 'path' | 'query' | 'body') : 'query',
+              type: typeof def.type === 'string' ? def.type : 'string',
+              description: typeof def.description === 'string' ? def.description : undefined,
+              validation: {
+                required: typeof validation.required === 'boolean' ? validation.required : undefined,
+                enum: Array.isArray(validation.enum) ? validation.enum.map(v => String(v)) : undefined,
+                min: typeof validation.min === 'number' ? validation.min : undefined,
+                max: typeof validation.max === 'number' ? validation.max : undefined,
+                pattern: typeof validation.pattern === 'string' ? validation.pattern : undefined,
+              },
+            }
+          })
+        : fallback.params,
+      paramValues: Array.isArray(api.paramValues)
+        ? api.paramValues.map((item) => {
+            const entry = isObject(item) ? item as Record<string, unknown> : {}
+            const inValue = entry.in
+            return {
+              name: typeof entry.name === 'string' ? entry.name : '',
+              in: inValue === 'path' || inValue === 'query' || inValue === 'body' ? (inValue as 'path' | 'query' | 'body') : 'query',
+              value: typeof entry.value === 'string' ? entry.value : '',
+            }
+          })
+        : fallback.paramValues,
+      timeout: typeof api.timeout === 'number' ? api.timeout : fallback.timeout,
+      successStatusCode: typeof api.successStatusCode === 'number' ? api.successStatusCode : fallback.successStatusCode,
+      writebackMappings: Array.isArray(api.writebackMappings)
+        ? api.writebackMappings.map(item => ({
+            sourcePath: typeof item?.sourcePath === 'string' ? item.sourcePath : '',
+            targetPath: typeof item?.targetPath === 'string' ? item.targetPath : '',
+          }))
+        : fallback.writebackMappings,
     } as DifyNodeConfigMap[K]
   }
 

@@ -62,6 +62,43 @@ func NewTemplateRepository() TemplateRepository {
 		"note":       "这是演示模板：通过 {% for %} / {% if %} 组合，呈现现代化布局与数据驱动渲染。",
 		"footerNote": "生成时间：2026-03-30 · 仅用于演示",
 	})
+	admissionContext, _ := json.Marshal(map[string]any{
+		"title":    "准入结果",
+		"decision": "reject",
+		"msg":      "不通过准入：触发2条硬性规则",
+		"rule": []any{
+			map[string]any{
+				"no":       1,
+				"level":    "hard",
+				"hit":      true,
+				"ok":       false,
+				"rule":     "地级市一般预算收入低于50亿元",
+				"group":    "发行主体\n所在区域",
+				"category": "集团制度",
+				"remark":   "以预警通信息为准",
+			},
+			map[string]any{
+				"no":       2,
+				"level":    "guidance",
+				"hit":      true,
+				"ok":       false,
+				"rule":     "区县级一般预算收入低于20亿元",
+				"group":    "",
+				"category": "评审部窗口指导",
+				"remark":   "以预警通信息为准",
+			},
+			map[string]any{
+				"no":       9,
+				"level":    "hard",
+				"hit":      true,
+				"ok":       false,
+				"rule":     "申请人持续经营时间未满1年（若申请人核心子公司持续经营超过1年，可予以豁免）",
+				"group":    "",
+				"category": "集团制度",
+				"remark":   "底层资产符合要求的资产证券化业务不适用",
+			},
+		},
+	})
 	return &templateRepository{
 		templates: map[int64]model.Template{
 			1: {
@@ -280,8 +317,251 @@ func NewTemplateRepository() TemplateRepository {
 </html>`,
 				DefaultContextJSON: defaultContext,
 			},
+			2: {
+				BaseEntity: model.BaseEntity{
+					ID:        2,
+					CreatedAt: now,
+					UpdatedAt: now,
+					CreatedBy: 1,
+					UpdatedBy: 1,
+				},
+				TemplateKey:        "admission-template-modern",
+				Name:               "准入结果模板（精简）",
+				Description:        "准入结果/命中规则展示（精简样式）",
+				Engine:             model.TemplateEngineJinja2,
+				OutputType:         model.TemplateOutputTypeHTML,
+				Status:             model.TemplateStatusActive,
+				Content: `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% if title is defined and title %}{{ title }}{% else %}准入结果{% endif %}</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto}
+    body{min-height:100vh;display:grid;place-items:center;background:#f8fafc;padding:24px}
+    .clean{max-width:680px;width:100%;background:white;border-radius:28px;padding:36px}
+    .state{font-size:24px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:10px}
+    .allow{color:#059669}
+    .deny{color:#dc2626}
+    .msg{font-size:16px;color:#475569;margin-bottom:32px;padding-bottom:20px;border-bottom:1px solid #e2e8f0}
+    .rule-item{padding:20px;border-radius:18px;background:#fafafa;margin-bottom:14px}
+    .rule-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+    .rule-no{font-weight:700;color:#1e293b;font-size:16px}
+    .rule-level{padding:4px 10px;border-radius:8px;font-size:12px;font-weight:600}
+    .level-hard{background:#fef2f2;color:#dc2626}
+    .level-guidance{background:#fffbeb;color:#d97706}
+    .rule-text{font-size:15px;color:#1e293b;margin-bottom:8px;line-height:1.5}
+    .rule-meta{font-size:13px;color:#64748b;display:flex;flex-wrap:wrap;gap:12px;margin-top:6px}
+    .meta-label{color:#94a3b8}
+  </style>
+</head>
+<body>
+  {% set _passed = false %}
+  {% if decision is defined %}
+    {% if decision == "approve" or decision == "pass" or decision == "allow" %}
+      {% set _passed = true %}
+    {% endif %}
+  {% endif %}
+
+  {% set _message = "" %}
+  {% if msg is defined %}{% set _message = msg %}{% endif %}
+
+  {% set _rules = [] %}
+  {% if rule is defined %}{% set _rules = rule %}{% endif %}
+
+  <div class="clean">
+    {% if _passed %}
+      <div class="state allow">✅ 准入</div>
+    {% else %}
+      <div class="state deny">❌ 未准入</div>
+    {% endif %}
+
+    {% if _message %}
+      <div class="msg">{{ _message }}</div>
+    {% endif %}
+
+    {% if _rules|length > 0 %}
+      <div class="rule-list">
+        {% for r in _rules %}
+          {% if r.level is defined and r.level == "hard" %}
+            {% set _no = loop.index %}
+            {% if r.no is defined %}{% set _no = r.no %}{% endif %}
+
+            {% set _level = "" %}
+            {% if r.level is defined %}{% set _level = r.level %}{% endif %}
+
+            {% set _levelLabel = "" %}
+            {% if r.levelLabel is defined %}{% set _levelLabel = r.levelLabel %}{% endif %}
+
+            {% set _text = "" %}
+            {% if r.rule is defined %}{% set _text = r.rule %}{% endif %}
+
+            {% set _group = "" %}
+            {% if r.group is defined %}{% set _group = r.group %}{% endif %}
+
+            {% set _category = "" %}
+            {% if r.category is defined %}{% set _category = r.category %}{% endif %}
+
+            {% set _remark = "" %}
+            {% if r.remark is defined %}{% set _remark = r.remark %}{% endif %}
+
+            <div class="rule-item">
+              <div class="rule-header">
+                <div class="rule-no">规则 #{{ _no }}</div>
+
+                {% if _levelLabel %}
+                  {% set _tag = _levelLabel %}
+                {% elif _level == "hard" %}
+                  {% set _tag = "硬性规则" %}
+                {% elif _level == "guidance" %}
+                  {% set _tag = "窗口指导" %}
+                {% else %}
+                  {% set _tag = "规则" %}
+                {% endif %}
+
+                <div class="rule-level {% if _level == 'hard' %}level-hard{% elif _level == 'guidance' %}level-guidance{% endif %}">
+                  {{ _tag }}
+                </div>
+              </div>
+
+              {% if _text %}
+                <div class="rule-text">{{ _text }}</div>
+              {% endif %}
+
+              {% if _group or _category or _remark %}
+                <div class="rule-meta">
+                  {% if _group %}<span><span class="meta-label">分组：</span>{{ _group }}</span>{% endif %}
+                  {% if _category %}<span><span class="meta-label">分类：</span>{{ _category }}</span>{% endif %}
+                  {% if _remark %}<span><span class="meta-label">备注：</span>{{ _remark }}</span>{% endif %}
+                </div>
+              {% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+
+        {% for r in _rules %}
+          {% if r.level is defined and r.level == "guidance" %}
+            {% set _no = loop.index %}
+            {% if r.no is defined %}{% set _no = r.no %}{% endif %}
+
+            {% set _level = "" %}
+            {% if r.level is defined %}{% set _level = r.level %}{% endif %}
+
+            {% set _levelLabel = "" %}
+            {% if r.levelLabel is defined %}{% set _levelLabel = r.levelLabel %}{% endif %}
+
+            {% set _text = "" %}
+            {% if r.rule is defined %}{% set _text = r.rule %}{% endif %}
+
+            {% set _group = "" %}
+            {% if r.group is defined %}{% set _group = r.group %}{% endif %}
+
+            {% set _category = "" %}
+            {% if r.category is defined %}{% set _category = r.category %}{% endif %}
+
+            {% set _remark = "" %}
+            {% if r.remark is defined %}{% set _remark = r.remark %}{% endif %}
+
+            <div class="rule-item">
+              <div class="rule-header">
+                <div class="rule-no">规则 #{{ _no }}</div>
+
+                {% if _levelLabel %}
+                  {% set _tag = _levelLabel %}
+                {% elif _level == "hard" %}
+                  {% set _tag = "硬性规则" %}
+                {% elif _level == "guidance" %}
+                  {% set _tag = "窗口指导" %}
+                {% else %}
+                  {% set _tag = "规则" %}
+                {% endif %}
+
+                <div class="rule-level {% if _level == 'hard' %}level-hard{% elif _level == 'guidance' %}level-guidance{% endif %}">
+                  {{ _tag }}
+                </div>
+              </div>
+
+              {% if _text %}
+                <div class="rule-text">{{ _text }}</div>
+              {% endif %}
+
+              {% if _group or _category or _remark %}
+                <div class="rule-meta">
+                  {% if _group %}<span><span class="meta-label">分组：</span>{{ _group }}</span>{% endif %}
+                  {% if _category %}<span><span class="meta-label">分类：</span>{{ _category }}</span>{% endif %}
+                  {% if _remark %}<span><span class="meta-label">备注：</span>{{ _remark }}</span>{% endif %}
+                </div>
+              {% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+
+        {% for r in _rules %}
+          {% if r.level is not defined or r.level != "hard" and r.level != "guidance" %}
+            {% set _no = loop.index %}
+            {% if r.no is defined %}{% set _no = r.no %}{% endif %}
+
+            {% set _level = "" %}
+            {% if r.level is defined %}{% set _level = r.level %}{% endif %}
+
+            {% set _levelLabel = "" %}
+            {% if r.levelLabel is defined %}{% set _levelLabel = r.levelLabel %}{% endif %}
+
+            {% set _text = "" %}
+            {% if r.rule is defined %}{% set _text = r.rule %}{% endif %}
+
+            {% set _group = "" %}
+            {% if r.group is defined %}{% set _group = r.group %}{% endif %}
+
+            {% set _category = "" %}
+            {% if r.category is defined %}{% set _category = r.category %}{% endif %}
+
+            {% set _remark = "" %}
+            {% if r.remark is defined %}{% set _remark = r.remark %}{% endif %}
+
+            <div class="rule-item">
+              <div class="rule-header">
+                <div class="rule-no">规则 #{{ _no }}</div>
+
+                {% if _levelLabel %}
+                  {% set _tag = _levelLabel %}
+                {% elif _level == "hard" %}
+                  {% set _tag = "硬性规则" %}
+                {% elif _level == "guidance" %}
+                  {% set _tag = "窗口指导" %}
+                {% else %}
+                  {% set _tag = "规则" %}
+                {% endif %}
+
+                <div class="rule-level {% if _level == 'hard' %}level-hard{% elif _level == 'guidance' %}level-guidance{% endif %}">
+                  {{ _tag }}
+                </div>
+              </div>
+
+              {% if _text %}
+                <div class="rule-text">{{ _text }}</div>
+              {% endif %}
+
+              {% if _group or _category or _remark %}
+                <div class="rule-meta">
+                  {% if _group %}<span><span class="meta-label">分组：</span>{{ _group }}</span>{% endif %}
+                  {% if _category %}<span><span class="meta-label">分类：</span>{{ _category }}</span>{% endif %}
+                  {% if _remark %}<span><span class="meta-label">备注：</span>{{ _remark }}</span>{% endif %}
+                </div>
+              {% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+</body>
+</html>`,
+				DefaultContextJSON: admissionContext,
+			},
 		},
-		nextTemplateID: 2,
+		nextTemplateID: 3,
 	}
 }
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import {
   applyEdgeChanges,
   applyNodeChanges,
@@ -211,6 +211,7 @@ const buildIterationContainerLayout = (children: IterationNodeConfig['children']
 type WorkflowCanvasInnerProps = {
   initialDSL: DifyWorkflowDSL
   onDSLChange?: (dsl: DifyWorkflowDSL) => void
+  apiRef?: React.Ref<WorkflowCanvasHandle>
 }
 
 type WorkflowRunSnapshot = {
@@ -219,7 +220,12 @@ type WorkflowRunSnapshot = {
   workflowParameters: WorkflowParameter[]
 }
 
-function WorkflowCanvasInner({ initialDSL, onDSLChange }: WorkflowCanvasInnerProps) {
+export type WorkflowCanvasHandle = {
+  flushActiveNode: () => void
+  getDSL: () => DifyWorkflowDSL
+}
+
+function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvasInnerProps) {
   const [runModalOpen, setRunModalOpen] = useState(false)
   const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ nodes: [], edges: [], workflowParameters: [] })
   const latestNodesRef = useRef<DifyNode[]>([])
@@ -531,6 +537,9 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange }: WorkflowCanvasInnerPro
     })
 
     changes.forEach((change) => {
+      if (change.type === 'dimensions')
+        return
+
       if (!('id' in change)) {
         mainChanges.push(change)
         return
@@ -581,6 +590,34 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange }: WorkflowCanvasInnerPro
     }
 
     if (!changed)
+      return
+
+    const hasMeaningfulNodeUpdate = (prev: DifyNode[], next: DifyNode[]) => {
+      if (prev === next)
+        return false
+      if (prev.length !== next.length)
+        return true
+
+      const prevById = new Map(prev.map(node => [node.id, node]))
+      for (const node of next) {
+        const old = prevById.get(node.id)
+        if (!old)
+          return true
+
+        const x1 = node.position?.x ?? 0
+        const y1 = node.position?.y ?? 0
+        const x0 = old.position?.x ?? 0
+        const y0 = old.position?.y ?? 0
+        if (x1 !== x0 || y1 !== y0)
+          return true
+
+        if (Boolean(node.selected) !== Boolean(old.selected))
+          return true
+      }
+      return false
+    }
+
+    if (!hasMeaningfulNodeUpdate(nodes, nextNodes))
       return
 
     setNodes(nextNodes)
@@ -777,6 +814,49 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange }: WorkflowCanvasInnerPro
     fitView({ duration: 260, padding: 0.22 })
   }
 
+  const getEffectiveNodes = () => {
+    if (!activeNode)
+      return nodes
+
+    const childRef = parseChildNodeId(activeNode.id)
+    if (!childRef) {
+      return nodes.map(item => (item.id === activeNode.id ? activeNode : item))
+    }
+
+    return updateIterationChildren(nodes, childRef.parentId, children => ({
+      ...children,
+      nodes: children.nodes.map((item) => {
+        if (item.id !== childRef.childId)
+          return item
+        return {
+          ...item,
+          data: {
+            title: activeNode.data.title,
+            desc: activeNode.data.desc,
+            type: activeNode.data.type,
+            config: activeNode.data.config,
+          },
+        }
+      }),
+    }))
+  }
+
+  const getDSL = () => {
+    return {
+      nodes: getEffectiveNodes(),
+      edges,
+      globalVariables,
+      workflowParameters,
+      workflowVariableScopes,
+      viewport: getViewport(),
+    }
+  }
+
+  useImperativeHandle(apiRef, () => ({
+    flushActiveNode: () => handleSaveActiveNode(),
+    getDSL,
+  }), [activeNode, edges, globalVariables, workflowParameters, workflowVariableScopes])
+
   return (
     <div className="space-y-3">
       <WorkflowToolbar
@@ -930,7 +1010,7 @@ type WorkflowCanvasProps = {
   onDSLChange?: (dsl: DifyWorkflowDSL) => void
 }
 
-export default function WorkflowCanvas({ initialDSL, onDSLChange }: WorkflowCanvasProps) {
+const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasProps>(({ initialDSL, onDSLChange }, ref) => {
   const safeInitialDSL = useMemo(() => {
     try {
       return parseDifyWorkflowDSL(initialDSL ?? demoDSL)
@@ -942,7 +1022,11 @@ export default function WorkflowCanvas({ initialDSL, onDSLChange }: WorkflowCanv
 
   return (
     <ReactFlowProvider>
-      <WorkflowCanvasInner initialDSL={safeInitialDSL} onDSLChange={onDSLChange} />
+      <WorkflowCanvasInner initialDSL={safeInitialDSL} onDSLChange={onDSLChange} apiRef={ref} />
     </ReactFlowProvider>
   )
-}
+})
+
+WorkflowCanvas.displayName = 'WorkflowCanvas'
+
+export default WorkflowCanvas

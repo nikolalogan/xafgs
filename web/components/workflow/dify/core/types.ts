@@ -8,6 +8,7 @@ export enum BlockEnum {
   Iteration = 'iteration',
   Code = 'code',
   HttpRequest = 'http-request',
+  ApiRequest = 'api-request',
   Input = 'input',
 }
 
@@ -136,6 +137,43 @@ export type HttpNodeConfig = {
   }>
 }
 
+export type ApiRequestParamLocation = 'path' | 'query' | 'body'
+
+export type ApiRequestParamDef = {
+  name: string
+  in: ApiRequestParamLocation
+  type: string
+  description?: string
+  validation?: {
+    required?: boolean
+    enum?: string[]
+    min?: number
+    max?: number
+    pattern?: string
+  }
+}
+
+export type ApiRequestParamValue = {
+  name: string
+  in: ApiRequestParamLocation
+  value: string
+}
+
+export type ApiRequestNodeConfig = {
+  route: {
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+    path: string
+  }
+  params: ApiRequestParamDef[]
+  paramValues: ApiRequestParamValue[]
+  timeout: number
+  successStatusCode: number
+  writebackMappings: Array<{
+    sourcePath: string
+    targetPath: string
+  }>
+}
+
 export type InputNodeConfig = {
   fields: Array<{
     name: string
@@ -157,6 +195,7 @@ export type DifyNodeConfigMap = {
   [BlockEnum.Iteration]: IterationNodeConfig
   [BlockEnum.Code]: CodeNodeConfig
   [BlockEnum.HttpRequest]: HttpNodeConfig
+  [BlockEnum.ApiRequest]: ApiRequestNodeConfig
   [BlockEnum.Input]: InputNodeConfig
 }
 
@@ -166,7 +205,7 @@ export type WorkflowGlobalVariable = {
   name: string
   valueType: 'string' | 'number' | 'boolean' | 'array' | 'object'
   defaultValue?: string
-  jsonSchema?: string
+  json?: string
   description: string
 }
 
@@ -176,7 +215,7 @@ export type WorkflowParameter = {
   valueType: 'string' | 'number' | 'boolean' | 'array' | 'object'
   required: boolean
   defaultValue: string
-  jsonSchema?: string
+  json?: string
   description: string
 }
 

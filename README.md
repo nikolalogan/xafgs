@@ -164,21 +164,19 @@ make down
 - `PUT /api/users/:userId`：管理员接口，更新用户
 - `DELETE /api/users/:userId`：管理员接口，删除用户
 
-## 工作流后端运行时（XState，可切换 Temporal）
+## 工作流后端运行时（Go 原生）
 
-当前在 `web` 中新增了可替换运行时抽象：
+工作流“执行”（executions）已完全迁移到 Go 后端实现，不依赖前端运行时。
 
-- 运行时接口：`web/lib/workflow-runtime/types.ts`
-- XState 实现：`web/lib/workflow-runtime/xstate-runtime.ts`
-- 运行时工厂：`web/lib/workflow-runtime/runtime-factory.ts`
-- 状态存储（当前内存版）：`web/lib/workflow-runtime/store.ts`
+- 运行时核心：`server/internal/workflowruntime/runtime.go`
+- DSL 解析/最小校验：`server/internal/workflowruntime/dsl.go`
+- 节点执行器（start/input/if-else/http-request/code/end）：`server/internal/workflowruntime/executors.go`
+- 状态存储（当前内存版，可替换持久化）：`server/internal/workflowruntime/store.go`
+- 运行时文档（节点事件/表单校验/日志）：`docs/workflow-runtime/README.md`
 
-### 运行时驱动切换
+### 节点执行说明
 
-- 环境变量：`WORKFLOW_RUNTIME_DRIVER`
-- 可选值：
-  - `xstate`（默认，已实现）
-  - `temporal`（预留适配器入口，未实现）
+- `code` 节点使用 `goja` 执行 JS（可信环境假设，勿用于不可信输入）
 
 ### 执行状态流转
 
@@ -186,7 +184,7 @@ make down
 - 异常：`running/waiting_input -> failed`
 - 取消：`running/waiting_input -> cancelled`
 
-### API（Next Route Handler）
+### API（Go 后端）
 
 - `POST /api/workflow/executions`：创建并启动执行
 - `GET /api/workflow/executions/:id`：查询执行详情

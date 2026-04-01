@@ -57,6 +57,7 @@ const nodeTypeLabel: Record<BlockEnum, string> = {
   [BlockEnum.Iteration]: '迭代',
   [BlockEnum.Code]: '代码',
   [BlockEnum.HttpRequest]: 'HTTP',
+  [BlockEnum.ApiRequest]: 'API 请求',
   [BlockEnum.Input]: '输入',
 }
 
@@ -65,6 +66,7 @@ const editableTypes: BlockEnum[] = [
   BlockEnum.IfElse,
   BlockEnum.Code,
   BlockEnum.HttpRequest,
+  BlockEnum.ApiRequest,
   BlockEnum.Input,
   BlockEnum.End,
 ]

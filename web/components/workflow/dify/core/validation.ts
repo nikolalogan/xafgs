@@ -1,8 +1,7 @@
 import { ensureNodeConfig } from './node-config'
 import { BlockEnum, type DifyEdge, type DifyNode, type WorkflowParameter } from './types'
 import { buildIfElseBranchHandleId, IF_ELSE_FALLBACK_HANDLE } from '@/lib/workflow-ifelse'
-import { validateParameterJsonDefault } from './json-schema'
-import { extractSchemaLeafPaths } from './json-schema'
+import { extractSchemaLeafPaths, validateParameterJsonDefault } from './json-schema'
 
 export type WorkflowIssue = {
   id: string
@@ -48,7 +47,7 @@ export const validateWorkflow = (
     const valueType = item.valueType
     if (valueType !== 'array' && valueType !== 'object')
       return
-    const check = validateParameterJsonDefault(valueType, item.defaultValue, item.jsonSchema)
+    const check = validateParameterJsonDefault(valueType, item.defaultValue, item.json)
     if (!check.valid) {
       issues.push({
         id: `workflow-params-json-${index}`,
@@ -502,6 +501,44 @@ export const validateWorkflow = (
           level: 'error',
           title: `${node.data.title} 写入参数映射不完整`,
           message: 'HTTP 节点写入参数映射的 sourcePath/targetPath 不能为空。',
+        })
+      }
+    }
+
+    if (node.data.type === BlockEnum.ApiRequest) {
+      const config = ensureNodeConfig(BlockEnum.ApiRequest, node.data.config)
+      if (!trim(config.route.path)) {
+        issues.push({
+          id: `${prefix}-api-route`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 路由未选择`,
+          message: 'API 请求节点必须选择一个后端路由。',
+        })
+      }
+
+      const requiredParams = config.params.filter(item => item.validation?.required)
+      const valueMap = new Map(config.paramValues.map(item => [`${item.in}:${item.name}`, item.value]))
+      const missing = requiredParams
+        .filter(item => !trim(valueMap.get(`${item.in}:${item.name}`) || ''))
+        .map(item => `${item.in}.${item.name}`)
+      if (missing.length > 0) {
+        issues.push({
+          id: `${prefix}-api-required-missing`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 必填参数未配置`,
+          message: `必填参数未配置：${missing.join('，')}`,
+        })
+      }
+
+      if (config.writebackMappings.some(item => !trim(item.sourcePath) || !trim(item.targetPath))) {
+        issues.push({
+          id: `${prefix}-api-writeback-invalid`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 写入参数映射不完整`,
+          message: 'API 请求节点写入参数映射的 sourcePath/targetPath 不能为空。',
         })
       }
     }

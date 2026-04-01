@@ -1,5 +1,5 @@
 import { ensureNodeConfig } from './node-config'
-import { extractSchemaLeafPaths } from './json-schema'
+import { extractJsonLeafPaths } from './json-schema'
 import { BlockEnum, type DifyNode, type WorkflowGlobalVariable, type WorkflowParameter, type WorkflowVariableScope } from './types'
 
 export type VariableScope = WorkflowVariableScope
@@ -67,23 +67,15 @@ const parseObjectLeafPathsFromDefault = (rawDefault?: string): string[] => {
   }
 }
 
-const parseObjectLeafPathsFromSchema = (rawSchema?: string): string[] => {
-  if (!rawSchema?.trim())
+const parseObjectLeafPathsFromJson = (rawJson?: string): string[] => {
+  if (!rawJson?.trim())
     return []
 
-  const parsed = extractSchemaLeafPaths(rawSchema)
+  const parsed = extractJsonLeafPaths(rawJson)
   if (!parsed.ok)
     return []
 
-  return [...new Set(parsed.paths
-    .map((path) => {
-      if (path === '$')
-        return ''
-      if (path.includes('[]'))
-        return ''
-      return path.replace(/^\$\./, '').replace(/^\$/, '')
-    })
-    .filter(Boolean))]
+  return parsed.paths
 }
 
 const buildDisplayLabel = (nodeTitle: string, fullParamPath: string) => {
@@ -120,6 +112,15 @@ export const buildWorkflowVariableOptions = (
     })
   }
 
+  ;[
+    { name: 'warningAccount', scope: 'string' as const },
+    { name: 'warningPassword', scope: 'string' as const },
+    { name: 'aiBaseUrl', scope: 'string' as const },
+    { name: 'aiApiKey', scope: 'string' as const },
+  ].forEach((field) => {
+    pushVariableOption('user', '用户属性', field.name, field.scope)
+  })
+
   workflowParameters.forEach((parameter) => {
     const nodeId = 'workflow'
     const nodeTitle = '流程参数'
@@ -131,8 +132,8 @@ export const buildWorkflowVariableOptions = (
     pushVariableOption(nodeId, nodeTitle, baseParam, rootScope)
 
     if (parameter.valueType === 'object') {
-      const schemaPaths = parseObjectLeafPathsFromSchema(parameter.jsonSchema)
-      const childPaths = schemaPaths.length ? schemaPaths : parseObjectLeafPathsFromDefault(parameter.defaultValue)
+      const jsonPaths = parseObjectLeafPathsFromJson(parameter.json)
+      const childPaths = jsonPaths.length ? jsonPaths : parseObjectLeafPathsFromDefault(parameter.defaultValue)
       childPaths.forEach((childPath) => {
         pushVariableOption(nodeId, nodeTitle, `${baseParam}.${childPath}`, 'all')
       })
@@ -150,8 +151,8 @@ export const buildWorkflowVariableOptions = (
     pushVariableOption(nodeId, nodeTitle, baseParam, rootScope)
 
     if (variable.valueType === 'object') {
-      const schemaPaths = parseObjectLeafPathsFromSchema(variable.jsonSchema)
-      const childPaths = schemaPaths.length ? schemaPaths : parseObjectLeafPathsFromDefault(variable.defaultValue)
+      const jsonPaths = parseObjectLeafPathsFromJson(variable.json)
+      const childPaths = jsonPaths.length ? jsonPaths : parseObjectLeafPathsFromDefault(variable.defaultValue)
       childPaths.forEach((childPath) => {
         pushVariableOption(nodeId, nodeTitle, `${baseParam}.${childPath}`, 'all')
       })
@@ -214,6 +215,22 @@ export const buildWorkflowVariableOptions = (
           placeholder: `{{${nodeId}.${outputName}}}`,
           displayLabel: `${nodeTitle}.${outputName}`,
         })
+      })
+      return
+    }
+
+    if (type === BlockEnum.ApiRequest) {
+      ;[
+        { name: 'ok', scope: 'boolean' as const },
+        { name: 'statusCode', scope: 'number' as const },
+        { name: 'httpStatus', scope: 'number' as const },
+        { name: 'message', scope: 'string' as const },
+        { name: 'data', scope: 'object' as const },
+        { name: 'response', scope: 'object' as const },
+        { name: 'url', scope: 'string' as const },
+        { name: 'method', scope: 'string' as const },
+      ].forEach((output) => {
+        pushVariableOption(nodeId, nodeTitle, output.name, output.scope)
       })
       return
     }
@@ -318,7 +335,7 @@ export const formatValueForDisplay = (rawValue: string, options: WorkflowVariabl
     const display = map.get(placeholder)
     if (!display)
       return full
-    return `{${display}}`
+    return `{{${display}}}`
   })
 }
 
@@ -327,11 +344,20 @@ export const parseDisplayToRaw = (displayValue: string, options: WorkflowVariabl
     return ''
 
   const labelToPlaceholder = new Map(options.map(option => [option.displayLabel, option.placeholder]))
-  return displayValue.replace(/\{([^{}]+)\}/g, (full, label) => {
+  const replaceLabel = (label: string, fallback: string) => {
     const trimmed = String(label).trim()
     const placeholder = labelToPlaceholder.get(trimmed)
     if (!placeholder)
-      return full
+      return fallback
     return placeholder
+  }
+
+  const replacedDouble = displayValue.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (full, label) => {
+    return replaceLabel(label, full)
+  })
+
+  // Backward compatible: allow legacy `{label}` format.
+  return replacedDouble.replace(/\{([^{}]+)\}/g, (full, label) => {
+    return replaceLabel(label, full)
   })
 }

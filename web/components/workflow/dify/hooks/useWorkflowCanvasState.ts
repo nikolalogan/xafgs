@@ -4,6 +4,20 @@ import { defaultGlobalVariables } from '../core/global-variables'
 import { defaultWorkflowParameters } from '../core/workflow-parameters'
 import type { DifyEdge, DifyNode, DifyWorkflowDSL } from '../core/types'
 
+const nextNodeIdSeed = (nodes: DifyNode[]) => {
+  let max = 0
+  const pattern = /^node-(\d+)$/
+  nodes.forEach((node) => {
+    const match = pattern.exec(node.id)
+    if (!match)
+      return
+    const value = Number(match[1])
+    if (Number.isFinite(value))
+      max = Math.max(max, value)
+  })
+  return Math.max(100, max + 1)
+}
+
 export const useWorkflowCanvasState = (demoDSL: DifyWorkflowDSL) => {
   const parsed = useMemo(() => parseDifyWorkflowDSL(demoDSL), [demoDSL])
   const [nodes, setNodes] = useState<DifyNode[]>(parsed.nodes)
@@ -29,6 +43,7 @@ export const useWorkflowCanvasState = (demoDSL: DifyWorkflowDSL) => {
     setWorkflowParameters(parsed.workflowParameters ?? defaultWorkflowParameters)
     setWorkflowVariableScopes(parsed.workflowVariableScopes ?? {})
     setActiveNode(null)
+    idRef.current = nextNodeIdSeed(parsed.nodes)
   }, [parsed])
 
   return {

@@ -150,7 +150,7 @@ export default function WorkflowRunRoutePage() {
         {loading && <div className="text-xs text-gray-500">加载中...</div>}
         {!loading && !parsed && <div className="text-xs text-rose-600">DSL 解析失败或为空。</div>}
       </div>
-      {parsed && <WorkflowRunPage nodes={parsed.nodes} edges={parsed.edges} workflowParameters={parsed.workflowParameters ?? []} autoRun={autoRun} />}
+      {parsed && <WorkflowRunPage nodes={parsed.nodes} edges={parsed.edges} globalVariables={parsed.globalVariables ?? []} workflowParameters={parsed.workflowParameters ?? []} autoRun={autoRun} />}
     </div>
   )
 }

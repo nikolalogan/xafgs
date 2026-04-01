@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { inferWorkflowParamFromSchema, validateParameterJsonDefault } from '../core/json-schema'
+import { validateParameterJsonDefault } from '../core/json-schema'
 import type { WorkflowParameter } from '../core/types'
 
 type WorkflowParamsPanelProps = {
@@ -39,13 +39,13 @@ export default function WorkflowParamsPanel({
             <input
               className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
               placeholder="参数名"
-              value={item.name}
+              value={item.name ?? ''}
               onChange={event => updateItem(index, { name: event.target.value })}
             />
             <input
               className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
               placeholder="显示名"
-              value={item.label}
+              value={item.label ?? ''}
               onChange={event => updateItem(index, { label: event.target.value })}
             />
             <div className="flex items-center gap-2">
@@ -66,14 +66,6 @@ export default function WorkflowParamsPanel({
                 <option value="array">array</option>
                 <option value="object">object</option>
               </select>
-              <label className="flex items-center gap-1 text-xs text-gray-600">
-                <input
-                  type="checkbox"
-                  checked={item.required}
-                  onChange={event => updateItem(index, { required: event.target.checked })}
-                />
-                必填
-              </label>
             </div>
             {(item.valueType === 'array' || item.valueType === 'object')
               ? (
@@ -85,45 +77,29 @@ export default function WorkflowParamsPanel({
                       value={item.defaultValue}
                       onChange={event => updateItem(index, { defaultValue: event.target.value })}
                     />
-                    <label className="block text-xs text-gray-500">JSON Schema</label>
-                    <textarea
-                      className="h-32 w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
-                      placeholder={item.valueType === 'array'
-                        ? '{\n  "type": "array",\n  "items": { "type": "string" }\n}'
-                        : '{\n  "type": "object",\n  "properties": {\n    "name": { "type": "string" }\n  }\n}'}
-                      value={item.jsonSchema ?? ''}
-                      onChange={event => updateItem(index, { jsonSchema: event.target.value })}
-                    />
+                    {item.valueType === 'object' && (
+                      <>
+                        <label className="block text-xs text-gray-500">结构（JSON，可选）</label>
+                        <textarea
+                          className="h-28 w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
+                          placeholder='{\n  "name": "示例"\n}'
+                          value={item.json ?? ''}
+                          onChange={event => updateItem(index, { json: event.target.value })}
+                        />
+                      </>
+                    )}
                     <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
-                        onClick={() => {
-                          const infer = inferWorkflowParamFromSchema(item.jsonSchema ?? '')
-                          if (!infer.ok) {
-                            setTips(prev => ({ ...prev, [index]: { ok: false, text: `Schema 导入失败：${infer.error}` } }))
-                            return
-                          }
-                          updateItem(index, {
-                            ...infer.patch,
-                            jsonSchema: item.jsonSchema ?? '',
-                          })
-                          setTips(prev => ({ ...prev, [index]: { ok: true, text: 'Schema 导入成功（已同步类型/标题/描述）' } }))
-                        }}
-                      >
-                        从 Schema 导入
-                      </button>
                       <button
                         type="button"
                         className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700"
                         onClick={() => {
                           const jsonType = item.valueType as 'array' | 'object'
-                          const result = validateParameterJsonDefault(jsonType, item.defaultValue, item.jsonSchema)
+                          const result = validateParameterJsonDefault(jsonType, item.defaultValue, item.json)
                           setTips(prev => ({
                             ...prev,
                             [index]: {
                               ok: result.valid,
-                              text: result.valid ? '默认值通过 JSON/Schema 校验' : result.error,
+                              text: result.valid ? '默认值通过 JSON 校验' : result.error,
                             },
                           }))
                         }}
@@ -139,17 +115,17 @@ export default function WorkflowParamsPanel({
                   </div>
                 )
               : (
-                  <input
-                    className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-                    placeholder="默认值"
-                    value={item.defaultValue}
-                    onChange={event => updateItem(index, { defaultValue: event.target.value })}
-                  />
+            <input
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+              placeholder="默认值"
+              value={item.defaultValue ?? ''}
+              onChange={event => updateItem(index, { defaultValue: event.target.value })}
+            />
                 )}
             <input
               className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
               placeholder="描述"
-              value={item.description}
+              value={item.description ?? ''}
               onChange={event => updateItem(index, { description: event.target.value })}
             />
             <button
@@ -168,7 +144,7 @@ export default function WorkflowParamsPanel({
           valueType: 'string',
           required: false,
           defaultValue: '',
-          jsonSchema: '',
+          json: '',
           description: '',
         }])}
         className="mt-2 rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"

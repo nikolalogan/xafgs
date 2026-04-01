@@ -5,38 +5,85 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"sxfgssever/server/internal/apimeta"
 	"sxfgssever/server/internal/middleware"
 	"sxfgssever/server/internal/model"
 	"sxfgssever/server/internal/response"
 	"sxfgssever/server/internal/service"
 )
 
-type userPathParams struct {
-	UserID int64 `params:"userId"`
+type userIDPathRequest struct {
+	UserID int64 `path:"userId" validate:"required,min=1"`
+}
+
+type createUserRequest struct {
+	Username string `json:"username" validate:"required"`
+	Name     string `json:"name" validate:"required"`
+	Password string `json:"password" validate:"required"`
+	Role     string `json:"role" validate:"required,oneof=admin user"`
+}
+
+type updateUserRequest struct {
+	UserID   int64  `path:"userId" validate:"required,min=1"`
+	Name     string `json:"name" validate:"required"`
+	Password string `json:"password" validate:"required"`
+	Role     string `json:"role" validate:"required,oneof=admin user"`
 }
 
 type UserHandler struct {
 	userService service.UserService
+	registry    *apimeta.Registry
 }
 
-func NewUserHandler(userService service.UserService) *UserHandler {
+func NewUserHandler(userService service.UserService, registry *apimeta.Registry) *UserHandler {
 	return &UserHandler{
 		userService: userService,
+		registry:    registry,
 	}
 }
 
 func (handler *UserHandler) Register(router fiber.Router, adminMiddleware fiber.Handler) {
-	router.Get("/me", handler.GetCurrentUser)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[struct{}]{
+		Method:  fiber.MethodGet,
+		Path:    "/me",
+		Summary: "获取当前用户",
+		Auth:    "auth",
+	}, handler.GetCurrentUser)
 
-	adminGroup := router.Group("/users", adminMiddleware)
-	adminGroup.Get("", handler.ListUsers)
-	adminGroup.Get("/:userId", handler.GetUserByID)
-	adminGroup.Post("", handler.CreateUser)
-	adminGroup.Put("/:userId", handler.UpdateUser)
-	adminGroup.Delete("/:userId", handler.DeleteUser)
+	adminGroup := router.Group("", adminMiddleware)
+	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[struct{}]{
+		Method:  fiber.MethodGet,
+		Path:    "/users",
+		Summary: "获取用户列表",
+		Auth:    "admin",
+	}, handler.ListUsers)
+	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[userIDPathRequest]{
+		Method:  fiber.MethodGet,
+		Path:    "/users/:userId",
+		Summary: "获取用户详情",
+		Auth:    "admin",
+	}, handler.GetUserByID)
+	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[createUserRequest]{
+		Method:  fiber.MethodPost,
+		Path:    "/users",
+		Summary: "创建用户",
+		Auth:    "admin",
+	}, handler.CreateUser)
+	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[updateUserRequest]{
+		Method:  fiber.MethodPut,
+		Path:    "/users/:userId",
+		Summary: "更新用户",
+		Auth:    "admin",
+	}, handler.UpdateUser)
+	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[userIDPathRequest]{
+		Method:  fiber.MethodDelete,
+		Path:    "/users/:userId",
+		Summary: "删除用户",
+		Auth:    "admin",
+	}, handler.DeleteUser)
 }
 
-func (handler *UserHandler) GetCurrentUser(c *fiber.Ctx) error {
+func (handler *UserHandler) GetCurrentUser(c *fiber.Ctx, _ *struct{}) error {
 	value := c.Locals(middleware.LocalAuthUser)
 	user, ok := value.(model.UserDTO)
 	if !ok {
@@ -45,23 +92,15 @@ func (handler *UserHandler) GetCurrentUser(c *fiber.Ctx) error {
 	return response.Success(c, fiber.StatusOK, user, "获取当前用户成功")
 }
 
-func (handler *UserHandler) GetUserByID(c *fiber.Ctx) error {
-	var pathParams userPathParams
-	if err := c.ParamsParser(&pathParams); err != nil {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "路径参数解析失败")
-	}
-	if pathParams.UserID <= 0 {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "userId 必须为正整数")
-	}
-
-	user, apiError := handler.userService.GetByID(c.UserContext(), pathParams.UserID)
+func (handler *UserHandler) GetUserByID(c *fiber.Ctx, request *userIDPathRequest) error {
+	user, apiError := handler.userService.GetByID(c.UserContext(), request.UserID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, user, "获取用户成功")
 }
 
-func (handler *UserHandler) ListUsers(c *fiber.Ctx) error {
+func (handler *UserHandler) ListUsers(c *fiber.Ctx, _ *struct{}) error {
 	users, apiError := handler.userService.List(c.UserContext())
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
@@ -69,12 +108,7 @@ func (handler *UserHandler) ListUsers(c *fiber.Ctx) error {
 	return response.Success(c, fiber.StatusOK, users, "获取用户列表成功")
 }
 
-func (handler *UserHandler) CreateUser(c *fiber.Ctx) error {
-	var request model.CreateUserRequest
-	if err := c.BodyParser(&request); err != nil {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "请求体格式错误")
-	}
-
+func (handler *UserHandler) CreateUser(c *fiber.Ctx, request *createUserRequest) error {
 	request.Username = strings.TrimSpace(request.Username)
 	request.Name = strings.TrimSpace(request.Name)
 	request.Password = strings.TrimSpace(request.Password)
@@ -85,27 +119,19 @@ func (handler *UserHandler) CreateUser(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
 	}
 
-	user, apiError := handler.userService.Create(c.UserContext(), request, operatorID)
+	user, apiError := handler.userService.Create(c.UserContext(), model.CreateUserRequest{
+		Username: request.Username,
+		Name:     request.Name,
+		Password: request.Password,
+		Role:     request.Role,
+	}, operatorID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusCreated, user, "创建用户成功")
 }
 
-func (handler *UserHandler) UpdateUser(c *fiber.Ctx) error {
-	var pathParams userPathParams
-	if err := c.ParamsParser(&pathParams); err != nil {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "路径参数解析失败")
-	}
-	if pathParams.UserID <= 0 {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "userId 必须为正整数")
-	}
-
-	var request model.UpdateUserRequest
-	if err := c.BodyParser(&request); err != nil {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "请求体格式错误")
-	}
-
+func (handler *UserHandler) UpdateUser(c *fiber.Ctx, request *updateUserRequest) error {
 	request.Name = strings.TrimSpace(request.Name)
 	request.Password = strings.TrimSpace(request.Password)
 	request.Role = strings.TrimSpace(request.Role)
@@ -115,23 +141,19 @@ func (handler *UserHandler) UpdateUser(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
 	}
 
-	user, apiError := handler.userService.Update(c.UserContext(), pathParams.UserID, request, operatorID)
+	user, apiError := handler.userService.Update(c.UserContext(), request.UserID, model.UpdateUserRequest{
+		Name:     request.Name,
+		Password: request.Password,
+		Role:     request.Role,
+	}, operatorID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, user, "更新用户成功")
 }
 
-func (handler *UserHandler) DeleteUser(c *fiber.Ctx) error {
-	var pathParams userPathParams
-	if err := c.ParamsParser(&pathParams); err != nil {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "路径参数解析失败")
-	}
-	if pathParams.UserID <= 0 {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "userId 必须为正整数")
-	}
-
-	apiError := handler.userService.Delete(c.UserContext(), pathParams.UserID)
+func (handler *UserHandler) DeleteUser(c *fiber.Ctx, request *userIDPathRequest) error {
+	apiError := handler.userService.Delete(c.UserContext(), request.UserID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}

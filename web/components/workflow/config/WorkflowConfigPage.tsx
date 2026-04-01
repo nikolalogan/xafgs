@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, message } from 'antd'
 import WorkflowCanvas from '../WorkflowCanvas'
 import { parseDifyWorkflowDSL, toDifyWorkflowDSL } from '../dify/core/dsl'
 import type { DifyWorkflowDSL } from '../dify/core/types'
 import { BlockEnum } from '../dify/core/types'
+import type { WorkflowCanvasHandle } from '../WorkflowCanvas'
 
 type WorkflowStatus = 'active' | 'disabled'
 
@@ -81,6 +82,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
   const [msgApi, contextHolder] = message.useMessage()
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const canvasRef = useRef<WorkflowCanvasHandle | null>(null)
   const [initialCanvasDSL, setInitialCanvasDSL] = useState<DifyWorkflowDSL>(parseDifyWorkflowDSL(defaultDSL))
   const [editedCanvasDSL, setEditedCanvasDSL] = useState<DifyWorkflowDSL>(parseDifyWorkflowDSL(defaultDSL))
   const [showAdvancedJSON, setShowAdvancedJSON] = useState(false)
@@ -177,9 +179,14 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
 
   const save = async () => {
     try {
+      canvasRef.current?.flushActiveNode()
       const values = await form.validateFields()
       setSubmitting(true)
-      const parsedDSL = editedCanvasDSL as Record<string, unknown>
+      const latestDsl = canvasRef.current?.getDSL() ?? editedCanvasDSL
+      const parsedDSL = latestDsl as Record<string, unknown>
+      setEditedCanvasDSL(latestDsl)
+      if (showAdvancedJSON)
+        setAdvancedDSLText(toDifyWorkflowDSL(latestDsl))
 
       if (isCreate) {
         const created = await request<WorkflowDTO>('/api/workflows', {
@@ -335,6 +342,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
             </Button>
           </div>
           <WorkflowCanvas
+            ref={canvasRef}
             initialDSL={initialCanvasDSL}
             onDSLChange={(dsl) => {
               setEditedCanvasDSL(dsl)

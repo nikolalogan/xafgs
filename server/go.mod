@@ -8,11 +8,17 @@ require github.com/jackc/pgx/v5 v5.7.6
 
 require github.com/nikolalohinski/gonja/v2 v2.7.0
 
-require github.com/google/uuid v1.6.0
+require (
+	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
+	github.com/google/uuid v1.6.0
+)
 
 require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
+	github.com/dlclark/regexp2 v1.11.4 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
+	github.com/google/pprof v0.0.0-20250403155104-27863c87afa6 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect

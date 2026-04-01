@@ -12,6 +12,7 @@ const typeColorMap: Record<BlockEnum, string> = {
   [BlockEnum.Iteration]: 'bg-teal-100 text-teal-700',
   [BlockEnum.Code]: 'bg-purple-100 text-purple-700',
   [BlockEnum.HttpRequest]: 'bg-cyan-100 text-cyan-700',
+  [BlockEnum.ApiRequest]: 'bg-slate-100 text-slate-700',
   [BlockEnum.Input]: 'bg-indigo-100 text-indigo-700',
 }
 
@@ -23,6 +24,7 @@ const typeLabelMap: Record<BlockEnum, string> = {
   [BlockEnum.Iteration]: '迭代',
   [BlockEnum.Code]: '代码',
   [BlockEnum.HttpRequest]: 'HTTP',
+  [BlockEnum.ApiRequest]: 'API 请求',
   [BlockEnum.Input]: '输入',
 }
 

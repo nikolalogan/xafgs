@@ -71,8 +71,20 @@ const getByPath = (source: Record<string, unknown>, path: string): unknown => {
 
   let current: unknown = source
   for (const key of keys) {
-    if (!current || typeof current !== 'object' || Array.isArray(current))
+    if (current === null || current === undefined)
       return undefined
+
+    if (Array.isArray(current)) {
+      const index = Number(key)
+      if (!Number.isInteger(index))
+        return undefined
+      current = current[index]
+      continue
+    }
+
+    if (typeof current !== 'object')
+      return undefined
+
     current = (current as Record<string, unknown>)[key]
   }
   return current
@@ -96,6 +108,22 @@ const renderTemplate = (value: string, variables: Record<string, unknown>) => {
       return JSON.stringify(resolved)
     return String(resolved)
   })
+}
+
+const renderTemplateWithMissing = (value: string, variables: Record<string, unknown>) => {
+  const missing = new Set<string>()
+  value.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_full, rawKey) => {
+    const key = String(rawKey || '').trim()
+    if (!key)
+      return ''
+    const resolved = getByPath(variables, key)
+    if (!hasValue(resolved))
+      missing.add(key)
+    return ''
+  })
+
+  const rendered = renderTemplate(value, variables)
+  return { rendered, missing: [...missing].sort() }
 }
 
 const buildWritebacks = (
@@ -250,7 +278,10 @@ class HttpNodeExecutor implements NodeExecutor {
     const method = typeof config.method === 'string' ? config.method : 'GET'
     const timeout = typeof config.timeout === 'number' ? config.timeout : 30
     const urlTemplate = typeof config.url === 'string' ? config.url : ''
-    const url = renderTemplate(urlTemplate, ctx.variables)
+    const urlRendered = renderTemplateWithMissing(urlTemplate, ctx.variables)
+    if (urlRendered.missing.length > 0)
+      return { type: 'failed', error: `HTTP 节点参数未解析：${urlRendered.missing.join('，')}` }
+    const url = urlRendered.rendered
     if (!url.trim())
       return { type: 'failed', error: 'HTTP 节点 URL 为空' }
 
@@ -260,17 +291,41 @@ class HttpNodeExecutor implements NodeExecutor {
     const bodyTemplate = typeof config.body === 'string' ? config.body : ''
 
     const requestHeaders = new Headers()
+    const missingKeys = new Set<string>()
     headersList.forEach((item) => {
       const key = typeof item?.key === 'string' ? item.key.trim() : ''
-      const value = typeof item?.value === 'string' ? renderTemplate(item.value, ctx.variables) : ''
+      const rendered = typeof item?.value === 'string' ? renderTemplateWithMissing(item.value, ctx.variables) : { rendered: '', missing: [] as string[] }
+      rendered.missing.forEach(k => missingKeys.add(k))
+      const value = rendered.rendered
       if (key)
         requestHeaders.set(key, value)
     })
 
+    const authorization = toObject((config as any).authorization)
+    const authType = typeof authorization.type === 'string' ? authorization.type.trim() : 'none'
+    const authHeaderName = typeof authorization.header === 'string' && authorization.header.trim()
+      ? authorization.header.trim()
+      : 'Authorization'
+    const rawAuthTemplate = typeof authorization.apiKey === 'string' ? authorization.apiKey : ''
+    const authRendered = renderTemplateWithMissing(rawAuthTemplate, ctx.variables)
+    authRendered.missing.forEach(k => missingKeys.add(k))
+    const rawAuthValue = authRendered.rendered.trim()
+    if (authType === 'bearer' && rawAuthValue) {
+      const value = rawAuthValue.toLowerCase().startsWith('bearer ')
+        ? rawAuthValue
+        : `Bearer ${rawAuthValue}`
+      requestHeaders.set(authHeaderName, value)
+    }
+    if (authType === 'api-key' && rawAuthValue) {
+      requestHeaders.set(authHeaderName, rawAuthValue)
+    }
+
     const query = new URLSearchParams()
     queryList.forEach((item) => {
       const key = typeof item?.key === 'string' ? item.key.trim() : ''
-      const value = typeof item?.value === 'string' ? renderTemplate(item.value, ctx.variables) : ''
+      const rendered = typeof item?.value === 'string' ? renderTemplateWithMissing(item.value, ctx.variables) : { rendered: '', missing: [] as string[] }
+      rendered.missing.forEach(k => missingKeys.add(k))
+      const value = rendered.rendered
       if (key)
         query.append(key, value)
     })
@@ -282,10 +337,15 @@ class HttpNodeExecutor implements NodeExecutor {
 
     let body: string | undefined
     if (bodyType !== 'none') {
-      body = renderTemplate(bodyTemplate, ctx.variables)
+      const rendered = renderTemplateWithMissing(bodyTemplate, ctx.variables)
+      rendered.missing.forEach(k => missingKeys.add(k))
+      body = rendered.rendered
       if (bodyType === 'json' && !requestHeaders.has('content-type'))
         requestHeaders.set('content-type', 'application/json')
     }
+
+    if (missingKeys.size > 0)
+      return { type: 'failed', error: `HTTP 节点参数未解析：${[...missingKeys].sort().join('，')}` }
 
     try {
       const controller = new AbortController()
@@ -408,5 +468,6 @@ export const createExecutorRegistry = () => {
     'if-else': ifElse,
     iteration: pass,
     'http-request': http,
+    'api-request': pass,
   }
 }

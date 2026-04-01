@@ -209,7 +209,7 @@ export const demoDSL: DifyWorkflowDSL = {
       name: 'session',
       valueType: 'object',
       defaultValue: '{\"tenant\":{\"id\":\"t_001\"},\"env\":\"dev\"}',
-      jsonSchema: '{\"type\":\"object\",\"properties\":{\"tenant\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}},\"env\":{\"type\":\"string\"}}}',
+      json: '{\"tenant\":{\"id\":\"t_001\"},\"env\":\"dev\"}',
       description: '会话上下文',
     },
   ],
@@ -221,7 +221,7 @@ export const demoDSL: DifyWorkflowDSL = {
       valueType: 'array',
       required: false,
       defaultValue: '[\"a\",\"b\"]',
-      jsonSchema: '{\"type\":\"array\",\"items\":{\"type\":\"string\"}}',
+      json: '[\"a\",\"b\"]',
       description: '迭代节点输入',
     },
   ],
@@ -237,6 +237,7 @@ export const nodeTypeLabel: Record<BlockEnum, string> = {
   [BlockEnum.Iteration]: '迭代',
   [BlockEnum.Code]: '代码',
   [BlockEnum.HttpRequest]: 'HTTP',
+  [BlockEnum.ApiRequest]: 'API 请求',
   [BlockEnum.Input]: '输入',
 }
 

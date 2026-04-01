@@ -10,6 +10,7 @@ export const toolbarNodeButtons: Array<{ type: BlockEnum; label: string }> = [
   { type: BlockEnum.IfElse, label: '条件节点' },
   { type: BlockEnum.Iteration, label: '迭代节点' },
   { type: BlockEnum.HttpRequest, label: 'HTTP 节点' },
+  { type: BlockEnum.ApiRequest, label: 'API 请求节点' },
   { type: BlockEnum.Code, label: '代码节点' },
 ]
 

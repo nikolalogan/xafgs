@@ -24,56 +24,10 @@ const getTypeOfValue = (value: JsonValue): 'null' | 'boolean' | 'number' | 'stri
   }
 }
 
-const validateWithSchema = (value: JsonValue, schema: Record<string, unknown>, path: string): string | null => {
-  const type = schema.type
-  if (typeof type === 'string') {
-    const actualType = getTypeOfValue(value)
-    if (type !== actualType) {
-      return `${path} 类型不匹配，期望 ${type}，实际 ${actualType}`
-    }
-  }
-
-  if (Array.isArray(schema.enum) && !schema.enum.some(item => JSON.stringify(item) === JSON.stringify(value))) {
-    return `${path} 不在 enum 允许范围内`
-  }
-
-  if (Array.isArray(value)) {
-    if (isObject(schema.items)) {
-      for (let index = 0; index < value.length; index += 1) {
-        const error = validateWithSchema(value[index], schema.items, `${path}[${index}]`)
-        if (error)
-          return error
-      }
-    }
-    return null
-  }
-
-  if (isObject(value)) {
-    const required = Array.isArray(schema.required) ? schema.required.filter(item => typeof item === 'string') as string[] : []
-    for (const requiredKey of required) {
-      if (!(requiredKey in value))
-        return `${path}.${requiredKey} 为必填`
-    }
-    if (isObject(schema.properties)) {
-      for (const [key, childSchema] of Object.entries(schema.properties)) {
-        if (!(key in value))
-          continue
-        if (!isObject(childSchema))
-          continue
-        const childError = validateWithSchema(value[key] as JsonValue, childSchema, `${path}.${key}`)
-        if (childError)
-          return childError
-      }
-    }
-  }
-
-  return null
-}
-
 export const validateParameterJsonDefault = (
   valueType: 'array' | 'object',
   rawDefaultValue: string,
-  rawSchema?: string,
+  rawJson?: string,
 ): { valid: true } | { valid: false; error: string } => {
   if (!rawDefaultValue.trim())
     return { valid: true }
@@ -86,48 +40,14 @@ export const validateParameterJsonDefault = (
   if (actualType !== valueType)
     return { valid: false, error: `默认值类型错误，期望 ${valueType}，实际 ${actualType}` }
 
-  if (!rawSchema?.trim())
+  if (!rawJson?.trim())
     return { valid: true }
 
-  const parsedSchema = parseJson(rawSchema)
-  if (!parsedSchema.ok)
-    return { valid: false, error: `JSON Schema 非法：${parsedSchema.error}` }
-
-  if (!isObject(parsedSchema.value))
-    return { valid: false, error: 'JSON Schema 顶层必须为对象' }
-
-  const schemaType = parsedSchema.value.type
-  if (typeof schemaType === 'string' && schemaType !== valueType)
-    return { valid: false, error: `JSON Schema.type 必须为 ${valueType}` }
-
-  const schemaError = validateWithSchema(parsedDefault.value, parsedSchema.value, '$')
-  if (schemaError)
-    return { valid: false, error: `默认值未通过 Schema 校验：${schemaError}` }
+  const parsedStructure = parseJson(rawJson)
+  if (!parsedStructure.ok)
+    return { valid: false, error: `结构 JSON 非法：${parsedStructure.error}` }
 
   return { valid: true }
-}
-
-export const inferWorkflowParamFromSchema = (
-  rawSchema: string,
-): { ok: true; patch: { valueType?: 'array' | 'object'; label?: string; description?: string } } | { ok: false; error: string } => {
-  const parsed = parseJson(rawSchema)
-  if (!parsed.ok)
-    return { ok: false, error: parsed.error }
-  if (!isObject(parsed.value))
-    return { ok: false, error: 'JSON Schema 顶层必须为对象' }
-
-  const type = parsed.value.type
-  if (type !== 'array' && type !== 'object')
-    return { ok: false, error: '仅支持 type=object 或 type=array 的 Schema' }
-
-  return {
-    ok: true,
-    patch: {
-      valueType: type,
-      label: typeof parsed.value.title === 'string' ? parsed.value.title : undefined,
-      description: typeof parsed.value.description === 'string' ? parsed.value.description : undefined,
-    },
-  }
 }
 
 export const extractSchemaLeafPaths = (rawSchema: string): { ok: true; paths: string[] } | { ok: false; error: string } => {
@@ -158,5 +78,47 @@ export const extractSchemaLeafPaths = (rawSchema: string): { ok: true; paths: st
   }
 
   const paths = [...new Set(collect(parsed.value, ''))]
+  return { ok: true, paths }
+}
+
+export const extractJsonLeafPaths = (rawJson: string): { ok: true; paths: string[] } | { ok: false; error: string } => {
+  const parsed = parseJson(rawJson)
+  if (!parsed.ok)
+    return { ok: false, error: parsed.error }
+
+  const collect = (value: JsonValue, prefix: string): string[] => {
+    if (value === null)
+      return [prefix || '$']
+    if (Array.isArray(value)) {
+      if (value.length === 0)
+        return [prefix ? `${prefix}[]` : '$[]']
+      const children = value.flatMap(child => collect(child, `${prefix}[]`))
+      return [prefix ? `${prefix}[]` : '$[]', ...children]
+    }
+
+    if (typeof value !== 'object')
+      return [prefix || '$']
+
+    const obj = value as Record<string, JsonValue>
+    const keys = Object.keys(obj)
+    if (!keys.length)
+      return [prefix || '$']
+    return [
+      ...(prefix ? [prefix] : []),
+      ...keys.flatMap((key) => collect(obj[key], prefix ? `${prefix}.${key}` : key)),
+    ]
+  }
+
+	const rawPaths = collect(parsed.value, '')
+	const paths = [...new Set(
+		rawPaths
+			.map((path) => {
+				if (path === '$')
+					return ''
+				return path.replace(/^\$\./, '').replace(/^\$/, '')
+			})
+			.filter(Boolean),
+	)]
+
   return { ok: true, paths }
 }
