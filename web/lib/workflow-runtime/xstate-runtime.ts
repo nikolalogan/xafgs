@@ -30,21 +30,104 @@ const normalizePath = (path: string) => path
   .trim()
   .replace(/^\$\./, '')
   .replace(/^\$/, '')
+  .replace(/\[\]$/, '')
   .replace(/\[(\d+)\]/g, '.$1')
 
+const splitPath = (path: string) => normalizePath(path).split('.').map(item => item.trim()).filter(Boolean)
+
+const normalizeWritebackTargetPath = (rawPath: string, value: unknown) => {
+  const trimmed = String(rawPath || '').trim()
+  if (!trimmed || !Array.isArray(value))
+    return trimmed
+
+  const keys = splitPath(trimmed)
+  if (keys.length < 2)
+    return trimmed
+
+  let end = keys.length
+  while (end > 0 && /^\d+$/.test(keys[end - 1]))
+    end -= 1
+
+  if (end === keys.length || end === 0)
+    return trimmed
+  return keys.slice(0, end).join('.')
+}
+
 const setByPath = (target: Record<string, unknown>, rawPath: string, value: unknown) => {
-  const keys = normalizePath(rawPath).split('.').map(item => item.trim()).filter(Boolean)
+  const keys = splitPath(normalizeWritebackTargetPath(rawPath, value))
   if (keys.length === 0)
     return
-  let current: Record<string, unknown> = target
-  for (let index = 0; index < keys.length - 1; index += 1) {
-    const key = keys[index]
-    const nextValue = current[key]
-    if (!nextValue || typeof nextValue !== 'object' || Array.isArray(nextValue))
-      current[key] = {}
-    current = current[key] as Record<string, unknown>
+
+  const isIndex = (key: string) => /^\d+$/.test(key)
+  const ensureArrayLength = (list: unknown[], index: number) => {
+    if (index < list.length)
+      return list
+    const next = [...list]
+    while (next.length <= index)
+      next.push(undefined)
+    return next
   }
-  current[keys[keys.length - 1]] = value
+
+  const setAny = (current: unknown, path: string[], nextValue: unknown): unknown => {
+    if (path.length === 0)
+      return current
+
+    if (path.length === 1) {
+      if (Array.isArray(current)) {
+        const index = Number(path[0])
+        if (!Number.isInteger(index))
+          return current
+        const next = ensureArrayLength(current, index)
+        next[index] = nextValue
+        return next
+      }
+
+      if (!current || typeof current !== 'object' || Array.isArray(current))
+        return current
+
+      return {
+        ...(current as Record<string, unknown>),
+        [path[0]]: nextValue,
+      }
+    }
+
+    const [key, nextKey, ...rest] = path
+    const childShouldBeArray = isIndex(nextKey)
+
+    if (Array.isArray(current)) {
+      const index = Number(key)
+      if (!Number.isInteger(index))
+        return current
+      const next = ensureArrayLength(current, index)
+      const child = next[index]
+      next[index] = setAny(
+        child ?? (childShouldBeArray ? [] : {}),
+        [nextKey, ...rest],
+        nextValue,
+      )
+      return next
+    }
+
+    const base = current && typeof current === 'object' && !Array.isArray(current)
+      ? current as Record<string, unknown>
+      : {}
+    const child = base[key]
+    return {
+      ...base,
+      [key]: setAny(
+        child ?? (childShouldBeArray ? [] : {}),
+        [nextKey, ...rest],
+        nextValue,
+      ),
+    }
+  }
+
+  const updated = setAny(target, keys, value)
+  if (!updated || typeof updated !== 'object' || Array.isArray(updated))
+    return
+
+  Object.keys(target).forEach(key => delete target[key])
+  Object.assign(target, updated)
 }
 
 const getStartNodeId = (nodes: WorkflowNode[]) => {

@@ -90,10 +90,11 @@ export const extractJsonLeafPaths = (rawJson: string): { ok: true; paths: string
     if (value === null)
       return [prefix || '$']
     if (Array.isArray(value)) {
+      const container = prefix ? [prefix] : []
       if (value.length === 0)
-        return [prefix ? `${prefix}[]` : '$[]']
+        return [...container, prefix ? `${prefix}[]` : '$[]']
       const children = value.flatMap(child => collect(child, `${prefix}[]`))
-      return [prefix ? `${prefix}[]` : '$[]', ...children]
+      return [...container, prefix ? `${prefix}[]` : '$[]', ...children]
     }
 
     if (typeof value !== 'object')

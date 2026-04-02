@@ -139,6 +139,14 @@ func (httpNodeExecutor) Execute(ctx context.Context, input NodeExecutorContext) 
 	urlTemplate := toString(input.Node.Data.Config["url"])
 	finalURL, missing := renderTemplateWithMissing(urlTemplate, input.Variables)
 	if len(missing) > 0 {
+		// 增强诊断：workflow/global 被覆盖成非对象时，补充类型信息便于排查
+		if slicesContains(missing, "workflow.http_prex") {
+			workflowType := fmt.Sprintf("%T", input.Variables["workflow"])
+			if _, ok := input.Variables["workflow"].(map[string]any); ok {
+				workflowType = "map"
+			}
+			return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "HTTP 节点参数未解析：" + strings.Join(missing, "，") + "（当前 workflow 类型=" + workflowType + "）"}, nil
+		}
 		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "HTTP 节点参数未解析：" + strings.Join(missing, "，")}, nil
 	}
 	if strings.TrimSpace(finalURL) == "" {
@@ -282,8 +290,17 @@ func (httpNodeExecutor) Execute(ctx context.Context, input NodeExecutorContext) 
 		"raw":    text,
 	}
 
-	writebacks := buildNodeWritebacks(input.Node.Data.Config["writebackMappings"], parsed)
+	writebacks := buildHTTPWritebacks(input.Node.Data.Config["writebackMappings"], parsed, output)
 	return NodeExecutorResult{Type: NodeExecutorResultSuccess, Output: output, Writebacks: writebacks}, nil
+}
+
+func slicesContains(list []string, value string) bool {
+	for _, item := range list {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 type apiRequestExecutor struct{}
@@ -548,7 +565,46 @@ func (endNodeExecutor) Execute(_ context.Context, input NodeExecutorContext) (No
 	return NodeExecutorResult{Type: NodeExecutorResultSuccess, Output: resolved}, nil
 }
 
-var templateRegexp = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}`)
+var templateRegexp = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
+
+var variablePathAliasReplacer = strings.NewReplacer(
+	"用户属性.", "user.",
+	"流程参数.", "workflow.",
+	"全局参数.", "global.",
+)
+
+func normalizeVariablePath(path string) string {
+	value := strings.TrimSpace(path)
+	if value == "" {
+		return ""
+	}
+	return variablePathAliasReplacer.Replace(value)
+}
+
+func getByPathWithFallback(variables map[string]any, path string) (any, bool) {
+	path = normalizeVariablePath(path)
+	value, found := getByPath(variables, path)
+	if found {
+		return value, true
+	}
+
+	// 兼容：部分历史流程误用 workflow.xxx 引用全局参数 global.xxx
+	if strings.HasPrefix(path, "workflow.") {
+		suffix := strings.TrimPrefix(path, "workflow.")
+		if v, ok := getByPath(variables, "global."+suffix); ok {
+			return v, true
+		}
+		// 兼容：部分流程把“流程参数”当作开始输入（顶层变量），或写在 start 节点输出里
+		if v, ok := getByPath(variables, suffix); ok {
+			return v, true
+		}
+		if v, ok := getByPath(variables, "start."+suffix); ok {
+			return v, true
+		}
+	}
+
+	return nil, false
+}
 
 func renderTemplate(value string, variables map[string]any) string {
 	return templateRegexp.ReplaceAllStringFunc(value, func(full string) string {
@@ -556,8 +612,8 @@ func renderTemplate(value string, variables map[string]any) string {
 		if len(m) != 2 {
 			return ""
 		}
-		key := strings.TrimSpace(m[1])
-		resolved, found := getByPath(variables, key)
+		key := normalizeVariablePath(m[1])
+		resolved, found := getByPathWithFallback(variables, key)
 		if !found || resolved == nil {
 			return ""
 		}
@@ -578,11 +634,11 @@ func renderTemplateWithMissing(value string, variables map[string]any) (string, 
 		if len(match) != 2 {
 			continue
 		}
-		key := strings.TrimSpace(match[1])
+		key := normalizeVariablePath(match[1])
 		if key == "" {
 			continue
 		}
-		resolved, found := getByPath(variables, key)
+		resolved, found := getByPathWithFallback(variables, key)
 		if !found || !hasValue(resolved) {
 			missing[key] = true
 		}
@@ -597,6 +653,50 @@ func renderTemplateWithMissing(value string, variables map[string]any) (string, 
 
 func buildNodeWritebacks(mappings any, source any) []Writeback {
 	return buildWritebacks(mappings, toObject(source))
+}
+
+func buildHTTPWritebacks(mappings any, parsed any, output map[string]any) []Writeback {
+	list, ok := mappings.([]any)
+	if !ok {
+		return nil
+	}
+
+	bodyObj := toObject(parsed)
+	result := make([]Writeback, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		sourcePath := strings.TrimSpace(toString(m["sourcePath"]))
+		targetPath := strings.TrimSpace(toString(m["targetPath"]))
+		if sourcePath == "" || targetPath == "" {
+			continue
+		}
+
+		var value any
+		if sourcePath == "$" {
+			value = parsed
+		} else {
+			// 兼容历史配置：
+			// 1. 直接从响应 body 取值
+			// 2. 若 body 为统一报文，允许省略最外层 data.
+			// 3. 兜底支持显式从 output wrapper 取值
+			value = readFromOutputByPath(bodyObj, sourcePath)
+			if !hasValue(value) {
+				value = readFromOutputByPath(bodyObj, "data."+sourcePath)
+			}
+			if !hasValue(value) {
+				value = readFromOutputByPath(output, sourcePath)
+			}
+			if !hasValue(value) {
+				value = readFromOutputByPath(output, "body."+sourcePath)
+			}
+		}
+
+		result = append(result, Writeback{TargetPath: targetPath, Value: value})
+	}
+	return result
 }
 
 func buildWritebacks(mappings any, output map[string]any) []Writeback {
@@ -635,7 +735,7 @@ func resolveValue(raw any, variables map[string]any) any {
 	trimmed := strings.TrimSpace(str)
 	placeholder := regexp.MustCompile(`^\s*\{\{\s*([^}]+?)\s*\}\}\s*$`)
 	if match := placeholder.FindStringSubmatch(trimmed); len(match) == 2 {
-		value, found := getByPath(variables, strings.TrimSpace(match[1]))
+		value, found := getByPathWithFallback(variables, normalizeVariablePath(match[1]))
 		if found {
 			return value
 		}
@@ -643,7 +743,7 @@ func resolveValue(raw any, variables map[string]any) any {
 	}
 
 	if strings.Contains(trimmed, ".") {
-		if value, found := getByPath(variables, trimmed); found {
+		if value, found := getByPathWithFallback(variables, normalizeVariablePath(trimmed)); found {
 			return value
 		}
 	}
@@ -753,22 +853,176 @@ func getByPath(source map[string]any, path string) (any, bool) {
 }
 
 func setByPath(target map[string]any, rawPath string, value any) {
-	keys := splitPath(rawPath)
+	keys := splitPath(normalizeWritebackTargetPath(rawPath, value))
 	if len(keys) == 0 {
 		return
 	}
 
-	current := target
-	for i := 0; i < len(keys)-1; i++ {
-		key := keys[i]
-		next, ok := current[key].(map[string]any)
-		if !ok {
-			next = map[string]any{}
-			current[key] = next
+	isIndex := func(key string) (int, bool) {
+		if key == "" {
+			return 0, false
 		}
-		current = next
+		for i := 0; i < len(key); i++ {
+			if key[i] < '0' || key[i] > '9' {
+				return 0, false
+			}
+		}
+		n, err := strconv.Atoi(key)
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		return n, true
 	}
-	current[keys[len(keys)-1]] = value
+
+	ensureSliceLen := func(list []any, index int) []any {
+		if index < 0 {
+			return list
+		}
+		if len(list) > index {
+			return list
+		}
+		next := make([]any, index+1)
+		copy(next, list)
+		return next
+	}
+
+	var setAny func(current any, path []string, value any) any
+	setAny = func(current any, path []string, value any) any {
+		if len(path) == 0 {
+			return current
+		}
+		if len(path) == 1 {
+			switch typed := current.(type) {
+			case map[string]any:
+				typed[path[0]] = value
+				return typed
+			case []any:
+				index, ok := isIndex(path[0])
+				if !ok {
+					return typed
+				}
+				next := ensureSliceLen(typed, index)
+				next[index] = value
+				return next
+			default:
+				// 无父容器可写回时直接返回原值
+				return current
+			}
+		}
+
+		key := path[0]
+		nextKey := path[1]
+		_, nextIsIndex := isIndex(nextKey)
+
+		switch typed := current.(type) {
+		case map[string]any:
+			child := typed[key]
+			if child == nil {
+				if nextIsIndex {
+					child = []any{}
+				} else {
+					child = map[string]any{}
+				}
+			} else {
+				if nextIsIndex {
+					if _, ok := child.([]any); !ok {
+						child = []any{}
+					}
+				} else {
+					if _, ok := child.(map[string]any); !ok {
+						child = map[string]any{}
+					}
+				}
+			}
+			typed[key] = setAny(child, path[1:], value)
+			return typed
+
+		case []any:
+			index, ok := isIndex(key)
+			if !ok {
+				return typed
+			}
+			next := ensureSliceLen(typed, index)
+			child := next[index]
+			if child == nil {
+				if nextIsIndex {
+					child = []any{}
+				} else {
+					child = map[string]any{}
+				}
+			} else {
+				if nextIsIndex {
+					if _, ok := child.([]any); !ok {
+						child = []any{}
+					}
+				} else {
+					if _, ok := child.(map[string]any); !ok {
+						child = map[string]any{}
+					}
+				}
+			}
+			next[index] = setAny(child, path[1:], value)
+			return next
+		default:
+			// 类型不匹配：按下一段推断容器类型
+			if nextIsIndex {
+				return setAny([]any{}, path, value)
+			}
+			return setAny(map[string]any{}, path, value)
+		}
+	}
+
+	// 在 target 中设置一个临时标记，用于检测 setAny 是否返回了新对象
+	const markerKey = "__setByPath_marker__"
+	target[markerKey] = true
+
+	updated := setAny(target, keys, value)
+
+	// 检查 updated 中是否有标记，以判断是否是同一个对象
+	if m, ok := updated.(map[string]any); ok {
+		if _, isSameObject := m[markerKey]; isSameObject {
+			// 是同一个对象，删除标记即可，修改已经就地完成
+			delete(target, markerKey)
+		} else {
+			// 是新对象，需要替换 target 的内容
+			for k := range target {
+				delete(target, k)
+			}
+			for k, v := range m {
+				target[k] = v
+			}
+		}
+	} else {
+		// updated 不是 map，删除标记（虽然不太可能发生）
+		delete(target, markerKey)
+	}
+}
+
+func normalizeWritebackTargetPath(rawPath string, value any) string {
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return ""
+	}
+	if _, ok := value.([]any); !ok {
+		return path
+	}
+
+	keys := splitPath(path)
+	if len(keys) < 2 {
+		return path
+	}
+
+	end := len(keys)
+	for end > 0 {
+		if _, err := strconv.Atoi(keys[end-1]); err != nil {
+			break
+		}
+		end--
+	}
+	if end == len(keys) || end == 0 {
+		return path
+	}
+	return strings.Join(keys[:end], ".")
 }
 
 func splitPath(path string) []string {
@@ -788,6 +1042,10 @@ func normalizePath(path string) string {
 	value := strings.TrimSpace(path)
 	value = strings.TrimPrefix(value, "$.")
 	value = strings.TrimPrefix(value, "$")
+	// 语义：以 [] 结尾表示“整个数组”，不要强制取第 1 个元素
+	if strings.HasSuffix(value, "[]") {
+		value = strings.TrimSuffix(value, "[]")
+	}
 	value = regexp.MustCompile(`\[(\d+)\]`).ReplaceAllString(value, `.$1`)
 	value = strings.ReplaceAll(value, "[]", ".0")
 	return value

@@ -239,6 +239,84 @@ const renderJson = (value: unknown) => {
   }
 }
 
+const normalizeLogPath = (path: string) => path
+  .trim()
+  .replace(/^用户属性\./, 'user.')
+  .replace(/^流程参数\./, 'workflow.')
+  .replace(/^全局参数\./, 'global.')
+  .replace(/^\$\./, '')
+  .replace(/^\$/, '')
+  .replace(/\[(\d+)\]/g, '.$1')
+
+const getLogValueByPath = (source: Record<string, unknown>, path: string): unknown => {
+  const keys = normalizeLogPath(path).split('.').map(item => item.trim()).filter(Boolean)
+  if (!keys.length)
+    return undefined
+
+  let current: unknown = source
+  for (const key of keys) {
+    if (current === null || current === undefined)
+      return undefined
+    if (Array.isArray(current)) {
+      const index = Number(key)
+      if (!Number.isInteger(index))
+        return undefined
+      current = current[index]
+      continue
+    }
+    if (typeof current !== 'object')
+      return undefined
+    current = (current as Record<string, unknown>)[key]
+  }
+  return current
+}
+
+const renderRuntimeTemplate = (value: string, variables: Record<string, unknown>) => {
+  return String(value || '').replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_full, rawKey) => {
+    const key = String(rawKey || '').trim()
+    if (!key)
+      return ''
+    const resolved = getLogValueByPath(variables, key)
+    if (resolved === undefined || resolved === null)
+      return ''
+    if (typeof resolved === 'object')
+      return JSON.stringify(resolved)
+    return String(resolved)
+  })
+}
+
+const renderHttpConfigForLog = (
+  config: Record<string, unknown>,
+  variables?: Record<string, unknown>,
+) => {
+  const context = variables ?? {}
+  const renderValue = (raw: unknown) => typeof raw === 'string' ? renderRuntimeTemplate(raw, context) : raw
+  const renderPairs = (raw: unknown) => Array.isArray(raw)
+    ? raw.map((item) => {
+        const entry = isObject(item) ? item : {}
+        return {
+          ...entry,
+          key: typeof entry.key === 'string' ? entry.key : '',
+          value: renderValue(entry.value),
+        }
+      })
+    : []
+
+  const authorization = isObject(config.authorization) ? config.authorization : {}
+  return {
+    method: config.method,
+    url: renderValue(config.url),
+    query: renderPairs(config.query),
+    headers: renderPairs(config.headers),
+    bodyType: config.bodyType,
+    body: renderValue(config.body),
+    authorization: {
+      ...authorization,
+      apiKey: renderValue(authorization.apiKey),
+    },
+  }
+}
+
 const validateDynamicInput = (
   fields: DynamicField[],
   values: Record<string, unknown>,
@@ -1341,14 +1419,7 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
                       {node.data.type === 'http-request' && (
                         <>
                           <div className="text-xs text-gray-500">请求配置</div>
-                          <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">{renderJson({
-                            method: nodeConfig.method,
-                            url: nodeConfig.url,
-                            query: nodeConfig.query,
-                            headers: nodeConfig.headers,
-                            bodyType: nodeConfig.bodyType,
-                            body: nodeConfig.body,
-                          })}</pre>
+                          <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">{renderJson(renderHttpConfigForLog(nodeConfig, execution?.variables))}</pre>
                         </>
                       )}
 

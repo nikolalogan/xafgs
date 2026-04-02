@@ -1,16 +1,31 @@
 package handler
 
 import (
+	"encoding/json"
+	"regexp"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 
 	"sxfgssever/server/internal/apimeta"
 	"sxfgssever/server/internal/middleware"
+	"sxfgssever/server/internal/model"
 	"sxfgssever/server/internal/response"
 	"sxfgssever/server/internal/service"
 	"sxfgssever/server/internal/workflowruntime"
 )
+
+type requiredUserConfigField struct {
+	key   string
+	label string
+}
+
+var requiredUserConfigFields = []requiredUserConfigField{
+	{key: "warningAccount", label: "预警通账号"},
+	{key: "warningPassword", label: "预警通密码"},
+	{key: "aiBaseUrl", label: "AI 服务商地址"},
+	{key: "aiApiKey", label: "AI APIKey"},
+}
 
 type executionIDPathRequest struct {
 	ID string `path:"id" validate:"required"`
@@ -113,6 +128,13 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
+	if missing := detectMissingRequiredUserConfig(rawDsl, userConfig); len(missing) > 0 {
+		labels := make([]string, 0, len(missing))
+		for _, item := range missing {
+			labels = append(labels, item.label)
+		}
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "缺少用户配置："+strings.Join(labels, "、"))
+	}
 	input["user"] = map[string]any{
 		"warningAccount":  userConfig.WarningAccount,
 		"warningPassword": userConfig.WarningPassword,
@@ -187,4 +209,36 @@ func requestID(c *fiber.Ctx) string {
 		return ""
 	}
 	return requestID
+}
+
+func detectMissingRequiredUserConfig(rawDSL any, config model.UserConfigDTO) []requiredUserConfigField {
+	raw, err := json.Marshal(rawDSL)
+	if err != nil {
+		return nil
+	}
+	text := string(raw)
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+
+	values := map[string]string{
+		"warningAccount":  strings.TrimSpace(config.WarningAccount),
+		"warningPassword": strings.TrimSpace(config.WarningPassword),
+		"aiBaseUrl":       strings.TrimSpace(config.AIBaseURL),
+		"aiApiKey":        strings.TrimSpace(config.AIApiKey),
+	}
+
+	missing := make([]requiredUserConfigField, 0)
+	for _, field := range requiredUserConfigFields {
+		placeholder := regexp.MustCompile(`\{\{\s*user\.` + regexp.QuoteMeta(field.key) + `\s*\}\}`)
+		bare := regexp.MustCompile(`["']\s*user\.` + regexp.QuoteMeta(field.key) + `\s*["']`)
+		if !placeholder.MatchString(text) && !bare.MatchString(text) {
+			continue
+		}
+		if values[field.key] != "" {
+			continue
+		}
+		missing = append(missing, field)
+	}
+	return missing
 }

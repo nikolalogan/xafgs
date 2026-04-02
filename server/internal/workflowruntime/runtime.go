@@ -46,6 +46,7 @@ func (runtime *Runtime) Start(ctx context.Context, input StartExecutionInput) (W
 		variables = map[string]any{}
 	}
 	applyDSLDefaults(variables, input.WorkflowDSL)
+	ensureReservedVariableRoots(variables, input.WorkflowDSL)
 
 	execution := WorkflowExecution{
 		ID:              uuid.NewString(),
@@ -69,6 +70,29 @@ func (runtime *Runtime) Start(ctx context.Context, input StartExecutionInput) (W
 	return result, nil
 }
 
+func ensureReservedVariableRoots(target map[string]any, dsl WorkflowDSL) {
+	if target == nil {
+		return
+	}
+
+	ensureMapKey := func(key string) map[string]any {
+		if existing, ok := target[key].(map[string]any); ok && existing != nil {
+			return existing
+		}
+		next := map[string]any{}
+		target[key] = next
+		return next
+	}
+
+	// 防御：运行时变量可能被节点输出或 writeback 误覆盖为非对象，导致 {{workflow.xxx}} 等占位符解析失败
+	_ = ensureMapKey("workflow")
+	_ = ensureMapKey("global")
+	_ = ensureMapKey("user")
+
+	// 重新回填 DSL 默认值（不会覆盖已有非空值）
+	applyDSLDefaults(target, dsl)
+}
+
 func applyDSLDefaults(target map[string]any, dsl WorkflowDSL) {
 	if target == nil {
 		return
@@ -89,7 +113,7 @@ func applyDSLDefaults(target map[string]any, dsl WorkflowDSL) {
 		if name == "" {
 			continue
 		}
-		if _, exists := workflow[name]; exists {
+		if existing, exists := workflow[name]; exists && hasValue(existing) {
 			continue
 		}
 		workflow[name] = parseScalar(strings.TrimSpace(param.DefaultValue))
@@ -101,7 +125,7 @@ func applyDSLDefaults(target map[string]any, dsl WorkflowDSL) {
 		if name == "" {
 			continue
 		}
-		if _, exists := global[name]; exists {
+		if existing, exists := global[name]; exists && hasValue(existing) {
 			continue
 		}
 		global[name] = parseScalar(strings.TrimSpace(variable.DefaultValue))
@@ -243,6 +267,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 	next := execution
 	next.NodeStates = cloneNodeStates(execution.NodeStates)
 	next.Variables = cloneMap(execution.Variables)
+	ensureReservedVariableRoots(next.Variables, next.WorkflowDSL)
 	next.Events = append([]ExecutionEvent{}, execution.Events...)
 	next.UpdatedAt = NowISO()
 
@@ -357,6 +382,9 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			nodeInput = options.ResumedInput
 		}
 
+		// 防御：确保保留根对象结构与默认值存在，避免 HTTP 节点渲染 {{workflow.xxx}} 时丢参
+		ensureReservedVariableRoots(next.Variables, next.WorkflowDSL)
+
 		result, _ := executor.Execute(ctx, NodeExecutorContext{
 			Node:      node,
 			Variables: next.Variables,
@@ -460,11 +488,39 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			output := defaultMap(result.Output)
 			next.Variables[nodeID] = output
 			for _, mapping := range result.Writebacks {
-				if strings.TrimSpace(mapping.TargetPath) == "" {
+				targetPath := strings.TrimSpace(mapping.TargetPath)
+				if targetPath == "" {
 					continue
 				}
-				setByPath(next.Variables, mapping.TargetPath, mapping.Value)
+				// 保护：避免 writeback 覆盖保留根对象，导致后续变量解析失败
+				// 仅允许写入 workflow.xxx / global.xxx / user.xxx
+				if targetPath == "workflow" || targetPath == "global" || targetPath == "user" {
+					runtime.log(ctx, map[string]any{
+						"event":       "writeback.blocked",
+						"requestId":   requestIDFromContext(ctx),
+						"executionId": next.ID,
+						"nodeId":      nodeID,
+						"targetPath":  targetPath,
+					})
+					continue
+				}
+				setByPath(next.Variables, targetPath, mapping.Value)
 			}
+			runtime.log(ctx, map[string]any{
+				"event":       "variables.after_writeback",
+				"requestId":   requestIDFromContext(ctx),
+				"executionId": next.ID,
+				"nodeId":      nodeID,
+				"workflow":    next.Variables["workflow"],
+			})
+			ensureReservedVariableRoots(next.Variables, next.WorkflowDSL)
+			runtime.log(ctx, map[string]any{
+				"event":       "variables.after_ensure",
+				"requestId":   requestIDFromContext(ctx),
+				"executionId": next.ID,
+				"nodeId":      nodeID,
+				"workflow":    next.Variables["workflow"],
+			})
 				next.Events = append(next.Events, ExecutionEvent{
 				ID:   uuid.NewString(),
 				Type: "node.succeeded",

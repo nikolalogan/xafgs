@@ -13,5 +13,8 @@ export type WorkflowEdge = Edge
 export type WorkflowDSL = {
   nodes: WorkflowNode[]
   edges: WorkflowEdge[]
+  globalVariables?: Array<Record<string, unknown>>
+  workflowParameters?: Array<Record<string, unknown>>
+  workflowVariableScopes?: Record<string, unknown>
   viewport?: Viewport
 }

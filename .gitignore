@@ -8,3 +8,4 @@ coverage
 server/tmp
 .tmp
 /demo
+/.spec-workflow
