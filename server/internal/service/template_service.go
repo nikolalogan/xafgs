@@ -219,5 +219,8 @@ func parseContextObject(raw json.RawMessage) (map[string]any, *model.APIError) {
 	if !ok {
 		return nil, model.NewAPIError(400, response.CodeBadRequest, "contextJson 必须为 JSON object")
 	}
+
+	enrichTemplateContext(rootObject)
+
 	return rootObject, nil
 }

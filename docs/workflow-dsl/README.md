@@ -188,8 +188,11 @@ writeback 规则：
 
 ### 6.7 joinAll / joinMode（多入边等待）
 
-当一个节点有多个入边时，可通过节点 `config` 控制是否“等待所有上游到达再执行”：
-- `config.joinAll = true` 或 `config.joinMode = "all" | "wait_all"`：等待所有入边到达后才入队执行
+当一个节点有多个入边时，引擎会默认“等待所有上游到达再执行”（等价于 `joinMode="wait_all"`）。
+
+你也可以通过节点 `config` 覆盖默认策略：
+- `config.joinMode = "any" | "wait_any" | "first"`：任一入边到达即入队执行（兼容旧行为）
+- `config.joinAll = true` 或 `config.joinMode = "all" | "wait_all"`：等待所有入边到达后才入队执行（显式声明）
 
 实现：`shouldWaitAllIncoming()`（`web/lib/workflow-runtime/xstate-runtime.ts`）
 
@@ -243,5 +246,4 @@ writeback 规则：
 1) End 节点输出“比配置多很多字段”：检查 End 是否配置了 `outputs`，以及 `outputs[].name` 是否为空；空会回退输出全量变量。
 2) `{{a.b}}` 取不到值：确认 `a` 是“顶层变量”还是“节点输出”（通常是 `{{nodeId.xxx}}`）。
 3) If-Else 分支不生效：确认边的 `sourceHandle` 是否为 `if-branch-0/1/...` 或 `if-else`。
-4) 多入边节点过早执行：给该节点 config 设置 `joinAll=true` 或 `joinMode="wait_all"`。
-
+4) 多入边节点想“任一入边到达即执行”：给该节点 config 设置 `joinMode="any"`（兼容旧行为）。

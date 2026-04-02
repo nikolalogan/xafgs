@@ -157,16 +157,20 @@ const getIncomingSourcesMap = (edges: WorkflowEdge[]) => {
   return map
 }
 
-const shouldWaitAllIncoming = (node?: WorkflowNode) => {
+const shouldWaitAllIncoming = (node: WorkflowNode | undefined, incomingCount: number) => {
   if (!node)
-    return false
+    return incomingCount > 1
   const config = node.data?.config
   if (!config || typeof config !== 'object' || Array.isArray(config))
-    return false
+    return incomingCount > 1
   const raw = config as Record<string, unknown>
   const mode = typeof raw.joinMode === 'string' ? raw.joinMode : ''
+  if (mode === 'any' || mode === 'wait_any' || mode === 'first')
+    return false
   const joinAll = raw.joinAll === true || mode === 'all' || mode === 'wait_all'
-  return joinAll
+  if (joinAll)
+    return true
+  return incomingCount > 1
 }
 
 const selectIfElseNextEdges = (edges: WorkflowEdge[], handleId: string) => {
@@ -282,8 +286,8 @@ export class XStateWorkflowRuntime implements WorkflowRuntimePort {
         if (!nodeId || pushed.has(nodeId))
           return
         const node = nodeMap.get(nodeId)
-        if (shouldWaitAllIncoming(node)) {
-          const expected = incomingSourcesMap.get(nodeId)
+        const expected = incomingSourcesMap.get(nodeId)
+        if (shouldWaitAllIncoming(node, expected?.size ?? 0)) {
           if (expected && expected.size > 0) {
             const arrived = arrivedSources.get(nodeId) ?? new Set<string>()
             if (arrived.size < expected.size)
@@ -300,8 +304,11 @@ export class XStateWorkflowRuntime implements WorkflowRuntimePort {
         arrivedSources.set(targetId, set)
       }
 
-      if (options?.resumedNodeId)
-        enqueue(options.resumedNodeId)
+      if (options?.resumedNodeId) {
+        // resume 的节点此前已进入 waiting_input：此处应强制入队，避免多入边 join 策略阻塞 resume
+        queue.push(options.resumedNodeId)
+        pushed.add(options.resumedNodeId)
+      }
       else
         enqueue(getStartNodeId(execution.workflowDsl.nodes))
 

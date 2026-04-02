@@ -292,7 +292,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 		if !ok {
 			return
 		}
-		if shouldWaitAllIncoming(node) {
+		if shouldWaitAllIncoming(node, len(incomingSourcesMap[nodeID])) {
 			expected := incomingSourcesMap[nodeID]
 			if len(expected) > 0 {
 				arrived := arrivedSources[nodeID]
@@ -306,7 +306,9 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 	}
 
 	if options.ResumedNodeID != "" {
-		enqueue(options.ResumedNodeID)
+		// resume 的节点此前已进入 waiting_input：此处应强制入队，避免多入边 join 策略阻塞 resume
+		queue = append(queue, options.ResumedNodeID)
+		pushed[options.ResumedNodeID] = true
 	} else {
 		enqueue(getStartNodeID(execution.WorkflowDSL.Nodes))
 	}
@@ -612,14 +614,22 @@ func cloneNodeStates(source map[string]ExecutionNodeState) map[string]ExecutionN
 	return out
 }
 
-func shouldWaitAllIncoming(node WorkflowNode) bool {
+func shouldWaitAllIncoming(node WorkflowNode, incomingCount int) bool {
 	cfg := node.Data.Config
-	if cfg == nil {
-		return false
+	if cfg != nil {
+		mode, _ := cfg["joinMode"].(string)
+		mode = strings.TrimSpace(mode)
+		if mode == "any" || mode == "wait_any" || mode == "first" {
+			return false
+		}
+		joinAll, _ := cfg["joinAll"].(bool)
+		if joinAll || mode == "all" || mode == "wait_all" {
+			return true
+		}
 	}
-	mode, _ := cfg["joinMode"].(string)
-	joinAll, _ := cfg["joinAll"].(bool)
-	return joinAll || mode == "all" || mode == "wait_all"
+
+	// 默认策略：当节点存在多入边时，等待所有上游到达再执行。
+	return incomingCount > 1
 }
 
 func getStartNodeID(nodes []WorkflowNode) string {

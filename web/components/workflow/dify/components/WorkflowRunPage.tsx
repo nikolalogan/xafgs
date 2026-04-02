@@ -1057,36 +1057,126 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
     setAutoRunTriggered(false)
   }
 
-  const exportRenderedToPdf = (nodeId: string) => {
+  const ensureExportFileName = (name: string) => {
+    const base = String(name || '导出').trim() || '导出'
+    return base.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 64)
+  }
+
+  const escapeHtml = (raw: string) => raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
+  const normalizeToHtmlDocument = (raw: string, title: string) => {
+    const isFullDoc = /<!doctype/i.test(raw) || /<html[\s>]/i.test(raw)
+    if (isFullDoc)
+      return raw
+    const safeTitle = escapeHtml(title)
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/><title>${safeTitle}</title></head><body>${raw}</body></html>`
+  }
+
+  const buildRenderedHtmlDocument = (rendered: { html: string; outputType: 'text' | 'html'; templateName: string }) => {
+    const title = ensureExportFileName(rendered.templateName || '导出')
+    const body = rendered.outputType === 'text'
+      ? `<pre style="white-space:pre-wrap; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; margin: 0;">${escapeHtml(String(rendered.html ?? ''))}</pre>`
+      : String(rendered.html ?? '')
+    return {
+      title,
+      htmlDoc: normalizeToHtmlDocument(body, title),
+    }
+  }
+
+  const downloadTextFile = (content: string, filename: string, mime: string) => {
+    const blob = new Blob([content], { type: `${mime};charset=utf-8` })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  const injectPrintEnhancements = (html: string, title: string) => {
+    const printStyle = `
+<style>
+  @page { size: A4; margin: 12mm; }
+  html, body { background: #fff; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  img, svg, canvas { max-width: 100% !important; }
+  a { color: inherit; text-decoration: none; }
+  .no-print { display: none !important; }
+</style>
+`
+    const printScript = `
+<script>
+(() => {
+  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+  const run = async () => {
+    try {
+      if (document.fonts && document.fonts.ready)
+        await document.fonts.ready
+    } catch {}
+    await wait(80)
+    try { window.focus() } catch {}
+    try { window.print() } catch {}
+  }
+  window.addEventListener('load', () => { void run() })
+  window.addEventListener('afterprint', () => { try { window.close() } catch {} })
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      try { window.close() } catch {}
+    }
+  })
+})()
+</script>
+`
+    const safeTitle = escapeHtml(title)
+    const withTitle = /<title[\s>]/i.test(html)
+      ? html
+      : html.replace(/<head[\s>]/i, match => `${match}<title>${safeTitle}</title>`)
+
+    if (/<\/head>/i.test(withTitle))
+      return withTitle.replace(/<\/head>/i, `${printStyle}${printScript}</head>`)
+    if (/<html[\s>]/i.test(withTitle))
+      return withTitle.replace(/<html[\s>]/i, match => `${match}\n<head>${printStyle}${printScript}</head>`)
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/><title>${safeTitle}</title>${printStyle}${printScript}</head><body>${withTitle}</body></html>`
+  }
+
+  const exportRenderedToHtml = (nodeId: string) => {
+    if (typeof window === 'undefined')
+      return
+    const rendered = endRendered[nodeId]
+    if (!rendered)
+      return
+    const { title, htmlDoc } = buildRenderedHtmlDocument(rendered)
+    downloadTextFile(htmlDoc, `${title}.html`, 'text/html')
+  }
+
+  const exportRenderedToImagePdf = (nodeId: string) => {
     void (async () => {
       if (typeof window === 'undefined')
         return
       const rendered = endRendered[nodeId]
       if (!rendered)
         return
-
-      const normalizeToHtmlDocument = (raw: string) => {
-        const isFullDoc = /<!doctype/i.test(raw) || /<html[\s>]/i.test(raw)
-        if (isFullDoc)
-          return raw
-        return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/><title>${rendered.templateName || '导出'}</title></head><body>${raw}</body></html>`
-      }
-
-      const raw = rendered.outputType === 'text'
-        ? `<pre style="white-space:pre-wrap; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; margin: 0;">${String(rendered.html ?? '')}</pre>`
-        : String(rendered.html ?? '')
-
-      const htmlDoc = normalizeToHtmlDocument(raw)
-
-      const ensureFileName = (name: string) => {
-        const base = String(name || '导出').trim() || '导出'
-        return base.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 64)
-      }
+      const { title, htmlDoc } = buildRenderedHtmlDocument(rendered)
 
       const renderHtmlToCanvas = async (html: string) => {
         const [{ default: html2canvas }] = await Promise.all([
           import('html2canvas'),
         ])
+
+        // 以 A4 宽度为基准，尽量接近“标准打印清晰度” 300 DPI（用于图片 PDF 兜底导出）。
+        // A4 宽度 210mm ≈ 8.27in；300DPI 时约 2480px。
+        const baseWidthPx = 1024
+        const targetDpi = 300
+        const a4WidthInches = 210 / 25.4
+        const desiredCanvasWidthPx = targetDpi * a4WidthInches
+        const scale = Math.min(3, Math.max(1, desiredCanvasWidthPx / baseWidthPx))
 
         const iframe = document.createElement('iframe')
         iframe.setAttribute('sandbox', 'allow-same-origin')
@@ -1094,7 +1184,7 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
         iframe.style.position = 'fixed'
         iframe.style.left = '-100000px'
         iframe.style.top = '0'
-        iframe.style.width = '1024px'
+        iframe.style.width = `${baseWidthPx}px`
         iframe.style.height = '10px'
         iframe.style.border = '0'
         iframe.style.background = 'white'
@@ -1114,6 +1204,15 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
           if (!doc)
             throw new Error('无法读取渲染文档')
 
+          try {
+            // 等待字体与一次重排，避免 html2canvas 捕获到“尚未应用字体”的低清晰度状态
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            await (doc.fonts?.ready ?? Promise.resolve())
+          }
+          catch {
+          }
+          await new Promise<void>(resolve => window.setTimeout(resolve, 60))
+
           const body = doc.body
           const docEl = doc.documentElement
           const height = Math.max(
@@ -1127,11 +1226,11 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
           const target = (docEl || body) as unknown as HTMLElement
           const canvas = await html2canvas(target, {
             // 之前用 PNG + 高 scale 会导致 PDF 体积极大（内容很少也可能到数 MB）。
-            // 这里降低 scale，并在后续用 JPEG 压缩。
-            scale: 1.25,
+            // 这里按 A4 300DPI 计算 scale，并在后续用 JPEG 压缩。
+            scale,
             useCORS: true,
             backgroundColor: '#ffffff',
-            windowWidth: 1024,
+            windowWidth: baseWidthPx,
           })
           return canvas
         }
@@ -1149,7 +1248,7 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
         const pageWidth = pdf.internal.pageSize.getWidth()
         const pageHeight = pdf.internal.pageSize.getHeight()
 
-        const imgData = canvas.toDataURL('image/jpeg', 0.78)
+        const imgData = canvas.toDataURL('image/jpeg', 0.92)
         const imgWidth = pageWidth
         const imgHeight = (canvas.height * imgWidth) / canvas.width
 
@@ -1172,7 +1271,7 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
           if (!ctx)
             break
           ctx.drawImage(canvas, 0, -renderedHeightPx)
-          const pageImg = pageCanvas.toDataURL('image/jpeg', 0.78)
+          const pageImg = pageCanvas.toDataURL('image/jpeg', 0.92)
           if (pageIndex > 0)
             pdf.addPage()
           const pageImgHeight = (pageCanvas.height * imgWidth) / pageCanvas.width
@@ -1188,12 +1287,32 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
 
       try {
         const canvas = await renderHtmlToCanvas(htmlDoc)
-        await canvasToPdf(canvas, ensureFileName(rendered.templateName || '导出'))
+        await canvasToPdf(canvas, title)
       }
       catch (pdfError) {
         setError(pdfError instanceof Error ? `导出 PDF 失败：${pdfError.message}` : '导出 PDF 失败')
       }
     })()
+  }
+
+  const exportRenderedToPdf = (nodeId: string) => {
+    if (typeof window === 'undefined')
+      return
+    const rendered = endRendered[nodeId]
+    if (!rendered)
+      return
+
+    const { title, htmlDoc } = buildRenderedHtmlDocument(rendered)
+    const printableDoc = injectPrintEnhancements(htmlDoc, title)
+    const blob = new Blob([printableDoc], { type: 'text/html;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const popup = window.open(url, '_blank', 'noopener,noreferrer')
+    if (!popup) {
+      URL.revokeObjectURL(url)
+      exportRenderedToImagePdf(nodeId)
+      return
+    }
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
   useEffect(() => {
@@ -1445,13 +1564,22 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
 	                          <div className="flex items-center justify-between gap-2">
 	                            <div className="text-xs text-gray-500">模板渲染</div>
 	                            {endRendered[node.id] && (
-	                              <button
-	                                type="button"
-	                                onClick={() => exportRenderedToPdf(node.id)}
-	                                className="rounded border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
-	                              >
-	                                导出 PDF
-	                              </button>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => exportRenderedToPdf(node.id)}
+                                    className="rounded border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
+                                  >
+                                    导出 PDF（可复制）
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => exportRenderedToHtml(node.id)}
+                                    className="rounded border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
+                                  >
+                                    导出 HTML
+                                  </button>
+                                </div>
 	                            )}
 	                          </div>
 	                          {endRenderLoading[node.id] && (

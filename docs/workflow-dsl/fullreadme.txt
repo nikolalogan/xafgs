@@ -280,6 +280,13 @@
     }
   }
 
+  Select（下拉）字段约定（重要）：
+
+  - options 必须使用对象数组：[{ "label": "...", "value": "..." }, ...]
+    - label：仅用于界面展示
+    - value：写入 variables / 作为运行时输入值（需要稳定、唯一、非空）
+  - 不要只配置 label 或把 options 写成纯字符串数组；字符串数组仅为历史兼容（等价于 label=value=同名），推荐统一改为对象形式。
+
   字段类型枚举（type）：
   - text-input - 单行文本
   - paragraph - 多行文本
@@ -356,8 +363,12 @@
           "label": "审批决策",              // 显示标签（必填）
           "type": "select",                 // 字段类型（必填）
           "required": true,                 // 是否必填
-          "options": ["通过", "拒绝", "退回"], // 选项列表（select）
-          "defaultValue": "通过",           // 默认值
+          "options": [                      // 选项列表（select）
+            { "label": "通过", "value": "approve" },
+            { "label": "拒绝", "value": "reject" },
+            { "label": "退回", "value": "return" }
+          ],
+          "defaultValue": "approve",        // 默认值：填 value
           "visibleWhen": "{{role}} === 'admin'", // 可见条件表达式
           "validateWhen": "{{amount}} < 10000"   // 校验条件表达式
         }
@@ -386,8 +397,12 @@
             "label": "审批决策",
             "type": "select",
             "required": true,
-            "options": ["通过", "拒绝", "退回"],
-            "defaultValue": "通过"
+            "options": [
+              { "label": "通过", "value": "approve" },
+              { "label": "拒绝", "value": "reject" },
+              { "label": "退回", "value": "return" }
+            ],
+            "defaultValue": "approve"
           }
         ]
       }
@@ -396,18 +411,18 @@
   2. 用户提交：调用 POST /api/workflow/executions/:id/resume
   {
     "nodeInput": {
-      "approval_decision": "通过"
+      "approval_decision": "approve"
     }
   }
   3. 继续执行：节点输出为归一化后的输入
   variables["input-1"] = {
-    "approval_decision": "通过"
+    "approval_decision": "approve"
   }
 
   校验规则：
   - required 字段必须有值
   - number 类型必须为数字
-  - select 类型值必须在 options 中
+  - select 类型值必须在 options[].value 中（options 推荐为 {label,value}；字符串数组仅为兼容旧写法）
 
   完整示例：
 
@@ -426,8 +441,12 @@
             "label": "审批决策",
             "type": "select",
             "required": true,
-            "options": ["通过", "拒绝", "退回"],
-            "defaultValue": "通过"
+            "options": [
+              { "label": "通过", "value": "approve" },
+              { "label": "拒绝", "value": "reject" },
+              { "label": "退回", "value": "return" }
+            ],
+            "defaultValue": "approve"
           },
           {
             "name": "approval_comment",
@@ -1554,7 +1573,8 @@
 
   场景说明：
 
-  当一个节点有多个入边时，默认行为是"任意一个上游到达就执行"。但有些场景需要"等待所有上游到达再执行"。
+  当一个节点有多个入边时，引擎默认会"等待所有上游到达再执行"（等价 joinMode="wait_all"）。
+  若需要兼容旧行为（任意一个上游到达就执行），可显式设置 joinMode="any"。
 
   配置方式：
 
@@ -1562,7 +1582,9 @@
 
   {
     "config": {
-      "joinAll": true,                   // 方式 1
+      "joinMode": "any",                 // 方式 0：任意入边到达即执行（兼容旧行为）
+      // 或
+      "joinAll": true,                   // 方式 1：等待所有入边
       // 或
       "joinMode": "all",                 // 方式 2
       // 或
@@ -1852,8 +1874,11 @@
                 "label": "审批决策",
                 "type": "select",
                 "required": true,
-                "options": ["通过", "拒绝"],
-                "defaultValue": "通过"
+                "options": [
+                  { "label": "通过", "value": "approve" },
+                  { "label": "拒绝", "value": "reject" }
+                ],
+                "defaultValue": "approve"
               },
               {
                 "name": "approval_comment",
@@ -1994,16 +2019,16 @@
     ]
   }
 
-  9.4 多入边节点过早执行
+  9.4 多入边节点想提前执行（任一入边到达即执行）
 
-  问题：汇总节点在某些上游还未完成时就执行了
+  问题：节点需要在"任意一个上游到达"时就执行（兼容旧行为）
 
-  原因：未设置 joinAll
+  原因：引擎默认策略为等待所有入边到达（joinMode="wait_all"）
 
   解决：
   {
     "config": {
-      "joinAll": true
+      "joinMode": "any"
     }
   }
 
