@@ -1,0 +1,118 @@
+.page {
+  --bg0: #f6f9ff;
+  --bg1: #eef5ff;
+  --card: rgba(255, 255, 255, 0.92);
+  --text: rgba(10, 16, 28, 0.92);
+  --muted: rgba(10, 16, 28, 0.56);
+  --line: rgba(10, 16, 28, 0.10);
+  --shadow: 0 18px 60px rgba(10, 16, 28, 0.10);
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(900px 520px at 18% 16%, rgba(59, 130, 246, 0.18), transparent 60%),
+    radial-gradient(900px 520px at 86% 18%, rgba(14, 165, 233, 0.16), transparent 62%),
+    linear-gradient(180deg, var(--bg0), var(--bg1));
+}
+
+/* 简约“业务开展”图案：抽象流程线 + 网格，纯 CSS，无图片资源 */
+.page::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(10, 16, 28, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(10, 16, 28, 0.04) 1px, transparent 1px),
+    radial-gradient(circle at 20% 30%, rgba(59, 130, 246, 0.16) 0 2px, transparent 3px),
+    radial-gradient(circle at 62% 62%, rgba(14, 165, 233, 0.14) 0 2px, transparent 3px),
+    radial-gradient(circle at 86% 40%, rgba(59, 130, 246, 0.12) 0 2px, transparent 3px);
+  background-size: 56px 56px, 56px 56px, 260px 200px, 320px 260px, 300px 240px;
+  opacity: 0.65;
+  mask-image: radial-gradient(closest-side, rgba(0, 0, 0, 0.55), transparent 80%);
+}
+
+.wrap {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  text-align: center;
+  color: rgba(10, 16, 28, 0.86);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.card {
+  background: var(--card);
+  color: var(--text);
+  border-radius: 10px; /* 矩形为主，轻微圆角避免割裂 */
+  border: 1px solid rgba(10, 16, 28, 0.08);
+  box-shadow: var(--shadow);
+  padding: 18px 18px 16px;
+}
+
+.form {
+  display: grid;
+  gap: 10px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.input {
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  outline: none;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--text);
+}
+
+.input:focus {
+  border-color: rgba(59, 130, 246, 0.70);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+
+.error {
+  border-radius: 8px;
+  border: 1px solid rgba(244, 63, 94, 0.25);
+  background: rgba(244, 63, 94, 0.08);
+  color: rgba(159, 18, 57, 0.92);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.submit {
+  height: 40px;
+  border-radius: 8px;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.95), rgba(14, 165, 233, 0.92));
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.submit:hover {
+  filter: brightness(1.03);
+}
+
+.submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
