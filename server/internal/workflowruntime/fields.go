@@ -12,8 +12,13 @@ type DynamicField struct {
 	Label        string
 	Type         string
 	Required     bool
-	Options      []string
+	Options      []DynamicOption
 	DefaultValue any
+}
+
+type DynamicOption struct {
+	Label string
+	Value string
 }
 
 func ParseStartFields(config map[string]any) []DynamicField {
@@ -42,15 +47,25 @@ func BuildInputSchema(fields []DynamicField) map[string]any {
 	schemaFields := make([]map[string]any, 0, len(fields))
 	for _, field := range fields {
 		defaultValue := field.DefaultValue
+		if defaultValue == nil && normalizeFieldType(field.Type) == "checkbox" {
+			defaultValue = false
+		}
 		if defaultValue == nil {
 			defaultValue = ""
+		}
+		options := make([]map[string]any, 0, len(field.Options))
+		for _, opt := range field.Options {
+			options = append(options, map[string]any{
+				"label": opt.Label,
+				"value": opt.Value,
+			})
 		}
 		schemaFields = append(schemaFields, map[string]any{
 			"name":         field.Name,
 			"label":        field.Label,
 			"type":         normalizeFieldType(field.Type),
 			"required":     field.Required,
-			"options":      field.Options,
+			"options":      options,
 			"defaultValue": defaultValue,
 		})
 	}
@@ -98,11 +113,20 @@ func ValidateAndNormalizeDynamicInput(fields []DynamicField, input map[string]an
 			continue
 		}
 
+		if fieldType == "checkbox" {
+			parsed, err := parseBool(candidate)
+			if err != nil {
+				return nil, fmt.Errorf("输入字段 %s 需要 boolean", field.Name)
+			}
+			normalized[field.Name] = parsed
+			continue
+		}
+
 		if fieldType == "select" && len(field.Options) > 0 {
 			valueStr := toString(candidate)
 			valid := false
 			for _, option := range field.Options {
-				if option == valueStr {
+				if option.Value == valueStr {
 					valid = true
 					break
 				}
@@ -134,13 +158,13 @@ func parseDynamicFields(raw []any) []DynamicField {
 		required, _ := entry["required"].(bool)
 		defaultValue := entry["defaultValue"]
 
-		options := []string{}
+		options := []DynamicOption{}
 		if rawOptions, ok := entry["options"].([]any); ok {
 			for _, opt := range rawOptions {
-				options = append(options, normalizeOptionValue(opt))
+				options = append(options, normalizeOption(opt))
 			}
 		}
-		options = filterNonEmpty(options)
+		options = filterNonEmptyOptions(options)
 
 		fields = append(fields, DynamicField{
 			Name:         name,
@@ -154,27 +178,38 @@ func parseDynamicFields(raw []any) []DynamicField {
 	return fields
 }
 
-func normalizeOptionValue(option any) string {
+func normalizeOption(option any) DynamicOption {
 	if option == nil {
-		return ""
+		return DynamicOption{}
 	}
 	if value, ok := option.(string); ok {
-		return strings.TrimSpace(value)
+		value = strings.TrimSpace(value)
+		return DynamicOption{Label: value, Value: value}
 	}
 	if m, ok := option.(map[string]any); ok {
-		if raw, exists := m["value"]; exists {
-			return strings.TrimSpace(toString(raw))
+		rawValue, _ := m["value"]
+		value := strings.TrimSpace(toString(rawValue))
+		rawLabel, _ := m["label"]
+		label := strings.TrimSpace(toString(rawLabel))
+		if label == "" {
+			label = value
 		}
+		return DynamicOption{Label: label, Value: value}
 	}
-	return strings.TrimSpace(toString(option))
+	value := strings.TrimSpace(toString(option))
+	return DynamicOption{Label: value, Value: value}
 }
 
-func filterNonEmpty(input []string) []string {
-	out := make([]string, 0, len(input))
+func filterNonEmptyOptions(input []DynamicOption) []DynamicOption {
+	out := make([]DynamicOption, 0, len(input))
 	for _, item := range input {
-		item = strings.TrimSpace(item)
-		if item == "" {
+		item.Label = strings.TrimSpace(item.Label)
+		item.Value = strings.TrimSpace(item.Value)
+		if item.Value == "" {
 			continue
+		}
+		if item.Label == "" {
+			item.Label = item.Value
 		}
 		out = append(out, item)
 	}
@@ -238,5 +273,39 @@ func parseNumber(value any) (float64, error) {
 		return strconv.ParseFloat(trimmed, 64)
 	default:
 		return 0, errors.New("not number")
+	}
+}
+
+func parseBool(value any) (bool, error) {
+	switch v := value.(type) {
+	case bool:
+		return v, nil
+	case string:
+		s := strings.TrimSpace(strings.ToLower(v))
+		if s == "true" || s == "1" || s == "yes" || s == "y" {
+			return true, nil
+		}
+		if s == "false" || s == "0" || s == "no" || s == "n" || s == "" {
+			return false, nil
+		}
+		return false, errors.New("invalid bool")
+	case float64:
+		return v != 0, nil
+	case float32:
+		return v != 0, nil
+	case int:
+		return v != 0, nil
+	case int64:
+		return v != 0, nil
+	case int32:
+		return v != 0, nil
+	case uint:
+		return v != 0, nil
+	case uint64:
+		return v != 0, nil
+	case uint32:
+		return v != 0, nil
+	default:
+		return false, errors.New("invalid bool")
 	}
 }

@@ -204,6 +204,32 @@ const defaultInputConfig = (): InputNodeConfig => ({
   ],
 })
 
+const normalizeInputFieldType = (value: unknown): InputNodeConfig['fields'][number]['type'] => {
+  if (value === 'paragraph' || value === 'number' || value === 'select' || value === 'checkbox' || value === 'text')
+    return value
+  if (value === 'text-input')
+    return 'text'
+  return 'text'
+}
+
+const normalizeInputFieldOptions = (raw: unknown): Array<{ label: string; value: string }> => {
+  if (!Array.isArray(raw))
+    return []
+  return raw.map((option) => {
+    if (option && typeof option === 'object') {
+      const value = typeof (option as { value?: unknown }).value === 'string'
+        ? (option as { value: string }).value
+        : String((option as { value?: unknown }).value ?? '')
+      const label = typeof (option as { label?: unknown }).label === 'string'
+        ? (option as { label: string }).label
+        : value
+      return { label, value }
+    }
+    const value = String(option ?? '')
+    return { label: value, value }
+  }).filter(item => item.value)
+}
+
 const defaultFactories: { [K in BlockEnum]: () => DifyNodeConfigMap[K] } = {
   [BlockEnum.Start]: defaultStartConfig,
   [BlockEnum.End]: defaultEndConfig,
@@ -269,7 +295,12 @@ export const ensureNodeConfig = <K extends BlockEnum>(
     const input = config as Partial<InputNodeConfig>
     const normalizedFields = Array.isArray(input.fields)
       ? input.fields.map(field => ({
-          ...field,
+          name: typeof field?.name === 'string' ? field.name : '',
+          label: typeof field?.label === 'string' ? field.label : '',
+          type: normalizeInputFieldType(field?.type),
+          required: typeof field?.required === 'boolean' ? field.required : false,
+          options: normalizeInputFieldOptions((field as { options?: unknown } | undefined)?.options),
+          defaultValue: (field as { defaultValue?: unknown } | undefined)?.defaultValue,
           visibleWhen: typeof field?.visibleWhen === 'string' ? field.visibleWhen : undefined,
           validateWhen: typeof field?.validateWhen === 'string' ? field.validateWhen : undefined,
         }))

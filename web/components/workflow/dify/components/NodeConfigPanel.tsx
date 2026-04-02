@@ -599,7 +599,7 @@ export default function NodeConfigPanel({
         sectionKey="input"
         title="输入节点表单"
         addButtonLabel="新增字段"
-        allowedTypes={['text-input', 'paragraph', 'number', 'select']}
+        allowedTypes={['text-input', 'paragraph', 'number', 'select', 'checkbox']}
         config={adaptedStartConfig}
         onChange={handleChange}
         variableOptions={variableOptions}

@@ -141,7 +141,7 @@ const statusTextMap: Record<RuntimeNodeStatus, string> = {
 const statusClassMap: Record<RuntimeNodeStatus, string> = {
   pending: 'bg-gray-100 text-gray-600',
   running: 'bg-blue-100 text-blue-700',
-  waiting_input: 'bg-amber-100 text-amber-700',
+  waiting_input: 'bg-blue-100 text-blue-700',
   succeeded: 'bg-emerald-100 text-emerald-700',
   failed: 'bg-rose-100 text-rose-700',
   skipped: 'bg-slate-100 text-slate-700',
@@ -155,7 +155,7 @@ const getNodePreviewStyle = (status: RuntimeNodeStatus | undefined) => {
   if (status === 'running')
     return { border: '1.5px solid #3b82f6', background: '#eff6ff' }
   if (status === 'waiting_input')
-    return { border: '1.5px solid #f59e0b', background: '#fffbeb' }
+    return { border: '1.5px solid #3b82f6', background: '#eff6ff' }
   if (status === 'skipped')
     return { border: '1.5px solid #64748b', background: '#f8fafc' }
   return { border: '1px solid #d1d5db', background: '#ffffff' }
@@ -208,16 +208,29 @@ const normalizeWaitingFields = (schema?: Record<string, unknown>): DynamicField[
     return []
   return schema.fields.map((item) => {
     const entry = isObject(item) ? item : {}
-    const optionsRaw = Array.isArray(entry.options) ? entry.options : []
+    const normalizeOptions = (options: unknown) => {
+      if (!Array.isArray(options))
+        return []
+      return options.map((option) => {
+        if (typeof option === 'string') {
+          const value = option
+          return { label: value, value }
+        }
+        if (isObject(option)) {
+          const value = typeof option.value === 'string' ? option.value : String(option.value ?? '')
+          const label = typeof option.label === 'string' ? option.label : value
+          return { label, value }
+        }
+        const value = String(option ?? '')
+        return { label: value, value }
+      }).filter(item => item.value)
+    }
     return {
       name: typeof entry.name === 'string' ? entry.name : '',
       label: typeof entry.label === 'string' ? entry.label : '',
       type: entry.type === 'paragraph' ? 'paragraph' : entry.type === 'number' ? 'number' : entry.type === 'select' ? 'select' : entry.type === 'checkbox' ? 'checkbox' : 'text',
       required: Boolean(entry.required),
-      options: optionsRaw.map(option => {
-        const value = String(option ?? '')
-        return { label: value, value }
-      }),
+      options: normalizeOptions(entry.options),
       defaultValue: entry.defaultValue,
     } satisfies DynamicField
   }).filter(field => field.name)
@@ -1543,15 +1556,15 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
                       )}
 
                   {isWaitingCurrent && (
-                        <div className="space-y-2 rounded border border-amber-200 bg-amber-50 p-2">
-                          <div className="text-xs font-medium text-amber-800">节点等待输入，请提交后继续</div>
+                        <div className="space-y-2 rounded border border-gray-200 bg-white p-2">
+                          <div className="text-xs font-medium text-gray-800">节点等待输入，请提交后继续</div>
                           <DynamicForm fields={waitingFields} values={waitingInput} onChange={setWaitingInput} />
                           <div className="flex justify-end pt-1">
                             <button
                               type="button"
                               onClick={submitWaitingInput}
                               disabled={loading}
-                              className="rounded bg-amber-600 px-4 py-2 text-xs text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                              className="rounded bg-blue-600 px-4 py-2 text-xs text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
                             >
                               {loading ? '提交中...' : '提交并继续'}
                             </button>

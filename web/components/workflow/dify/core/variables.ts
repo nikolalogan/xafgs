@@ -187,7 +187,7 @@ export const buildWorkflowVariableOptions = (
       config.fields.forEach((field) => {
         if (!field.name)
           return
-        const valueType = field.type === 'number' ? 'number' : 'string'
+        const valueType = field.type === 'number' ? 'number' : field.type === 'checkbox' ? 'boolean' : 'string'
         options.push({
           key: `${nodeId}.${field.name}`,
           nodeId,

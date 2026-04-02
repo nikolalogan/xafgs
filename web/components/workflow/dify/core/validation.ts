@@ -247,13 +247,36 @@ export const validateWorkflow = (
           message: '输入字段名不能重复。',
         })
       }
-      if (config.fields.some(field => field.type === 'select' && field.options.length === 0)) {
+      if (config.fields.some(field => field.type === 'select' && (field.options ?? []).length === 0)) {
         issues.push({
           id: `${prefix}-input-select-empty`,
           nodeId: node.id,
           level: 'error',
           title: `${node.data.title} 下拉选项缺失`,
           message: '下拉类型字段至少需要一个选项。',
+        })
+      }
+      if (config.fields.some(field => field.type === 'select' && (field.options ?? []).some(option => !trim(option.label) || !trim(option.value)))) {
+        issues.push({
+          id: `${prefix}-input-select-invalid`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 下拉选项不完整`,
+          message: '下拉选项的名称和编码不能为空。',
+        })
+      }
+      if (config.fields.some((field) => {
+        if (field.type !== 'select')
+          return false
+        const codes = (field.options ?? []).map(option => option.value)
+        return hasDuplicate(codes)
+      })) {
+        issues.push({
+          id: `${prefix}-input-select-code-dup`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 下拉编码重复`,
+          message: '下拉选项编码不能重复。',
         })
       }
     }

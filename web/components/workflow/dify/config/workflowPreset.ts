@@ -35,7 +35,18 @@ export const demoDSL: DifyWorkflowDSL = {
         config: {
           fields: [
             { name: 'customer_name', label: '客户名称', type: 'text', required: true, options: [], defaultValue: '' },
-            { name: 'priority', label: '优先级', type: 'select', required: true, options: ['high', 'normal', 'low'], defaultValue: 'normal' },
+            {
+              name: 'priority',
+              label: '优先级',
+              type: 'select',
+              required: true,
+              options: [
+                { label: 'high', value: 'high' },
+                { label: 'normal', value: 'normal' },
+                { label: 'low', value: 'low' },
+              ],
+              defaultValue: 'normal',
+            },
           ],
         },
       },

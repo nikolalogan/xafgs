@@ -381,6 +381,7 @@
   - paragraph - 多行文本
   - number - 数字输入
   - select - 下拉选择
+  - checkbox - 复选框（true/false）
 
   运行时行为：
 

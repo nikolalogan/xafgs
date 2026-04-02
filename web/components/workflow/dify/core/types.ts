@@ -178,10 +178,10 @@ export type InputNodeConfig = {
   fields: Array<{
     name: string
     label: string
-    type: 'text' | 'paragraph' | 'number' | 'select'
+    type: 'text' | 'paragraph' | 'number' | 'select' | 'checkbox'
     required: boolean
-    options: string[]
-    defaultValue: string
+    options?: Array<{ label: string; value: string }>
+    defaultValue?: unknown
     visibleWhen?: string
     validateWhen?: string
   }>
