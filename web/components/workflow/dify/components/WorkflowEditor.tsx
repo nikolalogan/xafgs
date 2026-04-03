@@ -42,6 +42,7 @@ type WorkflowEditorProps = {
       onNodesChange: (changes: NodeChange[]) => void
       onEdgesChange: (changes: EdgeChange[]) => void
       onConnect: (params: Connection) => void
+      onNodeDragStop: (_: React.MouseEvent, node: DifyNode) => void
       onNodeClick: (_: React.MouseEvent, node: DifyNode) => void
       onPaneClick: () => void
       onNodeContextMenu: (event: React.MouseEvent, node: DifyNode) => void
@@ -184,6 +185,7 @@ export default function WorkflowEditor({
           onNodesChange={actions.flow.onNodesChange}
           onEdgesChange={actions.flow.onEdgesChange}
           onConnect={actions.flow.onConnect}
+          onNodeDragStop={actions.flow.onNodeDragStop}
           onNodeClick={actions.flow.onNodeClick}
           onPaneClick={actions.flow.onPaneClick}
           onNodeContextMenu={actions.flow.onNodeContextMenu}
@@ -193,14 +195,21 @@ export default function WorkflowEditor({
           connectionLineContainerStyle={{ zIndex: connectionLineZIndex }}
           multiSelectionKeyCode={null}
           deleteKeyCode={null}
+          nodesDraggable
+          nodesFocusable={false}
+          edgesFocusable={false}
           panOnScroll={false}
           selectionKeyCode={null}
           selectionMode={SelectionMode.Partial}
-          fitView
-          fitViewOptions={{ padding: 0.2 }}
           minZoom={0.25}
         >
-          <MiniMap pannable zoomable style={{ width: 102, height: 72 }} />
+          <MiniMap
+            pannable
+            zoomable
+            style={{ width: 102, height: 72 }}
+            maskColor="rgba(15, 23, 42, 0.08)"
+            className="!absolute !bottom-14 !left-4 z-[9] !m-0 !h-[72px] !w-[102px] !rounded-lg !border-[0.5px] !border-gray-200 !bg-white !shadow-md"
+          />
           <Controls />
           <Background gap={[14, 14]} size={2} color="#d1d5db" />
         </ReactFlow>

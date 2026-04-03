@@ -2,8 +2,6 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import {
-  applyEdgeChanges,
-  applyNodeChanges,
   ReactFlowProvider,
   useReactFlow,
   type Connection,
@@ -228,14 +226,18 @@ export type WorkflowCanvasHandle = {
 function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvasInnerProps) {
   const [runModalOpen, setRunModalOpen] = useState(false)
   const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ nodes: [], edges: [], workflowParameters: [] })
+  const [nodesForPanel, setNodesForPanel] = useState<DifyNode[]>([])
   const latestNodesRef = useRef<DifyNode[]>([])
   const latestEdgesRef = useRef<DifyEdge[]>([])
   const latestWorkflowParametersRef = useRef<WorkflowParameter[]>([])
   const lastReportedDSLRef = useRef('')
+  const dragRecordPendingRef = useRef(false)
   const {
     parsed,
     nodes,
     edges,
+    onNodesChangeBase,
+    onEdgesChangeBase,
     activeNode,
     importOpen,
     exportOpen,
@@ -288,6 +290,26 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
     latestEdgesRef.current = edges
     latestWorkflowParametersRef.current = workflowParameters
   }, [edges, nodes, workflowParameters])
+
+  useEffect(() => {
+    setNodesForPanel((prev) => {
+      if (prev.length !== nodes.length)
+        return nodes
+      const prevByID = new Map(prev.map(node => [node.id, node]))
+      for (const node of nodes) {
+        const old = prevByID.get(node.id)
+        if (!old)
+          return nodes
+        if (old.type !== node.type)
+          return nodes
+        if (old.parentNode !== node.parentNode)
+          return nodes
+        if (old.data !== node.data)
+          return nodes
+      }
+      return prev
+    })
+  }, [nodes])
 
   useEffect(() => {
     const openRunModal = () => {
@@ -394,7 +416,7 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
     duplicateSelection: () => duplicateSelection(),
     deleteSelection: () => deleteSelection(),
   })
-  const issues = validateWorkflow(nodes, edges, workflowParameters)
+  const issues = useMemo(() => validateWorkflow(nodesForPanel, edges, workflowParameters), [edges, nodesForPanel, workflowParameters])
 
   useEffect(() => {
     if (!onDSLChange)
@@ -522,24 +544,8 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     const mainChanges: NodeChange[] = []
-    let nextNodes = nodes
-    let changed = false
-    const movingIterationParents = new Set<string>()
-
+    const childChanges: NodeChange[] = []
     changes.forEach((change) => {
-      if (!('id' in change))
-        return
-      if (change.type !== 'position' || !change.position)
-        return
-      const targetNode = nodes.find(node => node.id === change.id)
-      if (targetNode?.data.type === BlockEnum.Iteration)
-        movingIterationParents.add(change.id)
-    })
-
-    changes.forEach((change) => {
-      if (change.type === 'dimensions')
-        return
-
       if (!('id' in change)) {
         mainChanges.push(change)
         return
@@ -549,85 +555,97 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
         mainChanges.push(change)
         return
       }
-
-      if (change.type === 'position' && change.position) {
-        if (movingIterationParents.has(childRef.parentId))
-          return
-        const layout = iterationLayouts[childRef.parentId]
-        if (!layout)
-          return
-        const nextPosition = change.position
-        nextNodes = updateIterationChildren(nextNodes, childRef.parentId, children => ({
-          ...children,
-          nodes: children.nodes.map((item) => {
-            if (item.id !== childRef.childId)
-              return item
-            return {
-              ...item,
-              position: {
-                x: Math.max(0, nextPosition.x - layout.paddingX),
-                y: Math.max(0, nextPosition.y - layout.paddingY),
-              },
-            }
-          }),
-        }))
-        changed = true
-      }
-
-      if (change.type === 'remove') {
-        nextNodes = updateIterationChildren(nextNodes, childRef.parentId, children => ({
-          ...children,
-          nodes: children.nodes.filter(item => item.id !== childRef.childId),
-          edges: children.edges.filter(edge => edge.source !== childRef.childId && edge.target !== childRef.childId),
-        }))
-        changed = true
-      }
+      childChanges.push(change)
     })
 
-    if (mainChanges.length > 0) {
-      nextNodes = applyNodeChanges(mainChanges, nextNodes) as DifyNode[]
-      changed = true
-    }
+    if (mainChanges.length > 0)
+      onNodesChangeBase(mainChanges)
 
-    if (!changed)
+    if (childChanges.length === 0)
       return
 
-    const hasMeaningfulNodeUpdate = (prev: DifyNode[], next: DifyNode[]) => {
-      if (prev === next)
-        return false
-      if (prev.length !== next.length)
-        return true
+    const hasPositionChange = childChanges.some(change => change.type === 'position')
+    let changed = false
+    setNodes((currentNodes) => {
+      const movingIterationParents = new Set<string>()
+      childChanges.forEach((change) => {
+        if (!('id' in change))
+          return
+        if (change.type !== 'position' || !change.position)
+          return
+        const targetNode = currentNodes.find(node => node.id === change.id)
+        if (targetNode?.data.type === BlockEnum.Iteration)
+          movingIterationParents.add(change.id)
+      })
 
-      const prevById = new Map(prev.map(node => [node.id, node]))
-      for (const node of next) {
-        const old = prevById.get(node.id)
-        if (!old)
-          return true
+      let nextNodes = currentNodes
+      childChanges.forEach((change) => {
+        if (!('id' in change))
+          return
+        const childRef = parseChildNodeId(change.id)
+        if (!childRef)
+          return
 
-        const x1 = node.position?.x ?? 0
-        const y1 = node.position?.y ?? 0
-        const x0 = old.position?.x ?? 0
-        const y0 = old.position?.y ?? 0
-        if (x1 !== x0 || y1 !== y0)
-          return true
+        if (change.type === 'position' && change.position) {
+          if (movingIterationParents.has(childRef.parentId))
+            return
+          const nextPosition = change.position
+          nextNodes = updateIterationChildren(nextNodes, childRef.parentId, children => ({
+            ...children,
+            nodes: children.nodes.map((item) => {
+              if (item.id !== childRef.childId)
+                return item
+              return {
+                ...item,
+                position: {
+                  x: Math.max(0, nextPosition.x - ITERATION_CONTAINER_PADDING_X),
+                  y: Math.max(0, nextPosition.y - ITERATION_CONTAINER_PADDING_Y),
+                },
+              }
+            }),
+          }))
+          changed = true
+        }
 
-        if (Boolean(node.selected) !== Boolean(old.selected))
-          return true
+        if (change.type === 'remove') {
+          nextNodes = updateIterationChildren(nextNodes, childRef.parentId, children => ({
+            ...children,
+            nodes: children.nodes.filter(item => item.id !== childRef.childId),
+            edges: children.edges.filter(edge => edge.source !== childRef.childId && edge.target !== childRef.childId),
+          }))
+          changed = true
+        }
+      })
+      return changed ? nextNodes : currentNodes
+    })
+
+    if (changed) {
+      if (hasPositionChange) {
+        dragRecordPendingRef.current = true
+      } else {
+        record({
+          nodes: latestNodesRef.current,
+          edges: latestEdgesRef.current,
+        })
       }
-      return false
     }
+  }, [onNodesChangeBase, record, setNodes, updateIterationChildren])
 
-    if (!hasMeaningfulNodeUpdate(nodes, nextNodes))
+  const handleNodeDragStop = useCallback(() => {
+    if (!dragRecordPendingRef.current)
       return
-
-    setNodes(nextNodes)
-    record({ nodes: nextNodes, edges })
-  }, [edges, iterationLayouts, nodes, record, setNodes, updateIterationChildren])
+    dragRecordPendingRef.current = false
+    window.requestAnimationFrame(() => {
+      record({
+        nodes: latestNodesRef.current,
+        edges: latestEdgesRef.current,
+      })
+    })
+  }, [record])
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     const mainChanges: EdgeChange[] = []
-    let nextNodes = nodes
-    let nextEdges = edges
+    const childRemovedEdges: Array<{ parentId: string; childEdgeId: string }> = []
     let changed = false
 
     changes.forEach((change) => {
@@ -643,26 +661,36 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
       if (change.type !== 'remove')
         return
 
-      nextNodes = updateIterationChildren(nextNodes, childRef.parentId, children => ({
-        ...children,
-        edges: children.edges.filter(edge => edge.id !== childRef.childEdgeId),
-      }))
-      changed = true
+      childRemovedEdges.push(childRef)
     })
 
     if (mainChanges.length > 0) {
-      nextEdges = applyEdgeChanges(mainChanges, edges) as DifyEdge[]
-      setEdges(nextEdges)
+      onEdgesChangeBase(mainChanges)
       changed = true
+    }
+
+    if (childRemovedEdges.length > 0) {
+      setNodes((currentNodes) => {
+        let nextNodes = currentNodes
+        childRemovedEdges.forEach((item) => {
+          nextNodes = updateIterationChildren(nextNodes, item.parentId, children => ({
+            ...children,
+            edges: children.edges.filter(edge => edge.id !== item.childEdgeId),
+          }))
+        })
+        if (nextNodes !== currentNodes)
+          changed = true
+        return nextNodes
+      })
     }
 
     if (!changed)
       return
 
-    if (nextNodes !== nodes)
-      setNodes(nextNodes)
-    record({ nodes: nextNodes, edges: nextEdges })
-  }, [edges, nodes, record, setEdges, setNodes, updateIterationChildren])
+    window.requestAnimationFrame(() => {
+      record({ nodes: latestNodesRef.current, edges: latestEdgesRef.current })
+    })
+  }, [onEdgesChangeBase, record, setNodes, updateIterationChildren])
 
   const onConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target)
@@ -884,7 +912,7 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
 
       <div className="grid grid-cols-12 gap-3">
         <NodeConfigPanel
-          nodes={nodes}
+          nodes={nodesForPanel}
           workflowParameters={workflowParameters}
           globalVariables={globalVariables}
           workflowVariableScopes={workflowVariableScopes}
@@ -912,6 +940,7 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
               onNodesChange,
               onEdgesChange,
               onConnect,
+              onNodeDragStop: handleNodeDragStop,
               onNodeClick: (_, node) => {
                 setActiveNode(node)
               },

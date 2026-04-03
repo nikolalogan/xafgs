@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, message } from 'antd'
 import WorkflowCanvas from '../WorkflowCanvas'
@@ -240,6 +240,23 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
     }
   }
 
+  const handleDSLChange = useCallback((dsl: DifyWorkflowDSL) => {
+    if (!showAdvancedJSON)
+      return
+    setEditedCanvasDSL(dsl)
+    setAdvancedDSLText(toDifyWorkflowDSL(dsl))
+  }, [showAdvancedJSON])
+
+  useEffect(() => {
+    if (!showAdvancedJSON)
+      return
+    const latestDsl = canvasRef.current?.getDSL()
+    if (!latestDsl)
+      return
+    setEditedCanvasDSL(latestDsl)
+    setAdvancedDSLText(toDifyWorkflowDSL(latestDsl))
+  }, [showAdvancedJSON])
+
   if (!hydrated) {
     return (
       <div className="space-y-3">
@@ -344,11 +361,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
           <WorkflowCanvas
             ref={canvasRef}
             initialDSL={initialCanvasDSL}
-            onDSLChange={(dsl) => {
-              setEditedCanvasDSL(dsl)
-              if (showAdvancedJSON)
-                setAdvancedDSLText(toDifyWorkflowDSL(dsl))
-            }}
+            onDSLChange={showAdvancedJSON ? handleDSLChange : undefined}
           />
           {showAdvancedJSON && (
             <div className="mt-3 space-y-2">

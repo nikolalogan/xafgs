@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { NodeProps } from 'reactflow'
 import { Handle, Position } from 'reactflow'
 import { buildIfElseBranchHandleId, IF_ELSE_FALLBACK_HANDLE } from '@/lib/workflow-ifelse'
@@ -101,4 +102,4 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
   )
 }
 
-export default CustomNode
+export default memo(CustomNode)

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEdgesState, useNodesState } from 'reactflow'
 import { parseDifyWorkflowDSL } from '../core/dsl'
 import { defaultGlobalVariables } from '../core/global-variables'
 import { defaultWorkflowParameters } from '../core/workflow-parameters'
@@ -20,8 +21,8 @@ const nextNodeIdSeed = (nodes: DifyNode[]) => {
 
 export const useWorkflowCanvasState = (demoDSL: DifyWorkflowDSL) => {
   const parsed = useMemo(() => parseDifyWorkflowDSL(demoDSL), [demoDSL])
-  const [nodes, setNodes] = useState<DifyNode[]>(parsed.nodes)
-  const [edges, setEdges] = useState<DifyEdge[]>(parsed.edges)
+  const [nodes, setNodes, onNodesChangeBase] = useNodesState(parsed.nodes)
+  const [edges, setEdges, onEdgesChangeBase] = useEdgesState(parsed.edges)
   const [activeNode, setActiveNode] = useState<DifyNode | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
@@ -50,6 +51,8 @@ export const useWorkflowCanvasState = (demoDSL: DifyWorkflowDSL) => {
     parsed,
     nodes,
     edges,
+    onNodesChangeBase,
+    onEdgesChangeBase,
     activeNode,
     importOpen,
     exportOpen,
