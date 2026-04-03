@@ -914,7 +914,7 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
       })
       const detailPayload = await detailResponse.json() as { data?: TemplateDetailDTO; message?: string }
       if (detailResponse.status === 401) {
-        router.push('/login?redirect=/app/workflow')
+        router.push('/?redirect=/app/workflow')
         return
       }
       if (!detailResponse.ok || !detailPayload.data)
@@ -967,12 +967,12 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
     if (!validateBeforeRun())
       return
     const requiredKeys = detectRequiredUserConfigKeys(runtimeDsl)
-    if (requiredKeys.length > 0) {
-      const token = resolveAuthToken()
-      if (!token) {
-        router.push('/login?redirect=/app/workflow')
+      if (requiredKeys.length > 0) {
+        const token = resolveAuthToken()
+        if (!token) {
+        router.push('/?redirect=/app/workflow')
         return
-      }
+        }
       try {
         const response = await fetch('/api/user-config', {
           method: 'GET',
@@ -981,7 +981,7 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
         })
         const payload = await response.json() as { data?: UserConfigDTO; message?: string }
         if (response.status === 401) {
-          router.push('/login?redirect=/app/workflow')
+          router.push('/?redirect=/app/workflow')
           return
         }
         if (!response.ok)
@@ -1034,7 +1034,7 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
       })
       const payload = await response.json() as { data?: WorkflowExecution; message?: string; error?: string }
       if (response.status === 401) {
-        router.push('/login?redirect=/app/workflow')
+        router.push('/?redirect=/app/workflow')
         return
       }
       if (!response.ok || !payload.data)
@@ -1371,7 +1371,7 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
       })
       const payload = await response.json() as { data?: WorkflowExecution; message?: string; error?: string }
       if (response.status === 401) {
-        router.push('/login?redirect=/app/workflow')
+        router.push('/?redirect=/app/workflow')
         return
       }
       if (!response.ok || !payload.data)

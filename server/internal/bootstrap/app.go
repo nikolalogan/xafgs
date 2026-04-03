@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 
+	"sxfgssever/server/internal/ai"
 	"sxfgssever/server/internal/db"
 	"sxfgssever/server/internal/handler"
 	"sxfgssever/server/internal/apimeta"
@@ -75,6 +76,7 @@ func NewApp() (*fiber.App, Config) {
 	userConfigRepository := repository.NewUserConfigRepository()
 	workflowRepository := repository.NewWorkflowRepository()
 	templateRepository := repository.NewTemplateRepository()
+	chatRepository := repository.NewChatRepository()
 	authRepository := repository.NewAuthRepository(cfg.APIToken)
 
 	if result, ok, err := db.OpenFromEnv(); err == nil && ok {
@@ -85,6 +87,7 @@ func NewApp() (*fiber.App, Config) {
 			userConfigRepository = repository.NewPostgresUserConfigRepository(result.DB)
 			workflowRepository = repository.NewPostgresWorkflowRepository(result.DB)
 			templateRepository = repository.NewPostgresTemplateRepository(result.DB)
+			chatRepository = repository.NewPostgresChatRepository(result.DB)
 			_ = db.Seed(ctx, result.DB)
 		}
 	}
@@ -95,6 +98,8 @@ func NewApp() (*fiber.App, Config) {
 	workflowService := service.NewWorkflowService(workflowRepository)
 	templateRenderer := service.NewGonjaTemplateRenderer()
 	templateService := service.NewTemplateService(templateRepository, templateRenderer)
+	aiClient := ai.NewOpenAICompatClient(nil)
+	chatService := service.NewChatService(chatRepository, userConfigService, aiClient)
 	executionStore := workflowruntime.NewInMemoryExecutionStore()
 	executionRuntime := workflowruntime.NewRuntime(executionStore)
 	workflowExecutionService := service.NewWorkflowExecutionService(executionRuntime)
@@ -108,13 +113,14 @@ func NewApp() (*fiber.App, Config) {
 	workflowHandler := handler.NewWorkflowHandler(workflowService, apiRegistry)
 	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, userConfigService, apiRegistry)
 	templateHandler := handler.NewTemplateHandler(templateService, apiRegistry)
+	chatHandler := handler.NewChatHandler(chatService, apiRegistry)
 
 	traceStore := apimeta.NewTraceStore(300)
 	traceMiddleware := middleware.NewTraceMiddleware(traceStore)
 	app.Use(traceMiddleware.Handler())
 
 	apiMetaHandler := handler.NewAPIMetaHandler(apiRegistry, traceStore)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, workflowHandler, workflowExecutionHandler, templateHandler, apiMetaHandler, userConfigHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, workflowHandler, workflowExecutionHandler, templateHandler, apiMetaHandler, userConfigHandler, chatHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

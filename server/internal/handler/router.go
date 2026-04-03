@@ -12,6 +12,7 @@ func RegisterRoutes(
 	templateHandler *TemplateHandler,
 	apiMetaHandler *APIMetaHandler,
 	userConfigHandler *UserConfigHandler,
+	chatHandler *ChatHandler,
 	authMiddleware fiber.Handler,
 	adminMiddleware fiber.Handler,
 ) {
@@ -22,6 +23,7 @@ func RegisterRoutes(
 	protectedGroup := router.Group("", authMiddleware)
 	userHandler.Register(protectedGroup, adminMiddleware)
 	userConfigHandler.Register(protectedGroup)
+	chatHandler.Register(protectedGroup)
 	workflowHandler.Register(protectedGroup)
 	workflowExecutionHandler.Register(protectedGroup, adminMiddleware)
 	templateHandler.Register(protectedGroup, adminMiddleware)

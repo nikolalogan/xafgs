@@ -74,12 +74,12 @@ export default function WorkflowRunRoutePage() {
         const headers: Record<string, string> = { 'content-type': 'application/json' }
         if (token)
           headers.Authorization = `Bearer ${token}`
-        const response = await fetch(`/api/workflows/${workflowIDValue}`, { method: 'GET', headers, credentials: 'include' })
-        const payload = await response.json() as ApiResponse<WorkflowDetailDTO>
-        if (response.status === 401) {
-          router.push('/login?redirect=/app/workflows')
-          return
-        }
+	        const response = await fetch(`/api/workflows/${workflowIDValue}`, { method: 'GET', headers, credentials: 'include' })
+	        const payload = await response.json() as ApiResponse<WorkflowDetailDTO>
+	        if (response.status === 401) {
+	          router.push('/?redirect=/app/workflows')
+	          return
+	        }
         if (response.status === 403)
           throw new Error(payload.message || '无权限访问')
         if (!response.ok || !payload.data)

@@ -32,6 +32,7 @@ type ApiResponse<T> = {
 
 const menuItems: MenuItem[] = [
   { key: 'home', label: '控制台', href: '/app', roles: ['admin', 'user', 'guest'] as ConsoleRole[] },
+  { key: 'chat', label: 'AI 对话', href: '/app/chat', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'workflow-config', label: '工作流配置', href: '/app/workflows', roles: ['admin'] as ConsoleRole[] },
   { key: 'reserve', label: '储备', href: '/app/workflows?menuKey=reserve', roles: ['admin'] as ConsoleRole[] },
   { key: 'review', label: '评审', href: '/app/workflows?menuKey=review', roles: ['admin'] as ConsoleRole[] },
@@ -59,6 +60,8 @@ const getWorkflowMenuLabel = (menuKey: string) => {
 }
 
 const getPageTitle = (pathname: string, search: string) => {
+  if (pathname.startsWith('/app/chat'))
+    return 'AI 对话'
   if (pathname.startsWith('/app/workflows')) {
     const params = new URLSearchParams(search || '')
     const menuKey = params.get('menuKey') || ''
@@ -139,6 +142,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return out
   }, [role, workflows])
   const breadcrumbs = useMemo(() => {
+    if (pathname.startsWith('/app/chat'))
+      return ['控制台', 'AI 对话']
     if (pathname.startsWith('/app/workflows')) {
       const params = new URLSearchParams(search || '')
       const menuKey = params.get('menuKey') || ''
@@ -170,7 +175,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     window.localStorage.removeItem('sxfg_user_role')
     window.localStorage.removeItem('user_role')
     setRole('guest')
-    router.push('/login?redirect=/app/workflow')
+    router.push('/?redirect=/app/workflow')
   }
 
   useEffect(() => {
@@ -242,17 +247,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return childrenByKey
   }, [workflows])
 
-  const menuTree = useMemo(() => {
-    const items: MenuProps['items'] = []
-    const pushIfVisible = (key: string) => {
-      const item = visibleMenuItems.find(entry => entry.key === key)
-      if (!item)
-        return
-      items.push({ key: item.key, label: item.label })
-    }
+    const menuTree = useMemo(() => {
+      const items: MenuProps['items'] = []
+      const pushIfVisible = (key: string) => {
+        const item = visibleMenuItems.find(entry => entry.key === key)
+        if (!item)
+          return
+        items.push({ key: item.key, label: item.label })
+      }
 
-    pushIfVisible('home')
-    pushIfVisible('workflow-config')
+      pushIfVisible('home')
+      pushIfVisible('chat')
+      pushIfVisible('workflow-config')
 
     if (role === 'admin') {
       const buildSubMenu = (menuKey: Exclude<WorkflowMenuKey, ''>, title: string) => {
@@ -324,6 +330,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const key = String(info.key)
     if (key === 'home')
       router.push('/app')
+    else if (key === 'chat')
+      router.push('/app/chat')
     else if (key === 'workflow-config')
       router.push('/app/workflows')
     else if (key === 'templates')

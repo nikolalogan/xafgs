@@ -78,7 +78,7 @@ export default function UserConfigPage() {
     })
     const payload = await response.json() as ApiResponse<T>
     if (response.status === 401) {
-      router.push('/login?redirect=/app/user-config')
+      router.push('/?redirect=/app/user-config')
       throw new Error('未登录或登录已过期')
     }
     if (!response.ok)
@@ -262,4 +262,3 @@ export default function UserConfigPage() {
     </div>
   )
 }
-

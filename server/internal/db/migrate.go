@@ -82,6 +82,29 @@ CREATE TABLE IF NOT EXISTS workflow_version (
 CREATE INDEX IF NOT EXISTS idx_workflow_status ON workflow(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_version_workflow_version ON workflow_version(workflow_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_template_status ON template(status);
+
+CREATE TABLE IF NOT EXISTS chat_conversation (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT '',
+  model VARCHAR(128) NOT NULL DEFAULT 'gpt-4o-mini',
+  system_prompt TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS chat_message (
+  id BIGSERIAL PRIMARY KEY,
+  conversation_id BIGINT NOT NULL REFERENCES chat_conversation(id) ON DELETE CASCADE,
+  role VARCHAR(16) NOT NULL CHECK (role IN ('system', 'user', 'assistant')),
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_conversation_user_updated_at ON chat_conversation(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_message_conversation_id_id ON chat_message(conversation_id, id);
 `
 
 func Migrate(ctx context.Context, conn *sql.DB) error {

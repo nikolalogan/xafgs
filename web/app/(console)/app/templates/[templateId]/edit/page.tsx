@@ -84,7 +84,7 @@ export default function TemplateEditPage() {
     const payload = await response.json() as ApiResponse<T>
 
     if (response.status === 401) {
-      router.push(`/login?redirect=/app/templates/${routeParams.templateId}/edit`)
+      router.push(`/?redirect=/app/templates/${routeParams.templateId}/edit`)
       throw new Error('未登录或登录已过期')
     }
     if (response.status === 403)

@@ -95,12 +95,12 @@ function WorkflowsPageInner() {
       credentials: 'include',
     })
 
-    const payload = await response.json() as ApiResponse<T>
+	    const payload = await response.json() as ApiResponse<T>
 
-    if (response.status === 401) {
-      router.push('/login?redirect=/app/workflows')
-      throw new Error('未登录或登录已过期')
-    }
+	    if (response.status === 401) {
+	      router.push('/?redirect=/app/workflows')
+	      throw new Error('未登录或登录已过期')
+	    }
     if (response.status === 403)
       throw new Error(payload.message || '无权限访问')
     if (!response.ok)
