@@ -2,7 +2,10 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Button, Form, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd'
+import { UploadOutlined } from '@ant-design/icons'
+import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Upload, message } from 'antd'
+import { parseDifyWorkflowDSL } from '@/components/workflow/dify/core/dsl'
+import { validateWorkflow } from '@/components/workflow/dify/core/validation'
 
 type WorkflowStatus = 'active' | 'disabled'
 type WorkflowMenuKey = '' | 'reserve' | 'review' | 'postloan'
@@ -27,6 +30,33 @@ type WorkflowVersionDTO = {
   isPublished: boolean
 }
 
+type UploadSessionDTO = {
+  id: string
+  fileId: number
+}
+
+type FileUploadResultDTO = {
+  fileId: number
+  versionNo: number
+}
+
+type WorkflowDSLGenerateResult = {
+  model: string
+  generatedDsl: Record<string, unknown>
+}
+
+type SystemModelOption = {
+  name: string
+  label: string
+  enabled: boolean
+}
+
+type SystemConfigDTO = {
+  models: SystemModelOption[]
+  defaultModel: string
+  codeDefaultModel: string
+}
+
 type ApiResponse<T> = {
   message?: string
   data?: T
@@ -41,6 +71,8 @@ const statusLabelMap: Record<WorkflowStatus, string> = {
   active: '启用',
   disabled: '停用',
 }
+
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 const getToken = () => {
   if (typeof window === 'undefined')
@@ -63,6 +95,12 @@ function WorkflowsPageInner() {
   const [rollbackSubmitting, setRollbackSubmitting] = useState(false)
   const [versionOptions, setVersionOptions] = useState<WorkflowVersionDTO[]>([])
   const [rollbackForm] = Form.useForm()
+  const [aiCreateOpen, setAICreateOpen] = useState(false)
+  const [aiCreating, setAICreating] = useState(false)
+  const [aiUploadFile, setAIUploadFile] = useState<File | null>(null)
+  const [aiModelOptions, setAIModelOptions] = useState<Array<{ label: string, value: string }>>([{ label: 'GPT-4o mini', value: 'gpt-4o-mini' }])
+  const [aiDefaultModel, setAIDefaultModel] = useState('gpt-4o-mini')
+  const [aiCreateForm] = Form.useForm<{ workflowKey: string, name: string, menuKey: WorkflowMenuKey, description: string, model: string }>()
   const [hydrated, setHydrated] = useState(false)
   const [currentRole, setCurrentRole] = useState<'admin' | 'user' | 'guest'>('guest')
 
@@ -81,9 +119,9 @@ function WorkflowsPageInner() {
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
-    const headers: Record<string, string> = {
-      'content-type': 'application/json',
-    }
+    const headers: Record<string, string> = {}
+    if (!(init?.body instanceof FormData))
+      headers['content-type'] = 'application/json'
     if (init?.headers)
       Object.assign(headers, init.headers as Record<string, string>)
     if (token)
@@ -97,16 +135,60 @@ function WorkflowsPageInner() {
 
 	    const payload = await response.json() as ApiResponse<T>
 
-	    if (response.status === 401) {
-	      router.push('/?redirect=/app/workflows')
-	      throw new Error('未登录或登录已过期')
-	    }
+    if (response.status === 401) {
+      router.push('/?redirect=/app/workflows')
+      throw new Error('未登录或登录已过期')
+    }
     if (response.status === 403)
       throw new Error(payload.message || '无权限访问')
     if (!response.ok)
       throw new Error(payload.message || '请求失败')
 
     return payload.data as T
+  }
+
+  const fetchSystemConfigForAI = async () => {
+    const data = await request<SystemConfigDTO>('/api/system-config', { method: 'GET' })
+    const enabledModels = (Array.isArray(data?.models) ? data.models : [])
+      .map(item => ({
+        name: String(item?.name || '').trim(),
+        label: String(item?.label || '').trim(),
+        enabled: Boolean(item?.enabled),
+      }))
+      .filter(item => item.name && item.enabled)
+    if (enabledModels.length === 0) {
+      setAIModelOptions([{ label: 'GPT-4o mini', value: 'gpt-4o-mini' }])
+      setAIDefaultModel('gpt-4o-mini')
+      return 'gpt-4o-mini'
+    }
+    const options = enabledModels.map(item => ({ label: item.label || item.name, value: item.name }))
+    const optionSet = new Set(options.map(item => item.value))
+    const nextDefault = optionSet.has(String(data?.codeDefaultModel || '').trim())
+      ? String(data?.codeDefaultModel || '').trim()
+      : (optionSet.has(String(data?.defaultModel || '').trim()) ? String(data?.defaultModel || '').trim() : options[0].value)
+    setAIModelOptions(options)
+    setAIDefaultModel(nextDefault)
+    return nextDefault
+  }
+
+  const uploadAIFile = async (file: File) => {
+    console.info('[workflow-ai-generate] upload start', { name: file.name, size: file.size })
+    const session = await request<UploadSessionDTO>('/api/files/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ bizKey: `workflow_ai_generate_${Date.now()}` }),
+    })
+    const formData = new FormData()
+    formData.append('file', file)
+    const uploaded = await request<FileUploadResultDTO>(`/api/files/sessions/${session.id}/content`, {
+      method: 'POST',
+      body: formData,
+    })
+    const result = {
+      fileId: Number(uploaded?.fileId || session.fileId || 0),
+      versionNo: Number(uploaded?.versionNo || 0),
+    }
+    console.info('[workflow-ai-generate] upload success', result)
+    return result
   }
 
   const fetchWorkflows = async () => {
@@ -126,6 +208,25 @@ function WorkflowsPageInner() {
   useEffect(() => {
     fetchWorkflows()
   }, [])
+
+  const openAICreate = async () => {
+    try {
+      const nextDefault = await fetchSystemConfigForAI()
+      const menuKey = selectedMenuKey || 'reserve'
+      aiCreateForm.setFieldsValue({
+        workflowKey: '',
+        name: '',
+        menuKey,
+        description: '',
+        model: nextDefault || aiDefaultModel || 'gpt-4o-mini',
+      })
+      setAIUploadFile(null)
+      setAICreateOpen(true)
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '加载模型配置失败')
+    }
+  }
 
   const selectedMenuKey = useMemo(() => {
     const raw = (searchParams.get('menuKey') || '').toLowerCase()
@@ -235,11 +336,81 @@ function WorkflowsPageInner() {
     }
   }
 
+  const submitAICreate = async () => {
+    if (!aiUploadFile) {
+      msgApi.warning('请先上传文件')
+      return
+    }
+    try {
+      const values = await aiCreateForm.validateFields()
+      setAICreating(true)
+      let fileRef: { fileId: number, versionNo: number }
+      try {
+        fileRef = await uploadAIFile(aiUploadFile)
+      }
+      catch (error) {
+        console.warn('[workflow-ai-generate] upload failed', { message: error instanceof Error ? error.message : String(error) })
+        throw error
+      }
+      if (fileRef.fileId <= 0 || fileRef.versionNo <= 0)
+        throw new Error('文件上传失败')
+      console.info('[workflow-ai-generate] ai-request start', { model: String(values.model || '').trim(), fileId: fileRef.fileId, versionNo: fileRef.versionNo })
+      const generated = await request<WorkflowDSLGenerateResult>('/api/workflow/dsl-generate', {
+        method: 'POST',
+        body: JSON.stringify({
+          model: String(values.model || '').trim(),
+          description: String(values.description || '').trim(),
+          fileId: fileRef.fileId,
+          versionNo: fileRef.versionNo,
+        }),
+      })
+      console.info('[workflow-ai-generate] ai-request success', { model: generated.model })
+      const parsed = parseDifyWorkflowDSL(generated.generatedDsl as never)
+      const issues = validateWorkflow(parsed.nodes, parsed.edges, parsed.workflowParameters ?? [])
+      const errors = issues.filter(item => item.level === 'error')
+      if (errors.length > 0) {
+        const topErrors = errors.slice(0, 3).map(item => item.title).join('；')
+        console.warn('[workflow-ai-generate] validate failed', { total: errors.length, titles: errors.slice(0, 10).map(item => item.title) })
+        throw new Error(`AI 生成 DSL 校验失败：${topErrors}`)
+      }
+      console.info('[workflow-ai-generate] validate success')
+      const created = await request<WorkflowDTO>('/api/workflows', {
+        method: 'POST',
+        body: JSON.stringify({
+          workflowKey: String(values.workflowKey || '').trim(),
+          name: String(values.name || '').trim(),
+          description: `AI生成：${String(values.description || '').trim()}`,
+          menuKey: values.menuKey || 'reserve',
+          status: 'active',
+          breakerWindowMinutes: 1,
+          breakerMaxRequests: 5,
+          dsl: generated.generatedDsl,
+        }),
+      })
+      msgApi.success('AI 生成并创建成功')
+      setAICreateOpen(false)
+      setAIUploadFile(null)
+      console.info('[workflow-ai-generate] create success', { workflowId: created.id })
+      router.push(`/app/workflows/${created.id}`)
+    }
+    catch (error) {
+      const message = error instanceof Error ? error.message : 'AI 生成失败'
+      console.warn('[workflow-ai-generate] process failed', { message })
+      if (message === '未登录或登录已过期')
+        return
+      msgApi.error(error instanceof Error ? error.message : 'AI 生成失败')
+    }
+    finally {
+      setAICreating(false)
+    }
+  }
+
   if (!hydrated) {
     return (
       <div className="space-y-3">
         {contextHolder}
         <Form form={rollbackForm} style={{ display: 'none' }} />
+        <Form form={aiCreateForm} style={{ display: 'none' }} />
         <div className="rounded-xl border border-gray-200 bg-white p-6">
           <div className="text-sm text-gray-500">加载中...</div>
         </div>
@@ -251,6 +422,7 @@ function WorkflowsPageInner() {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-6">
         <Form form={rollbackForm} style={{ display: 'none' }} />
+        <Form form={aiCreateForm} style={{ display: 'none' }} />
         <div className="text-base font-semibold text-gray-900">无权限访问</div>
         <div className="mt-2 text-sm text-gray-500">请先登录后再访问工作流配置。</div>
       </div>
@@ -261,6 +433,7 @@ function WorkflowsPageInner() {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-6">
         <Form form={rollbackForm} style={{ display: 'none' }} />
+        <Form form={aiCreateForm} style={{ display: 'none' }} />
         <div className="text-base font-semibold text-gray-900">无权限访问</div>
         <div className="mt-2 text-sm text-gray-500">工作流配置仅管理员可访问。</div>
       </div>
@@ -275,7 +448,10 @@ function WorkflowsPageInner() {
           <div className="text-sm font-semibold text-gray-900">
             工作流配置列表{menuKeyLabel ? `（${menuKeyLabel}）` : ''}
           </div>
-          <Button type="primary" onClick={() => router.push('/app/workflows/new')}>新增工作流</Button>
+          <Space>
+            <Button onClick={openAICreate}>AI生成</Button>
+            <Button type="primary" onClick={() => router.push('/app/workflows/new')}>新增工作流</Button>
+          </Space>
         </div>
         <Table<WorkflowDTO>
           rowKey="id"
@@ -379,6 +555,93 @@ function WorkflowsPageInner() {
                 value: item.versionNo,
               }))}
             />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="AI生成工作流"
+        open={aiCreateOpen}
+        onCancel={() => {
+          setAICreateOpen(false)
+          setAIUploadFile(null)
+        }}
+        onOk={submitAICreate}
+        okText="生成并创建"
+        cancelText="取消"
+        confirmLoading={aiCreating}
+        destroyOnHidden
+      >
+        <Form
+          form={aiCreateForm}
+          layout="vertical"
+          initialValues={{
+            workflowKey: '',
+            name: '',
+            menuKey: selectedMenuKey || 'reserve',
+            description: '',
+            model: aiDefaultModel,
+          }}
+        >
+          <Form.Item
+            label="Workflow Key"
+            name="workflowKey"
+            rules={[{ required: true, message: '请输入 workflowKey' }]}
+          >
+            <Input placeholder="例如 order_risk_ai" />
+          </Form.Item>
+          <Form.Item
+            label="名称"
+            name="name"
+            rules={[{ required: true, message: '请输入名称' }]}
+          >
+            <Input placeholder="例如 风险评估流程" />
+          </Form.Item>
+          <Form.Item
+            label="上级菜单"
+            name="menuKey"
+            rules={[{ required: true, message: '请选择上级菜单' }]}
+          >
+            <Select
+              options={[
+                { label: '储备', value: 'reserve' },
+                { label: '评审', value: 'review' },
+                { label: '保后', value: 'postloan' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            label="AI模型"
+            name="model"
+            rules={[{ required: true, message: '请选择模型' }]}
+          >
+            <Select options={aiModelOptions} />
+          </Form.Item>
+          <Form.Item
+            label="需求描述"
+            name="description"
+            rules={[{ required: true, message: '请输入需求描述' }]}
+          >
+            <Input.TextArea rows={4} placeholder="例如 根据附件内容生成审批流程" />
+          </Form.Item>
+          <Form.Item label="上传文件（必传）" required>
+            <Upload
+              showUploadList={false}
+              multiple={false}
+              beforeUpload={(file) => {
+                if (file.size > MAX_UPLOAD_BYTES) {
+                  msgApi.warning('文件不能超过 50MB')
+                  return Upload.LIST_IGNORE
+                }
+                setAIUploadFile(file as File)
+                return false
+              }}
+            >
+              <Button icon={<UploadOutlined />}>选择文件</Button>
+            </Upload>
+            <div className="mt-2 text-xs text-gray-500">
+              {aiUploadFile ? `已选择：${aiUploadFile.name}` : '暂未选择文件'}
+            </div>
           </Form.Item>
         </Form>
       </Modal>

@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Form, Input, Modal, Space, message } from 'antd'
+import { GlobalOutlined, UploadOutlined } from '@ant-design/icons'
+import { Button, Form, Input, Modal, Select, Space, Tooltip, Upload, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
 
 type ApiResponse<T> = {
@@ -16,6 +17,7 @@ type ChatConversationDTO = {
   title: string
   model: string
   systemPrompt: string
+  enableWebSearch: boolean
   createdAt: string
   updatedAt: string
 }
@@ -34,6 +36,40 @@ type ChatSendResultDTO = {
   assistantMessage: ChatMessageDTO
 }
 
+type ChatAttachmentRef = {
+  fileId: number
+  versionNo: number
+}
+
+type UploadSessionDTO = {
+  id: string
+  fileId: number
+}
+
+type FileUploadResultDTO = {
+  fileId: number
+  versionNo: number
+}
+
+type SystemModelOption = {
+  name: string
+  label: string
+  enabled: boolean
+}
+
+type SystemConfigDTO = {
+  models: SystemModelOption[]
+  defaultModel: string
+}
+
+const MAX_CHAT_UPLOAD_BYTES = 50 * 1024 * 1024
+const SEARCH_REFERENCES_MARKER = '[WEB_SEARCH_REFERENCES]'
+
+type ChatReference = {
+  title: string
+  url: string
+}
+
 const getToken = () => {
   if (typeof window === 'undefined')
     return ''
@@ -50,6 +86,42 @@ const formatConversationTitle = (conversation: ChatConversationDTO) => {
   return `会话 #${conversation?.id || 0}`
 }
 
+const formatSize = (value: number) => {
+  if (!Number.isFinite(value) || value <= 0)
+    return '0 B'
+  if (value < 1024)
+    return `${value} B`
+  if (value < 1024 * 1024)
+    return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+const parseMessageWithReferences = (rawContent: string): { body: string, references: ChatReference[] } => {
+  const content = String(rawContent || '')
+  const markerIndex = content.lastIndexOf(SEARCH_REFERENCES_MARKER)
+  if (markerIndex < 0)
+    return { body: content, references: [] }
+  const body = content.slice(0, markerIndex).replace(/\s+$/, '')
+  const jsonPart = content.slice(markerIndex + SEARCH_REFERENCES_MARKER.length).trim()
+  if (!jsonPart)
+    return { body, references: [] }
+  try {
+    const parsed = JSON.parse(jsonPart)
+    if (!Array.isArray(parsed))
+      return { body, references: [] }
+    const references = parsed
+      .map((item) => ({
+        title: String(item?.title || '').trim(),
+        url: String(item?.url || '').trim(),
+      }))
+      .filter(item => item.title || item.url)
+    return { body, references }
+  }
+  catch {
+    return { body: content, references: [] }
+  }
+}
+
 export default function ChatPage() {
   const router = useRouter()
   const [msgApi, contextHolder] = message.useMessage()
@@ -63,16 +135,22 @@ export default function ChatPage() {
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [sending, setSending] = useState(false)
   const [draft, setDraft] = useState('')
+  const [enableWebSearch, setEnableWebSearch] = useState(false)
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createLoading, setCreateLoading] = useState(false)
   const [createForm] = Form.useForm<{ title: string, model: string, systemPrompt: string }>()
+  const [enabledModels, setEnabledModels] = useState<Array<{ label: string, value: string }>>([{ label: 'GPT-4o mini', value: 'gpt-4o-mini' }])
+  const [defaultModel, setDefaultModel] = useState('gpt-4o-mini')
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
-    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    const headers: Record<string, string> = {}
+    if (!(init?.body instanceof FormData))
+      headers['content-type'] = 'application/json'
     if (init?.headers)
       Object.assign(headers, init.headers as Record<string, string>)
     if (token)
@@ -91,6 +169,23 @@ export default function ChatPage() {
     if (!response.ok)
       throw new Error(payload.message || '请求失败')
     return payload.data as T
+  }
+
+  const uploadFileForChat = async (file: File, index: number) => {
+    const session = await request<UploadSessionDTO>('/api/files/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ bizKey: `chat_attachment_${Date.now()}_${index}` }),
+    })
+    const formData = new FormData()
+    formData.append('file', file)
+    const uploaded = await request<FileUploadResultDTO>(`/api/files/sessions/${session.id}/content`, {
+      method: 'POST',
+      body: formData,
+    })
+    return {
+      fileId: Number(uploaded?.fileId || session.fileId || 0),
+      versionNo: Number(uploaded?.versionNo || 0),
+    }
   }
 
   const fetchConversations = async (pickFirst: boolean) => {
@@ -134,20 +229,51 @@ export default function ChatPage() {
     }
   }
 
+  const fetchModelConfig = async () => {
+    try {
+      const data = await request<SystemConfigDTO>('/api/system-config', { method: 'GET' })
+      const rawModels = Array.isArray(data?.models) ? data.models : []
+      const models = rawModels
+        .map(item => ({
+          name: String(item?.name || '').trim(),
+          label: String(item?.label || '').trim(),
+          enabled: Boolean(item?.enabled),
+        }))
+        .filter(item => item.name && item.enabled)
+      if (models.length === 0) {
+        setEnabledModels([{ label: 'GPT-4o mini', value: 'gpt-4o-mini' }])
+        setDefaultModel('gpt-4o-mini')
+        return
+      }
+      const options = models.map(item => ({ label: item.label || item.name, value: item.name }))
+      const allowed = new Set(options.map(item => item.value))
+      const fallback = options[0].value
+      const nextDefault = allowed.has(String(data?.defaultModel || '').trim()) ? String(data?.defaultModel || '').trim() : fallback
+      setEnabledModels(options)
+      setDefaultModel(nextDefault)
+    }
+    catch {
+      setEnabledModels([{ label: 'GPT-4o mini', value: 'gpt-4o-mini' }])
+      setDefaultModel('gpt-4o-mini')
+    }
+  }
+
   useEffect(() => {
     if (!canAccess)
       return
+    fetchModelConfig()
     fetchConversations(true)
   }, [canAccess])
 
   useEffect(() => {
     if (!activeConversationID)
       return
+    setEnableWebSearch(false)
     fetchMessages(activeConversationID)
   }, [activeConversationID])
 
   const openCreate = () => {
-    createForm.setFieldsValue({ title: '', model: '', systemPrompt: '' })
+    createForm.setFieldsValue({ title: '', model: defaultModel, systemPrompt: '' })
     setCreateOpen(true)
   }
 
@@ -159,7 +285,7 @@ export default function ChatPage() {
         method: 'POST',
         body: JSON.stringify({
           title: values.title || '',
-          model: values.model || '',
+          model: values.model || defaultModel,
           systemPrompt: values.systemPrompt || '',
         }),
       })
@@ -185,16 +311,25 @@ export default function ChatPage() {
       return
     }
     const text = String(draft || '').trim()
-    if (!text)
+    if (!text && pendingFiles.length === 0)
       return
 
     setSending(true)
     try {
+      const attachments: ChatAttachmentRef[] = []
+      for (let index = 0; index < pendingFiles.length; index += 1) {
+        const uploaded = await uploadFileForChat(pendingFiles[index], index)
+        if (uploaded.fileId <= 0 || uploaded.versionNo <= 0)
+          throw new Error('文件上传失败，请重试')
+        attachments.push(uploaded)
+      }
       const data = await request<ChatSendResultDTO>(`/api/chat/conversations/${conversationID}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ content: text, maxContextMessages: 20 }),
+        body: JSON.stringify({ content: text, enableWebSearch, attachments, maxContextMessages: 20 }),
       })
       setDraft('')
+      setEnableWebSearch(false)
+      setPendingFiles([])
       setMessages(prev => [...prev, data.userMessage, data.assistantMessage])
       setConversations(prev => {
         const next = [...(Array.isArray(prev) ? prev : [])]
@@ -321,10 +456,44 @@ export default function ChatPage() {
           <div className="space-y-2">
             {messages.map((m) => {
               const isUser = m.role === 'user'
+              const parsedMessage = parseMessageWithReferences(m.content)
+              const showReferences = !isUser && parsedMessage.references.length > 0
               return (
                 <div key={m.id} className={isUser ? 'flex justify-end' : 'flex justify-start'}>
                   <div className={isUser ? 'max-w-[85%] rounded-lg bg-blue-600 px-3 py-2 text-sm text-white' : 'max-w-[85%] rounded-lg bg-white px-3 py-2 text-sm text-gray-900'}>
-                    <div className="whitespace-pre-wrap break-words">{m.content}</div>
+                    <div className="whitespace-pre-wrap break-words">{parsedMessage.body}</div>
+                    {showReferences && (
+                      <div className="mt-2 text-xs text-gray-500">
+                        <Tooltip
+                          placement="topLeft"
+                          title={(
+                            <div className="max-w-[420px] space-y-2">
+                              {parsedMessage.references.map((ref, index) => (
+                                <div key={`${ref.url}_${index}`} className="text-xs">
+                                  <div className="font-medium text-white">{ref.title || `来源 ${index + 1}`}</div>
+                                  {ref.url
+                                    ? (
+                                        <a
+                                          href={ref.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="break-all text-blue-200 underline"
+                                        >
+                                          {ref.url}
+                                        </a>
+                                      )
+                                    : <span className="text-gray-300">无链接</span>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        >
+                          <span className="cursor-pointer underline decoration-dotted">
+                            参考 {parsedMessage.references.length} 篇文献
+                          </span>
+                        </Tooltip>
+                      </div>
+                    )}
                   </div>
                 </div>
               )
@@ -333,10 +502,38 @@ export default function ChatPage() {
         </div>
 
         <div className="mt-3 flex gap-2">
+          <div className="shrink-0">
+            <Upload
+              showUploadList={false}
+              multiple={false}
+              disabled={sending || !activeConversationID}
+              beforeUpload={(file) => {
+                if (file.size > MAX_CHAT_UPLOAD_BYTES) {
+                  msgApi.warning(`文件过大，单文件上限 50MB，当前 ${formatSize(file.size)}`)
+                  return Upload.LIST_IGNORE
+                }
+                setPendingFiles(prev => [...prev, file as File])
+                return false
+              }}
+            >
+              <Tooltip title="添加附件">
+                <Button shape="circle" icon={<UploadOutlined />} disabled={sending || !activeConversationID} />
+              </Tooltip>
+            </Upload>
+          </div>
+          <Tooltip title={enableWebSearch ? '已开启联网搜索（本次发送生效）' : '开启联网搜索（本次发送生效）'}>
+            <Button
+              onClick={() => setEnableWebSearch(prev => !prev)}
+              disabled={sending || !activeConversationID}
+              type={enableWebSearch ? 'primary' : 'default'}
+              shape="circle"
+              icon={<GlobalOutlined />}
+            />
+          </Tooltip>
           <Input.TextArea
             value={draft}
             onChange={e => setDraft(e.target.value)}
-            placeholder="输入消息（Enter 发送，Shift+Enter 换行）"
+            placeholder="输入消息或添加文件（Enter 发送，Shift+Enter 换行）"
             autoSize={{ minRows: 2, maxRows: 6 }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -348,6 +545,26 @@ export default function ChatPage() {
           />
           <Button type="primary" loading={sending} onClick={send}>发送</Button>
         </div>
+        {pendingFiles.length > 0 && (
+          <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-2">
+            <div className="mb-1 text-xs font-medium text-gray-700">待上传附件（发送时上传）</div>
+            <div className="space-y-1">
+              {pendingFiles.map((file, index) => (
+                <div key={`${file.name}_${file.lastModified}_${index}`} className="flex items-center justify-between rounded bg-white px-2 py-1 text-xs">
+                  <div className="truncate text-gray-700">{file.name} · {formatSize(file.size)}</div>
+                  <Button
+                    size="small"
+                    type="text"
+                    danger
+                    onClick={() => setPendingFiles(prev => prev.filter((_, currentIndex) => currentIndex !== index))}
+                  >
+                    移除
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <Modal
@@ -359,12 +576,12 @@ export default function ChatPage() {
         cancelText="取消"
         confirmLoading={createLoading}
       >
-        <Form form={createForm} layout="vertical" initialValues={{ title: '', model: '', systemPrompt: '' }}>
+        <Form form={createForm} layout="vertical" initialValues={{ title: '', model: defaultModel, systemPrompt: '' }}>
           <Form.Item label="标题" name="title">
             <Input placeholder="可选，例如：项目讨论" />
           </Form.Item>
-          <Form.Item label="模型" name="model">
-            <Input placeholder="可选，默认 gpt-4o-mini" />
+          <Form.Item label="模型" name="model" rules={[{ required: true, message: '请选择模型' }]}>
+            <Select options={enabledModels} placeholder="请选择模型" />
           </Form.Item>
           <Form.Item label="systemPrompt" name="systemPrompt">
             <Input.TextArea placeholder="可选，用于角色设定/约束" autoSize={{ minRows: 3, maxRows: 6 }} />

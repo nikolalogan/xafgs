@@ -7,6 +7,7 @@ import WorkflowRunPage from './WorkflowRunPage'
 
 type WorkflowRunModalProps = {
   open: boolean
+  workflowId?: number
   nodes: DifyNode[]
   edges: DifyEdge[]
   workflowParameters?: WorkflowParameter[]
@@ -15,6 +16,7 @@ type WorkflowRunModalProps = {
 
 export default function WorkflowRunModal({
   open,
+  workflowId,
   nodes,
   edges,
   workflowParameters = [],
@@ -40,7 +42,7 @@ export default function WorkflowRunModal({
           </button>
         </div>
         <div className="h-[calc(92vh-64px)] p-3">
-          <WorkflowRunPage nodes={nodes} edges={edges} workflowParameters={workflowParameters} />
+          <WorkflowRunPage workflowId={workflowId} nodes={nodes} edges={edges} workflowParameters={workflowParameters} />
         </div>
       </div>
     </div>

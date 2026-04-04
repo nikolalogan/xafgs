@@ -25,16 +25,18 @@ import (
 )
 
 type Config struct {
-	Port     string
-	AppName  string
-	APIToken string
+	Port            string
+	AppName         string
+	APIToken        string
+	FileStorageRoot string
 }
 
 func NewApp() (*fiber.App, Config) {
 	cfg := Config{
-		Port:     envOrDefault("PORT", "8080"),
-		AppName:  envOrDefault("APP_NAME", "sxfgssever-api"),
-		APIToken: envOrDefault("API_TOKEN", "dev-token"),
+		Port:            envOrDefault("PORT", "8080"),
+		AppName:         envOrDefault("APP_NAME", "sxfgssever-api"),
+		APIToken:        envOrDefault("API_TOKEN", "dev-token"),
+		FileStorageRoot: envOrDefault("FILE_STORAGE_ROOT", "/tmp/sxfg_uploads"),
 	}
 
 	app := fiber.New(fiber.Config{
@@ -72,9 +74,12 @@ func NewApp() (*fiber.App, Config) {
 
 	api := app.Group("/api")
 	systemRepository := repository.NewSystemRepository(cfg.AppName)
+	systemConfigRepository := repository.NewSystemConfigRepository()
 	userRepository := repository.NewUserRepository()
 	userConfigRepository := repository.NewUserConfigRepository()
 	workflowRepository := repository.NewWorkflowRepository()
+	enterpriseRepository := repository.NewEnterpriseRepository()
+	fileRepository := repository.NewFileRepository()
 	templateRepository := repository.NewTemplateRepository()
 	chatRepository := repository.NewChatRepository()
 	authRepository := repository.NewAuthRepository(cfg.APIToken)
@@ -84,8 +89,11 @@ func NewApp() (*fiber.App, Config) {
 		defer cancel()
 		if err := db.Migrate(ctx, result.DB); err == nil {
 			userRepository = repository.NewPostgresUserRepository(result.DB)
+			systemConfigRepository = repository.NewPostgresSystemConfigRepository(result.DB)
 			userConfigRepository = repository.NewPostgresUserConfigRepository(result.DB)
 			workflowRepository = repository.NewPostgresWorkflowRepository(result.DB)
+			enterpriseRepository = repository.NewPostgresEnterpriseRepository(result.DB)
+			fileRepository = repository.NewPostgresFileRepository(result.DB)
 			templateRepository = repository.NewPostgresTemplateRepository(result.DB)
 			chatRepository = repository.NewPostgresChatRepository(result.DB)
 			_ = db.Seed(ctx, result.DB)
@@ -93,34 +101,47 @@ func NewApp() (*fiber.App, Config) {
 	}
 
 	systemService := service.NewSystemService(systemRepository)
+	systemConfigService := service.NewSystemConfigService(systemConfigRepository)
 	userService := service.NewUserService(userRepository)
 	userConfigService := service.NewUserConfigService(userConfigRepository)
 	workflowService := service.NewWorkflowService(workflowRepository)
+	enterpriseService := service.NewEnterpriseService(enterpriseRepository)
+	fileStorage := service.NewLocalFileStorage(cfg.FileStorageRoot)
+	fileService := service.NewFileService(fileRepository, fileStorage)
 	templateRenderer := service.NewGonjaTemplateRenderer()
 	templateService := service.NewTemplateService(templateRepository, templateRenderer)
 	aiClient := ai.NewOpenAICompatClient(nil)
-	chatService := service.NewChatService(chatRepository, userConfigService, aiClient)
+	webSearchClient := service.NewTavilySearchClient(nil)
+	chatService := service.NewChatService(chatRepository, systemConfigService, userConfigService, fileService, webSearchClient, aiClient)
+	workflowCodeGenerateService := service.NewWorkflowCodeGenerateService(userConfigService, systemConfigService, aiClient)
+	workflowDSLGenerateService := service.NewWorkflowDSLGenerateService(userConfigService, systemConfigService, fileService, aiClient)
 	executionStore := workflowruntime.NewInMemoryExecutionStore()
 	executionRuntime := workflowruntime.NewRuntime(executionStore)
 	workflowExecutionService := service.NewWorkflowExecutionService(executionRuntime)
+	workflowExecutionRateLimiter := service.NewWorkflowExecutionRateLimiter()
 	authService := service.NewAuthService(authRepository, userRepository)
 	authMiddleware := middleware.NewAuthMiddleware(authService)
 	apiRegistry := apimeta.NewRegistry("/api")
 	healthHandler := handler.NewHealthHandler(systemService, apiRegistry)
 	authHandler := handler.NewAuthHandler(authService, apiRegistry)
 	userHandler := handler.NewUserHandler(userService, apiRegistry)
+	systemConfigHandler := handler.NewSystemConfigHandler(systemConfigService, apiRegistry)
 	userConfigHandler := handler.NewUserConfigHandler(userConfigService, apiRegistry)
 	workflowHandler := handler.NewWorkflowHandler(workflowService, apiRegistry)
-	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, userConfigService, apiRegistry)
+	enterpriseHandler := handler.NewEnterpriseHandler(enterpriseService, apiRegistry)
+	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, workflowService, workflowExecutionRateLimiter, userConfigService, apiRegistry)
+	fileHandler := handler.NewFileHandler(fileService, apiRegistry)
 	templateHandler := handler.NewTemplateHandler(templateService, apiRegistry)
 	chatHandler := handler.NewChatHandler(chatService, apiRegistry)
+	workflowCodeGenerateHandler := handler.NewWorkflowCodeGenerateHandler(workflowCodeGenerateService, apiRegistry)
+	workflowDSLGenerateHandler := handler.NewWorkflowDSLGenerateHandler(workflowDSLGenerateService, apiRegistry)
 
 	traceStore := apimeta.NewTraceStore(300)
 	traceMiddleware := middleware.NewTraceMiddleware(traceStore)
 	app.Use(traceMiddleware.Handler())
 
 	apiMetaHandler := handler.NewAPIMetaHandler(apiRegistry, traceStore)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, workflowHandler, workflowExecutionHandler, templateHandler, apiMetaHandler, userConfigHandler, chatHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, enterpriseHandler, apiMetaHandler, userConfigHandler, chatHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

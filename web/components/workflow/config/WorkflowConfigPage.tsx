@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Form, Input, Select, message } from 'antd'
+import { Button, Form, Input, InputNumber, Select, message } from 'antd'
 import WorkflowCanvas from '../WorkflowCanvas'
 import { parseDifyWorkflowDSL, toDifyWorkflowDSL } from '../dify/core/dsl'
 import type { DifyWorkflowDSL } from '../dify/core/types'
@@ -18,6 +18,8 @@ type WorkflowDetailDTO = {
   description: string
   menuKey: string
   status: WorkflowStatus
+  breakerWindowMinutes: number
+  breakerMaxRequests: number
   dsl: Record<string, unknown>
 }
 
@@ -28,6 +30,8 @@ type WorkflowDTO = {
   description: string
   menuKey: string
   status: WorkflowStatus
+  breakerWindowMinutes: number
+  breakerMaxRequests: number
 }
 
 type ApiResponse<T> = {
@@ -143,6 +147,8 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
         description: '',
         menuKey: 'reserve',
         status: 'active',
+        breakerWindowMinutes: 1,
+        breakerMaxRequests: 5,
       })
       const dsl = parseDifyWorkflowDSL(defaultDSL)
       setInitialCanvasDSL(dsl)
@@ -161,6 +167,8 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
           description: detail.description,
           menuKey: detail.menuKey || 'reserve',
           status: detail.status,
+          breakerWindowMinutes: detail.breakerWindowMinutes || 1,
+          breakerMaxRequests: detail.breakerMaxRequests || 5,
         })
         const dsl = parseDifyWorkflowDSL((detail.dsl as unknown as DifyWorkflowDSL) ?? defaultDSL)
         setInitialCanvasDSL(dsl)
@@ -197,6 +205,8 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
             description: values.description,
             menuKey: values.menuKey,
             status: values.status,
+            breakerWindowMinutes: Number(values.breakerWindowMinutes),
+            breakerMaxRequests: Number(values.breakerMaxRequests),
             dsl: parsedDSL,
           }),
         })
@@ -212,6 +222,8 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
           description: values.description,
           menuKey: values.menuKey,
           status: values.status,
+          breakerWindowMinutes: Number(values.breakerWindowMinutes),
+          breakerMaxRequests: Number(values.breakerMaxRequests),
           dsl: parsedDSL,
         }),
       })
@@ -347,6 +359,27 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
               ]}
             />
           </Form.Item>
+          <Form.Item label="熔断频率" required>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">每</span>
+              <Form.Item
+                name="breakerWindowMinutes"
+                noStyle
+                rules={[{ required: true, message: '请输入分钟' }]}
+              >
+                <InputNumber min={1} precision={0} className="!w-[120px]" placeholder="分钟" />
+              </Form.Item>
+              <span className="text-sm text-gray-500">分钟</span>
+              <Form.Item
+                name="breakerMaxRequests"
+                noStyle
+                rules={[{ required: true, message: '请输入次数' }]}
+              >
+                <InputNumber min={1} precision={0} className="!w-[120px]" placeholder="次数" />
+              </Form.Item>
+              <span className="text-sm text-gray-500">次</span>
+            </div>
+          </Form.Item>
         </Form>
         <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
           <div className="mb-2 flex items-center justify-between">
@@ -361,6 +394,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
           <WorkflowCanvas
             ref={canvasRef}
             initialDSL={initialCanvasDSL}
+            workflowId={workflowId}
             onDSLChange={showAdvancedJSON ? handleDSLChange : undefined}
           />
           {showAdvancedJSON && (

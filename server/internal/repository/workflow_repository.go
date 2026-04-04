@@ -51,6 +51,8 @@ func NewWorkflowRepository() WorkflowRepository {
 				Status:                    model.WorkflowStatusActive,
 				CurrentDraftVersionNo:     1,
 				CurrentPublishedVersionNo: 0,
+				BreakerWindowMinutes:      model.DefaultWorkflowBreakerWindowMinutes,
+				BreakerMaxRequests:        model.DefaultWorkflowBreakerMaxRequests,
 				DSL:                       defaultDSL,
 			},
 		},
@@ -131,6 +133,12 @@ func (repository *workflowRepository) Create(workflow model.Workflow) model.Work
 	workflow.ID = repository.nextWorkflowID
 	workflow.CreatedAt = now
 	workflow.UpdatedAt = now
+	if workflow.BreakerWindowMinutes <= 0 {
+		workflow.BreakerWindowMinutes = model.DefaultWorkflowBreakerWindowMinutes
+	}
+	if workflow.BreakerMaxRequests <= 0 {
+		workflow.BreakerMaxRequests = model.DefaultWorkflowBreakerMaxRequests
+	}
 	repository.workflows[workflow.ID] = workflow
 	repository.versions[workflow.ID] = map[int]workflowVersionSnapshot{
 		workflow.CurrentDraftVersionNo: {
@@ -152,6 +160,8 @@ func (repository *workflowRepository) Update(workflowID int64, update model.Work
 	existingWorkflow.Description = update.Description
 	existingWorkflow.MenuKey = update.MenuKey
 	existingWorkflow.Status = update.Status
+	existingWorkflow.BreakerWindowMinutes = update.BreakerWindowMinutes
+	existingWorkflow.BreakerMaxRequests = update.BreakerMaxRequests
 	if len(update.DSL) > 0 {
 		now := time.Now().UTC()
 		existingWorkflow.DSL = update.DSL

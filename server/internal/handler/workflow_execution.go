@@ -2,8 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -32,6 +34,7 @@ type executionIDPathRequest struct {
 }
 
 type startWorkflowExecutionRequest struct {
+	WorkflowID  int64          `json:"workflowId" validate:"required,min=1"`
 	WorkflowDSL any            `json:"workflowDsl"`
 	DSL         any            `json:"dsl"`
 	Input       map[string]any `json:"input"`
@@ -45,17 +48,23 @@ type resumeWorkflowExecutionRequest struct {
 
 type WorkflowExecutionHandler struct {
 	service           service.WorkflowExecutionService
+	workflowService   service.WorkflowService
+	rateLimiter       service.WorkflowExecutionRateLimiter
 	userConfigService service.UserConfigService
 	registry          *apimeta.Registry
 }
 
 func NewWorkflowExecutionHandler(
 	service service.WorkflowExecutionService,
+	workflowService service.WorkflowService,
+	rateLimiter service.WorkflowExecutionRateLimiter,
 	userConfigService service.UserConfigService,
 	registry *apimeta.Registry,
 ) *WorkflowExecutionHandler {
 	return &WorkflowExecutionHandler{
 		service:           service,
+		workflowService:   workflowService,
+		rateLimiter:       rateLimiter,
 		userConfigService: userConfigService,
 		registry:          registry,
 	}
@@ -90,6 +99,10 @@ func (handler *WorkflowExecutionHandler) Register(router fiber.Router, adminMidd
 }
 
 func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkflowExecutionRequest) error {
+	if request.WorkflowID <= 0 {
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "workflowId 必须为正整数")
+	}
+
 	rawDsl := request.WorkflowDSL
 	if rawDsl == nil {
 		rawDsl = request.DSL
@@ -110,6 +123,10 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 	userID, ok := c.Locals(middleware.LocalAuthUserID).(int64)
 	if !ok || userID <= 0 {
 		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+	workflow, apiError := handler.workflowService.GetByID(c.UserContext(), request.WorkflowID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 
 	startNode, ok := findStartNode(dsl.Nodes)
@@ -144,6 +161,11 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 
 	ctx := workflowruntime.WithRequestID(c.UserContext(), requestID(c))
 	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
+	window := time.Duration(workflow.BreakerWindowMinutes) * time.Minute
+	limiterKey := fmt.Sprintf("%d:%d", userID, request.WorkflowID)
+	if !handler.rateLimiter.Allow(limiterKey, time.Now().UTC(), window, workflow.BreakerMaxRequests) {
+		return response.Error(c, fiber.StatusTooManyRequests, response.CodeTooManyRequests, "请求过快，请稍后重试")
+	}
 	data, apiError := handler.service.Start(ctx, dsl, input)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)

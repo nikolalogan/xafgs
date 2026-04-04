@@ -53,6 +53,7 @@ type DynamicField = {
 }
 
 type WorkflowRunPageProps = {
+  workflowId?: number
   nodes: DifyNode[]
   edges: DifyEdge[]
   globalVariables?: WorkflowGlobalVariable[]
@@ -403,11 +404,11 @@ const detectRequiredUserConfigKeys = (dsl: unknown): UserConfigFieldKey[] => {
   return [...required]
 }
 
-export default function WorkflowRunPage({ nodes, edges, globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
-  return <WorkflowRunPageInner nodes={nodes} edges={edges} globalVariables={globalVariables} workflowParameters={workflowParameters} autoRun={autoRun} />
+export default function WorkflowRunPage({ workflowId, nodes, edges, globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
+  return <WorkflowRunPageInner workflowId={workflowId} nodes={nodes} edges={edges} globalVariables={globalVariables} workflowParameters={workflowParameters} autoRun={autoRun} />
 }
 
-function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
+function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
   const router = useRouter()
   const [execution, setExecution] = useState<WorkflowExecution | null>(null)
   const [loading, setLoading] = useState(false)
@@ -964,6 +965,10 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
   }
 
   const runWorkflow = async () => {
+    if (!workflowId || workflowId <= 0) {
+      setError('请先保存工作流后再运行')
+      return
+    }
     if (!validateBeforeRun())
       return
     const requiredKeys = detectRequiredUserConfigKeys(runtimeDsl)
@@ -1028,6 +1033,7 @@ function WorkflowRunPageInner({ nodes, edges, globalVariables = [], workflowPara
         credentials: 'include',
         headers,
         body: JSON.stringify({
+          workflowId,
           workflowDsl: runtimeDsl,
           input: startValidation.normalized,
         }),

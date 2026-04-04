@@ -38,6 +38,9 @@ const menuItems: MenuItem[] = [
   { key: 'review', label: '评审', href: '/app/workflows?menuKey=review', roles: ['admin'] as ConsoleRole[] },
   { key: 'postloan', label: '保后', href: '/app/workflows?menuKey=postloan', roles: ['admin'] as ConsoleRole[] },
   { key: 'templates', label: '模板配置', href: '/app/templates', roles: ['admin'] as ConsoleRole[] },
+  { key: 'files', label: '文件管理', href: '/app/files', roles: ['admin'] as ConsoleRole[] },
+  { key: 'enterprises', label: '企业管理', href: '/app/enterprises', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'system-settings', label: '系统设置', href: '/app/system-settings', roles: ['admin'] as ConsoleRole[] },
   { key: 'user-config', label: '用户配置', href: '/app/user-config', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'api-meta', label: 'API 查询', href: '/app/api-meta', roles: ['admin'] as ConsoleRole[] },
   { key: 'users', label: '用户管理', href: '/app/users', roles: ['admin'] as ConsoleRole[] },
@@ -73,6 +76,12 @@ const getPageTitle = (pathname: string, search: string) => {
     return '用户管理'
   if (pathname.startsWith('/app/templates'))
     return '模板配置'
+  if (pathname.startsWith('/app/files'))
+    return '文件管理'
+  if (pathname.startsWith('/app/enterprises'))
+    return '企业管理'
+  if (pathname.startsWith('/app/system-settings'))
+    return '系统设置'
   if (pathname.startsWith('/app/user-config'))
     return '用户配置'
   if (pathname.startsWith('/app/api-meta'))
@@ -155,6 +164,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['控制台', '用户管理']
     if (pathname.startsWith('/app/templates'))
       return ['控制台', '模板配置']
+    if (pathname.startsWith('/app/files'))
+      return ['控制台', '文件管理']
+    if (pathname.startsWith('/app/enterprises'))
+      return ['控制台', '企业管理']
+    if (pathname.startsWith('/app/system-settings'))
+      return ['控制台', '系统设置']
     if (pathname.startsWith('/app/user-config'))
       return ['控制台', '用户配置']
     if (pathname.startsWith('/app/api-meta'))
@@ -276,6 +291,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
 
     pushIfVisible('templates')
+    pushIfVisible('files')
+    pushIfVisible('enterprises')
+    pushIfVisible('system-settings')
     pushIfVisible('user-config')
     pushIfVisible('api-meta')
     pushIfVisible('users')
@@ -288,6 +306,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['home']
     if (pathname.startsWith('/app/templates'))
       return ['templates']
+    if (pathname.startsWith('/app/files'))
+      return ['files']
+    if (pathname.startsWith('/app/enterprises'))
+      return ['enterprises']
+    if (pathname.startsWith('/app/system-settings'))
+      return ['system-settings']
     if (pathname.startsWith('/app/user-config'))
       return ['user-config']
     if (pathname.startsWith('/app/api-meta'))
@@ -336,6 +360,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       router.push('/app/workflows')
     else if (key === 'templates')
       router.push('/app/templates')
+    else if (key === 'files')
+      router.push('/app/files')
+    else if (key === 'enterprises')
+      router.push('/app/enterprises')
+    else if (key === 'system-settings')
+      router.push('/app/system-settings')
     else if (key === 'user-config')
       router.push('/app/user-config')
     else if (key === 'api-meta')

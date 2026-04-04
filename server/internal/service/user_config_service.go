@@ -33,11 +33,13 @@ func (service *userConfigService) GetByUserID(_ context.Context, userID int64) (
 		return config, nil
 	}
 	return model.UserConfigDTO{
-		UserID:          userID,
-		WarningAccount:  "",
-		WarningPassword: "",
-		AIBaseURL:       "",
-		AIApiKey:        "",
+		UserID:               userID,
+		WarningAccount:       "",
+		WarningPassword:      "",
+		AIBaseURL:            "",
+		AIApiKey:             "",
+		SearchServiceBaseURL: "",
+		SearchServiceAPIKey:  "",
 	}, nil
 }
 
@@ -58,21 +60,24 @@ func (service *userConfigService) UpdateByUserID(
 	request.WarningPassword = strings.TrimSpace(request.WarningPassword)
 	request.AIBaseURL = strings.TrimSpace(request.AIBaseURL)
 	request.AIApiKey = strings.TrimSpace(request.AIApiKey)
+	request.SearchServiceBaseURL = strings.TrimSpace(request.SearchServiceBaseURL)
+	request.SearchServiceAPIKey = strings.TrimSpace(request.SearchServiceAPIKey)
 
 	updated, ok := service.repository.Upsert(model.UserConfig{
 		BaseEntity: model.BaseEntity{
 			UpdatedBy: operatorID,
 			CreatedBy: operatorID,
 		},
-		UserID:          userID,
-		WarningAccount:  request.WarningAccount,
-		WarningPassword: request.WarningPassword,
-		AIBaseURL:       request.AIBaseURL,
-		AIApiKey:        request.AIApiKey,
+		UserID:               userID,
+		WarningAccount:       request.WarningAccount,
+		WarningPassword:      request.WarningPassword,
+		AIBaseURL:            request.AIBaseURL,
+		AIApiKey:             request.AIApiKey,
+		SearchServiceBaseURL: request.SearchServiceBaseURL,
+		SearchServiceAPIKey:  request.SearchServiceAPIKey,
 	})
 	if !ok {
 		return model.UserConfigDTO{}, model.NewAPIError(500, response.CodeInternal, "更新用户配置失败")
 	}
 	return updated, nil
 }
-

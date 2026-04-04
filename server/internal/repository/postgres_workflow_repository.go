@@ -28,6 +28,7 @@ func (repository *PostgresWorkflowRepository) FindByID(workflowID int64) (model.
 	err := repository.db.QueryRowContext(ctx, `
 SELECT id, workflow_key, name, description, menu_key, status,
        current_draft_version_no, current_published_version_no,
+       breaker_window_minutes, breaker_max_requests,
        dsl_json, created_at, updated_at, created_by, updated_by
 FROM workflow
 WHERE id = $1
@@ -40,6 +41,8 @@ WHERE id = $1
 		&workflow.Status,
 		&workflow.CurrentDraftVersionNo,
 		&workflow.CurrentPublishedVersionNo,
+		&workflow.BreakerWindowMinutes,
+		&workflow.BreakerMaxRequests,
 		&dslBytes,
 		&workflow.CreatedAt,
 		&workflow.UpdatedAt,
@@ -67,6 +70,7 @@ func (repository *PostgresWorkflowRepository) FindByWorkflowKey(workflowKey stri
 	err := repository.db.QueryRowContext(ctx, `
 SELECT id, workflow_key, name, description, menu_key, status,
        current_draft_version_no, current_published_version_no,
+       breaker_window_minutes, breaker_max_requests,
        dsl_json, created_at, updated_at, created_by, updated_by
 FROM workflow
 WHERE workflow_key = $1
@@ -79,6 +83,8 @@ WHERE workflow_key = $1
 		&workflow.Status,
 		&workflow.CurrentDraftVersionNo,
 		&workflow.CurrentPublishedVersionNo,
+		&workflow.BreakerWindowMinutes,
+		&workflow.BreakerMaxRequests,
 		&dslBytes,
 		&workflow.CreatedAt,
 		&workflow.UpdatedAt,
@@ -99,6 +105,7 @@ func (repository *PostgresWorkflowRepository) FindAll() []model.WorkflowDTO {
 	rows, err := repository.db.QueryContext(ctx, `
 SELECT id, workflow_key, name, description, menu_key, status,
        current_draft_version_no, current_published_version_no,
+       breaker_window_minutes, breaker_max_requests,
        created_at, updated_at
 FROM workflow
 ORDER BY id ASC
@@ -120,6 +127,8 @@ ORDER BY id ASC
 			&dto.Status,
 			&dto.CurrentDraftVersionNo,
 			&dto.CurrentPublishedVersionNo,
+			&dto.BreakerWindowMinutes,
+			&dto.BreakerMaxRequests,
 			&dto.CreatedAt,
 			&dto.UpdatedAt,
 		); err != nil {
@@ -179,6 +188,12 @@ func (repository *PostgresWorkflowRepository) Create(workflow model.Workflow) mo
 	workflow.UpdatedAt = now
 	workflow.CurrentDraftVersionNo = 1
 	workflow.CurrentPublishedVersionNo = 0
+	if workflow.BreakerWindowMinutes <= 0 {
+		workflow.BreakerWindowMinutes = model.DefaultWorkflowBreakerWindowMinutes
+	}
+	if workflow.BreakerMaxRequests <= 0 {
+		workflow.BreakerMaxRequests = model.DefaultWorkflowBreakerMaxRequests
+	}
 	if len(workflow.DSL) == 0 {
 		workflow.DSL = json.RawMessage(`{"nodes":[{"id":"start","type":"custom","position":{"x":80,"y":200},"data":{"title":"开始","type":"start","config":{"variables":[]}}}],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}`)
 	}
@@ -193,10 +208,11 @@ func (repository *PostgresWorkflowRepository) Create(workflow model.Workflow) mo
 INSERT INTO workflow (
   workflow_key, name, description, menu_key, status,
   current_draft_version_no, current_published_version_no,
+  breaker_window_minutes, breaker_max_requests,
   dsl_json, created_at, updated_at, created_by, updated_by
-) VALUES ($1, $2, $3, $4, $5, 1, 0, $6::jsonb, $7, $7, $8, $8)
+) VALUES ($1, $2, $3, $4, $5, 1, 0, $6, $7, $8::jsonb, $9, $9, $10, $10)
 RETURNING id
-`, workflow.WorkflowKey, workflow.Name, workflow.Description, workflow.MenuKey, workflow.Status, string(workflow.DSL), now, workflow.CreatedBy).Scan(&workflow.ID); err != nil {
+`, workflow.WorkflowKey, workflow.Name, workflow.Description, workflow.MenuKey, workflow.Status, workflow.BreakerWindowMinutes, workflow.BreakerMaxRequests, string(workflow.DSL), now, workflow.CreatedBy).Scan(&workflow.ID); err != nil {
 		return model.WorkflowDTO{}
 	}
 
@@ -249,12 +265,14 @@ SET name = $2,
     description = $3,
     menu_key = $4,
     status = $5,
-    current_draft_version_no = $6,
-    dsl_json = $7::jsonb,
-    updated_at = $8,
-    updated_by = $9
+    breaker_window_minutes = $6,
+    breaker_max_requests = $7,
+    current_draft_version_no = $8,
+    dsl_json = $9::jsonb,
+    updated_at = $10,
+    updated_by = $11
 WHERE id = $1
-`, workflowID, update.Name, update.Description, update.MenuKey, update.Status, nextDraftNo, string(nextDSL), now, update.UpdatedBy)
+`, workflowID, update.Name, update.Description, update.MenuKey, update.Status, update.BreakerWindowMinutes, update.BreakerMaxRequests, nextDraftNo, string(nextDSL), now, update.UpdatedBy)
 	if err != nil {
 		return model.WorkflowDTO{}, false
 	}

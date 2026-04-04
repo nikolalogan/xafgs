@@ -1,7 +1,7 @@
 import { useCallback, type MutableRefObject } from 'react'
 import { CUSTOM_NODE } from '../core/constants'
 import { createDefaultNodeConfig } from '../core/node-config'
-import { BlockEnum, type DifyEdge, type DifyNode } from '../core/types'
+import { BlockEnum, type DifyEdge, type DifyNode, type LLMNodeConfig } from '../core/types'
 
 type UseNodeActionsParams = {
   nodes: DifyNode[]
@@ -9,6 +9,7 @@ type UseNodeActionsParams = {
   activeNode: DifyNode | null
   idRef: MutableRefObject<number>
   nodeTypeLabel: Record<BlockEnum, string>
+  defaultLLMModel: string
   setNodes: (nodes: DifyNode[]) => void
   record: (snapshot: { nodes: DifyNode[]; edges: DifyEdge[] }) => void
 }
@@ -19,6 +20,7 @@ export const useNodeActions = ({
   activeNode,
   idRef,
   nodeTypeLabel,
+  defaultLLMModel,
   setNodes,
   record,
 }: UseNodeActionsParams) => {
@@ -31,6 +33,12 @@ export const useNodeActions = ({
     }
 
     const id = `node-${idRef.current++}`
+    const nextConfig = createDefaultNodeConfig(type)
+    if (type === BlockEnum.LLM) {
+      const llmConfig = nextConfig as LLMNodeConfig
+      llmConfig.model = defaultLLMModel
+    }
+
     const nextNode: DifyNode = {
       id,
       type: CUSTOM_NODE,
@@ -41,7 +49,7 @@ export const useNodeActions = ({
           : `${nodeTypeLabel[type]}-${idRef.current}`,
         desc: '',
         type,
-        config: createDefaultNodeConfig(type),
+        config: nextConfig,
       },
     }
 
@@ -49,7 +57,7 @@ export const useNodeActions = ({
     setNodes(nextNodes)
     record({ nodes: nextNodes, edges })
     return nextNode
-  }, [edges, idRef, nodeTypeLabel, nodes, record, setNodes])
+  }, [defaultLLMModel, edges, idRef, nodeTypeLabel, nodes, record, setNodes])
 
   const saveNode = useCallback(() => {
     if (!activeNode) return

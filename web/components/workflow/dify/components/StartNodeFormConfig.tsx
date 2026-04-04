@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import RuleTestModal from './RuleTestModal'
 import StartFormPreviewModal from './StartFormPreviewModal'
+import AICodeGenerateModal from './AICodeGenerateModal'
 import VariableValueInput from './VariableValueInput'
+import type { AICodeGenerateTargetType } from '../core/ai-code-generate'
 import { checkRuleSyntax } from '../core/rule-engine'
 import type { VariableScope, WorkflowVariableOption } from '../core/variables'
 import type { StartNodeConfig } from '../core/types'
@@ -17,6 +19,8 @@ type StartNodeFormConfigProps = {
   variableOptions: WorkflowVariableOption[]
   getScope: (fieldKey: string, fallback?: VariableScope) => VariableScope
   onScopeChange: (fieldKey: string, scope: VariableScope) => void
+  modelOptions: Array<{ name: string; label: string }>
+  defaultModel: string
 }
 
 const inputClass = 'w-full rounded border border-gray-300 px-2 py-1.5 text-sm'
@@ -33,6 +37,8 @@ export default function StartNodeFormConfig({
   variableOptions,
   getScope,
   onScopeChange,
+  modelOptions,
+  defaultModel,
 }: StartNodeFormConfigProps) {
   const [optionalExpanded, setOptionalExpanded] = useState<Record<string, boolean>>({})
   const [ruleTestState, setRuleTestState] = useState<{ open: boolean; title: string; code: string }>({
@@ -41,6 +47,15 @@ export default function StartNodeFormConfig({
     code: '',
   })
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [aiModalState, setAIModalState] = useState<{
+    open: boolean
+    index: number
+    targetType: AICodeGenerateTargetType
+  }>({
+    open: false,
+    index: -1,
+    targetType: 'visibleWhen',
+  })
 
   const typeOptions: Array<{ value: StartNodeConfig['variables'][number]['type']; label: string }> = [
     { value: 'text-input', label: '单行文本' },
@@ -256,6 +271,15 @@ export default function StartNodeFormConfig({
                   allowMultiline
                   rows={3}
                 />
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700 hover:bg-blue-100"
+                    onClick={() => setAIModalState({ open: true, index, targetType: 'visibleWhen' })}
+                  >
+                    AI 生成
+                  </button>
+                </div>
                 <div className="flex items-center justify-between">
                   <span className={`text-xs ${visibleSyntax.valid ? 'text-green-600' : 'text-red-600'}`}>
                     {visibleSyntax.valid ? '语法校验通过' : `语法错误：${visibleSyntax.error}`}
@@ -273,6 +297,15 @@ export default function StartNodeFormConfig({
                   allowMultiline
                   rows={4}
                 />
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700 hover:bg-blue-100"
+                    onClick={() => setAIModalState({ open: true, index, targetType: 'validateWhen' })}
+                  >
+                    AI 生成
+                  </button>
+                </div>
                 <div className="flex items-center justify-between">
                   <span className={`text-xs ${validateSyntax.valid ? 'text-green-600' : 'text-red-600'}`}>
                     {validateSyntax.valid ? '语法校验通过' : `语法错误：${validateSyntax.error}`}
@@ -317,6 +350,42 @@ export default function StartNodeFormConfig({
         title={title}
         config={config}
         onClose={() => setPreviewOpen(false)}
+      />
+      <AICodeGenerateModal
+        open={aiModalState.open}
+        context={(() => {
+          if (!aiModalState.open)
+            return null
+          const target = config.variables[aiModalState.index]
+          if (!target)
+            return null
+          const targetCode = aiModalState.targetType === 'visibleWhen'
+            ? (target.visibleWhen ?? defaultVisibleWhen(aiModalState.index, target.name))
+            : (target.validateWhen ?? defaultValidateWhen(aiModalState.index, target.name))
+          const targetLabel = aiModalState.targetType === 'visibleWhen' ? '是否可见规则' : '结果校验规则'
+          return {
+            targetType: aiModalState.targetType,
+            nodeType: sectionKey === 'input' ? 'input' : 'start',
+            currentCode: targetCode,
+            nodeId,
+            fieldName: target.name || `field_${aiModalState.index + 1}`,
+            title: `AI 生成${targetLabel}`,
+          }
+        })()}
+        variableOptions={variableOptions}
+        modelOptions={modelOptions}
+        defaultModel={defaultModel}
+        onClose={() => setAIModalState(prev => ({ ...prev, open: false }))}
+        onConfirm={(generatedCode) => {
+          const index = aiModalState.index
+          if (index < 0 || index >= config.variables.length)
+            return
+          if (aiModalState.targetType === 'visibleWhen') {
+            updateVariable(index, { visibleWhen: generatedCode })
+            return
+          }
+          updateVariable(index, { validateWhen: generatedCode })
+        }}
       />
     </div>
   )

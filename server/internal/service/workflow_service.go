@@ -77,6 +77,10 @@ func (service *workflowService) Create(
 	if !model.IsValidWorkflowStatus(request.Status) {
 		return model.WorkflowDTO{}, model.NewAPIError(400, response.CodeBadRequest, "status 仅支持 active/disabled")
 	}
+	breakerWindowMinutes, breakerMaxRequests, apiError := normalizeWorkflowBreakerConfig(request.BreakerWindowMinutes, request.BreakerMaxRequests)
+	if apiError != nil {
+		return model.WorkflowDTO{}, apiError
+	}
 	if _, exists := service.workflowRepository.FindByWorkflowKey(request.WorkflowKey); exists {
 		return model.WorkflowDTO{}, model.NewAPIError(400, response.CodeBadRequest, "workflowKey 已存在")
 	}
@@ -93,6 +97,8 @@ func (service *workflowService) Create(
 		Status:                    request.Status,
 		CurrentDraftVersionNo:     1,
 		CurrentPublishedVersionNo: 0,
+		BreakerWindowMinutes:      breakerWindowMinutes,
+		BreakerMaxRequests:        breakerMaxRequests,
 		DSL:                       dsl,
 	}
 	return service.workflowRepository.Create(workflow), nil
@@ -123,6 +129,10 @@ func (service *workflowService) Update(
 	if !model.IsValidWorkflowStatus(request.Status) {
 		return model.WorkflowDTO{}, model.NewAPIError(400, response.CodeBadRequest, "status 仅支持 active/disabled")
 	}
+	breakerWindowMinutes, breakerMaxRequests, apiError := normalizeWorkflowBreakerConfig(request.BreakerWindowMinutes, request.BreakerMaxRequests)
+	if apiError != nil {
+		return model.WorkflowDTO{}, apiError
+	}
 
 	var dsl json.RawMessage
 	if len(request.DSL) > 0 {
@@ -138,6 +148,8 @@ func (service *workflowService) Update(
 		Description: request.Description,
 		MenuKey:     request.MenuKey,
 		Status:      request.Status,
+		BreakerWindowMinutes: breakerWindowMinutes,
+		BreakerMaxRequests:   breakerMaxRequests,
 		DSL:         dsl,
 	})
 	if !ok {
@@ -202,4 +214,14 @@ func ensureWorkflowDSL(raw json.RawMessage) (json.RawMessage, *model.APIError) {
 		return nil, model.NewAPIError(400, response.CodeBadRequest, "dsl 序列化失败")
 	}
 	return normalized, nil
+}
+
+func normalizeWorkflowBreakerConfig(windowMinutes, maxRequests int) (int, int, *model.APIError) {
+	if windowMinutes <= 0 {
+		return 0, 0, model.NewAPIError(400, response.CodeBadRequest, "breakerWindowMinutes 必须为正整数")
+	}
+	if maxRequests <= 0 {
+		return 0, 0, model.NewAPIError(400, response.CodeBadRequest, "breakerMaxRequests 必须为正整数")
+	}
+	return windowMinutes, maxRequests, nil
 }

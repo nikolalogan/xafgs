@@ -35,7 +35,7 @@ func DefaultPathParamValidation(name string) (APIField, bool) {
 	}
 	min := int64(1)
 	switch trimmed {
-	case "id", "userId", "workflowId", "templateId", "executionId", "versionNo":
+	case "id", "userId", "workflowId", "templateId", "executionId", "versionNo", "fileId", "enterpriseId":
 		return APIField{
 			Name: trimmed,
 			In:   ParamLocationPath,
@@ -56,4 +56,3 @@ func DefaultPathParamValidation(name string) (APIField, bool) {
 		}, true
 	}
 }
-

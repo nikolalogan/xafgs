@@ -4,16 +4,33 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
+type ChatMessageImageURL struct {
+	URL string `json:"url"`
+}
+
+type ChatMessageContentPart struct {
+	Type     string               `json:"type"`
+	Text     string               `json:"text,omitempty"`
+	ImageURL *ChatMessageImageURL `json:"image_url,omitempty"`
+}
+
 type ChatMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+type ChatTool struct {
+	Type string `json:"type"`
 }
 
 type ChatCompletionRequest struct {
@@ -21,6 +38,7 @@ type ChatCompletionRequest struct {
 	APIKey       string
 	Model        string
 	Messages     []ChatMessage
+	Tools        []ChatTool
 	Temperature  float64
 	Timeout      time.Duration
 	UserAgent    string
@@ -35,9 +53,11 @@ type openAICompatClient struct {
 	httpClient *http.Client
 }
 
+var ErrTimeout = errors.New("ai request timeout")
+
 func NewOpenAICompatClient(httpClient *http.Client) ChatCompletionClient {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 60 * time.Second}
+		httpClient = &http.Client{}
 	}
 	return &openAICompatClient{httpClient: httpClient}
 }
@@ -69,6 +89,9 @@ func (client *openAICompatClient) CreateChatCompletion(ctx context.Context, requ
 		"temperature": request.Temperature,
 		"stream":      false,
 	}
+	if len(request.Tools) > 0 {
+		payload["tools"] = request.Tools
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("请求序列化失败")
@@ -92,23 +115,26 @@ func (client *openAICompatClient) CreateChatCompletion(ctx context.Context, requ
 
 	resp, err := client.httpClient.Do(httpReq)
 	if err != nil {
+		if isTimeoutErr(err) {
+			return "", fmt.Errorf("%w: %v", ErrTimeout, err)
+		}
 		return "", err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			message := strings.TrimSpace(string(body))
-			if message == "" {
-				message = fmt.Sprintf("AI 服务返回错误（http=%d）", resp.StatusCode)
-			}
-			return "", fmt.Errorf("%s", message)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = fmt.Sprintf("AI 服务返回错误（http=%d）", resp.StatusCode)
 		}
+		return "", fmt.Errorf("%s", message)
+	}
 
 	var parsed struct {
 		Choices []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
 	}
@@ -118,11 +144,63 @@ func (client *openAICompatClient) CreateChatCompletion(ctx context.Context, requ
 	if len(parsed.Choices) == 0 {
 		return "", fmt.Errorf("AI 响应为空")
 	}
-	content := strings.TrimSpace(parsed.Choices[0].Message.Content)
+	content := strings.TrimSpace(extractAssistantContent(parsed.Choices[0].Message.Content))
 	if content == "" {
 		return "", fmt.Errorf("AI 未返回内容")
 	}
 	return content, nil
+}
+
+func IsTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return isTimeoutErr(err)
+}
+
+func isTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return isTimeoutErr(urlErr.Err)
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "deadline exceeded") ||
+		strings.Contains(message, "timeout") ||
+		strings.Contains(message, "client.timeout exceeded")
+}
+
+func extractAssistantContent(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	var parts []ChatMessageContentPart
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return ""
+	}
+	lines := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(part.Type) == "text" && strings.TrimSpace(part.Text) != "" {
+			lines = append(lines, part.Text)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func normalizeBaseURL(raw string) string {

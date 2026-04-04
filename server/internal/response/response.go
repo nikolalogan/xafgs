@@ -9,12 +9,13 @@ import (
 )
 
 const (
-	CodeSuccess      = "SUCCESS"
-	CodeBadRequest   = "BAD_REQUEST"
-	CodeUnauthorized = "UNAUTHORIZED"
-	CodeForbidden    = "FORBIDDEN"
-	CodeNotFound     = "NOT_FOUND"
-	CodeInternal     = "INTERNAL_ERROR"
+	CodeSuccess         = "SUCCESS"
+	CodeBadRequest      = "BAD_REQUEST"
+	CodeUnauthorized    = "UNAUTHORIZED"
+	CodeForbidden       = "FORBIDDEN"
+	CodeNotFound        = "NOT_FOUND"
+	CodeTooManyRequests = "TOO_MANY_REQUESTS"
+	CodeInternal        = "INTERNAL_ERROR"
 )
 
 func Success(c *fiber.Ctx, httpStatus int, data any, message string) error {

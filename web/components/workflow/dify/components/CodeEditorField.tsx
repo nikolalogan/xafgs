@@ -1,5 +1,16 @@
 import { useMemo, useRef, useState } from 'react'
+import AICodeGenerateModal from './AICodeGenerateModal'
+import type { AICodeGenerateNodeType } from '../core/ai-code-generate'
 import type { VariableScope, WorkflowVariableOption } from '../core/variables'
+
+type CodeEditorAIGenerateConfig = {
+  nodeType: AICodeGenerateNodeType
+  language?: 'javascript' | 'python3'
+  nodeId?: string
+  fieldName?: string
+  modelOptions: Array<{ name: string; label: string }>
+  defaultModel: string
+}
 
 type CodeEditorFieldProps = {
   value: string
@@ -10,6 +21,7 @@ type CodeEditorFieldProps = {
   placeholder?: string
   className?: string
   showVariableInsert?: boolean
+  aiGenerateConfig?: CodeEditorAIGenerateConfig
 }
 
 const scopeOptions: Array<{ value: VariableScope; label: string }> = [
@@ -31,9 +43,11 @@ export default function CodeEditorField({
   placeholder,
   className = 'h-40 w-full rounded border border-gray-300 px-2 py-1.5 font-mono text-xs',
   showVariableInsert = true,
+  aiGenerateConfig,
 }: CodeEditorFieldProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const [selectedKey, setSelectedKey] = useState('')
+  const [aiModalOpen, setAIModalOpen] = useState(false)
 
   const filteredOptions = useMemo(() => {
     if (scope === 'all')
@@ -97,6 +111,17 @@ export default function CodeEditorField({
           </button>
         </div>
       )}
+      {aiGenerateConfig && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700 hover:bg-blue-100"
+            onClick={() => setAIModalOpen(true)}
+          >
+            AI 生成
+          </button>
+        </div>
+      )}
       <textarea
         ref={textareaRef}
         className={className}
@@ -104,6 +129,25 @@ export default function CodeEditorField({
         placeholder={placeholder}
         onChange={event => onChange(event.target.value)}
       />
+      {aiGenerateConfig && (
+        <AICodeGenerateModal
+          open={aiModalOpen}
+          context={{
+            targetType: 'code',
+            nodeType: aiGenerateConfig.nodeType,
+            language: aiGenerateConfig.language,
+            nodeId: aiGenerateConfig.nodeId,
+            fieldName: aiGenerateConfig.fieldName,
+            currentCode: value,
+            title: 'AI 生成代码',
+          }}
+          variableOptions={options}
+          modelOptions={aiGenerateConfig.modelOptions}
+          defaultModel={aiGenerateConfig.defaultModel}
+          onClose={() => setAIModalOpen(false)}
+          onConfirm={generatedCode => onChange(generatedCode)}
+        />
+      )}
     </div>
   )
 }

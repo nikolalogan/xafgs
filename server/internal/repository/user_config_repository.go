@@ -43,6 +43,8 @@ func (repository *userConfigRepository) Upsert(config model.UserConfig) (model.U
 	existing.WarningPassword = config.WarningPassword
 	existing.AIBaseURL = config.AIBaseURL
 	existing.AIApiKey = config.AIApiKey
+	existing.SearchServiceBaseURL = config.SearchServiceBaseURL
+	existing.SearchServiceAPIKey = config.SearchServiceAPIKey
 	existing.UpdatedAt = now
 	existing.UpdatedBy = config.UpdatedBy
 	repository.configs[config.UserID] = existing

@@ -1,0 +1,248 @@
+package model
+
+import "time"
+
+const (
+	EnterpriseStatusActive  = "active"
+	EnterpriseStatusDeleted = "deleted"
+)
+
+type Enterprise struct {
+	BaseEntity
+	ShortName                         string     `json:"shortName"`
+	Region                            string     `json:"region"`
+	InHiddenDebtList                  bool       `json:"inHiddenDebtList"`
+	In3899List                        bool       `json:"in3899List"`
+	Meets335Indicator                 bool       `json:"meets335Indicator"`
+	Meets224Indicator                 bool       `json:"meets224Indicator"`
+	EnterpriseLevel                   string     `json:"enterpriseLevel"`
+	NetAssets                         *float64   `json:"netAssets,omitempty"`
+	RealEstateRevenueRatio            *float64   `json:"realEstateRevenueRatio,omitempty"`
+	MainBusinessType                  string     `json:"mainBusinessType"`
+	EstablishedAt                     *time.Time `json:"establishedAt,omitempty"`
+	LiabilityAssetRatio               *float64   `json:"liabilityAssetRatio,omitempty"`
+	LiabilityAssetRatioIndustryMedian *float64   `json:"liabilityAssetRatioIndustryMedian,omitempty"`
+	NonStandardFinancingRatio         *float64   `json:"nonStandardFinancingRatio,omitempty"`
+	MainBusiness                      string     `json:"mainBusiness"`
+	RelatedPartyPublicOpinion         string     `json:"relatedPartyPublicOpinion"`
+	AdmissionStatus                   bool       `json:"admissionStatus"`
+	CalculatedAt                      *time.Time `json:"calculatedAt,omitempty"`
+	RegisteredCapital                 *float64   `json:"registeredCapital,omitempty"`
+	PaidInCapital                     *float64   `json:"paidInCapital,omitempty"`
+	Industry                          string     `json:"industry"`
+	Address                           string     `json:"address"`
+	BusinessScope                     string     `json:"businessScope"`
+	LegalPerson                       string     `json:"legalPerson"`
+	CompanyType                       string     `json:"companyType"`
+	EnterpriseNature                  string     `json:"enterpriseNature"`
+	ActualController                  string     `json:"actualController"`
+	ActualControllerControlPath       string     `json:"actualControllerControlPath"`
+	UnifiedCreditCode                 string     `json:"unifiedCreditCode"`
+	LegalPersonIDCard                 string     `json:"legalPersonIdCard"`
+	Status                            string     `json:"status"`
+	DeletedAt                         *time.Time `json:"deletedAt,omitempty"`
+	DeletedBy                         *int64     `json:"deletedBy,omitempty"`
+}
+
+type EnterpriseTag struct {
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+}
+
+type EnterprisePublicOpinion struct {
+	ID      int64      `json:"id"`
+	Source  string     `json:"source"`
+	Issue   string     `json:"issue"`
+	Time    *time.Time `json:"time,omitempty"`
+	Title   string     `json:"title"`
+	OrderNo int        `json:"orderNo"`
+}
+
+type EnterpriseBondTender struct {
+	ID          int64      `json:"id"`
+	Time        *time.Time `json:"time,omitempty"`
+	Type        string     `json:"type"`
+	ProjectType string     `json:"projectType"`
+	Winner      string     `json:"winner"`
+	TenderTitle string     `json:"tenderTitle"`
+	OrderNo     int        `json:"orderNo"`
+}
+
+type EnterpriseBondDetail struct {
+	ID        int64    `json:"id"`
+	ShortName string   `json:"shortName"`
+	Code      string   `json:"code"`
+	Type      string   `json:"type"`
+	Balance   *float64 `json:"balance,omitempty"`
+	Term      string   `json:"term"`
+	Rating    string   `json:"rating"`
+	Guarantor string   `json:"guarantor"`
+	OrderNo   int      `json:"orderNo"`
+}
+
+type EnterpriseBondRegistration struct {
+	ID          int64      `json:"id"`
+	ProjectName string     `json:"projectName"`
+	Status      string     `json:"status"`
+	UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
+	Amount      *float64   `json:"amount,omitempty"`
+	Process     string     `json:"process"`
+	OrderNo     int        `json:"orderNo"`
+}
+
+type EnterpriseFinanceSnapshot struct {
+	ID                 int64    `json:"id"`
+	ROA                *float64 `json:"roa,omitempty"`
+	InterestCoverage   *float64 `json:"interestCoverage,omitempty"`
+	MainBusiness1      string   `json:"mainBusiness1"`
+	MainBusiness2      string   `json:"mainBusiness2"`
+	MainBusiness3      string   `json:"mainBusiness3"`
+	MainBusiness4      string   `json:"mainBusiness4"`
+	MainBusiness5      string   `json:"mainBusiness5"`
+	MainBusinessRatio1 *float64 `json:"mainBusinessRatio1,omitempty"`
+	MainBusinessRatio2 *float64 `json:"mainBusinessRatio2,omitempty"`
+	MainBusinessRatio3 *float64 `json:"mainBusinessRatio3,omitempty"`
+	MainBusinessRatio4 *float64 `json:"mainBusinessRatio4,omitempty"`
+	MainBusinessRatio5 *float64 `json:"mainBusinessRatio5,omitempty"`
+}
+
+type EnterpriseFinanceSubject struct {
+	ID          int64  `json:"id"`
+	SubjectName string `json:"subjectName"`
+	SubjectType string `json:"subjectType"`
+	OrderNo     int    `json:"orderNo"`
+}
+
+type EnterpriseShareholder struct {
+	ID            int64  `json:"id"`
+	ShareholderID string `json:"shareholderId"`
+	OrderNo       int    `json:"orderNo"`
+}
+
+type EnterpriseAggregate struct {
+	Enterprise        Enterprise                   `json:"enterprise"`
+	Tags              []EnterpriseTag              `json:"tags"`
+	PublicOpinions    []EnterprisePublicOpinion    `json:"publicOpinions"`
+	BondTenders       []EnterpriseBondTender       `json:"bondTenders"`
+	BondDetails       []EnterpriseBondDetail       `json:"bondDetails"`
+	BondRegistrations []EnterpriseBondRegistration `json:"bondRegistrations"`
+	FinanceSnapshot   *EnterpriseFinanceSnapshot   `json:"financeSnapshot,omitempty"`
+	FinanceSubjects   []EnterpriseFinanceSubject   `json:"financeSubjects"`
+	Shareholders      []EnterpriseShareholder      `json:"shareholders"`
+}
+
+type EnterpriseDTO struct {
+	ID                int64     `json:"id"`
+	ShortName         string    `json:"shortName"`
+	UnifiedCreditCode string    `json:"unifiedCreditCode"`
+	Region            string    `json:"region"`
+	AdmissionStatus   bool      `json:"admissionStatus"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+}
+
+type EnterpriseDetailDTO struct {
+	EnterpriseDTO
+	InHiddenDebtList                  bool                         `json:"inHiddenDebtList"`
+	In3899List                        bool                         `json:"in3899List"`
+	Meets335Indicator                 bool                         `json:"meets335Indicator"`
+	Meets224Indicator                 bool                         `json:"meets224Indicator"`
+	EnterpriseLevel                   string                       `json:"enterpriseLevel"`
+	NetAssets                         *float64                     `json:"netAssets,omitempty"`
+	RealEstateRevenueRatio            *float64                     `json:"realEstateRevenueRatio,omitempty"`
+	MainBusinessType                  string                       `json:"mainBusinessType"`
+	EstablishedAt                     *time.Time                   `json:"establishedAt,omitempty"`
+	LiabilityAssetRatio               *float64                     `json:"liabilityAssetRatio,omitempty"`
+	LiabilityAssetRatioIndustryMedian *float64                     `json:"liabilityAssetRatioIndustryMedian,omitempty"`
+	NonStandardFinancingRatio         *float64                     `json:"nonStandardFinancingRatio,omitempty"`
+	MainBusiness                      string                       `json:"mainBusiness"`
+	RelatedPartyPublicOpinion         string                       `json:"relatedPartyPublicOpinion"`
+	CalculatedAt                      *time.Time                   `json:"calculatedAt,omitempty"`
+	RegisteredCapital                 *float64                     `json:"registeredCapital,omitempty"`
+	PaidInCapital                     *float64                     `json:"paidInCapital,omitempty"`
+	Industry                          string                       `json:"industry"`
+	Address                           string                       `json:"address"`
+	BusinessScope                     string                       `json:"businessScope"`
+	LegalPerson                       string                       `json:"legalPerson"`
+	CompanyType                       string                       `json:"companyType"`
+	EnterpriseNature                  string                       `json:"enterpriseNature"`
+	ActualController                  string                       `json:"actualController"`
+	ActualControllerControlPath       string                       `json:"actualControllerControlPath"`
+	LegalPersonIDCard                 string                       `json:"legalPersonIdCard"`
+	Tags                              []EnterpriseTag              `json:"tags"`
+	PublicOpinions                    []EnterprisePublicOpinion    `json:"publicOpinions"`
+	BondTenders                       []EnterpriseBondTender       `json:"bondTenders"`
+	BondDetails                       []EnterpriseBondDetail       `json:"bondDetails"`
+	BondRegistrations                 []EnterpriseBondRegistration `json:"bondRegistrations"`
+	FinanceSnapshot                   *EnterpriseFinanceSnapshot   `json:"financeSnapshot,omitempty"`
+	FinanceSubjects                   []EnterpriseFinanceSubject   `json:"financeSubjects"`
+	Shareholders                      []EnterpriseShareholder      `json:"shareholders"`
+}
+
+type EnterpriseListQuery struct {
+	Page            int    `json:"page"`
+	PageSize        int    `json:"pageSize"`
+	Keyword         string `json:"keyword"`
+	Region          string `json:"region"`
+	AdmissionStatus *bool  `json:"admissionStatus,omitempty"`
+}
+
+type EnterprisePageResult struct {
+	Items    []EnterpriseDTO `json:"items"`
+	Page     int             `json:"page"`
+	PageSize int             `json:"pageSize"`
+	Total    int64           `json:"total"`
+}
+
+func (enterprise Enterprise) ToDTO() EnterpriseDTO {
+	return EnterpriseDTO{
+		ID:                enterprise.ID,
+		ShortName:         enterprise.ShortName,
+		UnifiedCreditCode: enterprise.UnifiedCreditCode,
+		Region:            enterprise.Region,
+		AdmissionStatus:   enterprise.AdmissionStatus,
+		CreatedAt:         enterprise.CreatedAt,
+		UpdatedAt:         enterprise.UpdatedAt,
+	}
+}
+
+func (aggregate EnterpriseAggregate) ToDetailDTO() EnterpriseDetailDTO {
+	enterprise := aggregate.Enterprise
+	return EnterpriseDetailDTO{
+		EnterpriseDTO:                     enterprise.ToDTO(),
+		InHiddenDebtList:                  enterprise.InHiddenDebtList,
+		In3899List:                        enterprise.In3899List,
+		Meets335Indicator:                 enterprise.Meets335Indicator,
+		Meets224Indicator:                 enterprise.Meets224Indicator,
+		EnterpriseLevel:                   enterprise.EnterpriseLevel,
+		NetAssets:                         enterprise.NetAssets,
+		RealEstateRevenueRatio:            enterprise.RealEstateRevenueRatio,
+		MainBusinessType:                  enterprise.MainBusinessType,
+		EstablishedAt:                     enterprise.EstablishedAt,
+		LiabilityAssetRatio:               enterprise.LiabilityAssetRatio,
+		LiabilityAssetRatioIndustryMedian: enterprise.LiabilityAssetRatioIndustryMedian,
+		NonStandardFinancingRatio:         enterprise.NonStandardFinancingRatio,
+		MainBusiness:                      enterprise.MainBusiness,
+		RelatedPartyPublicOpinion:         enterprise.RelatedPartyPublicOpinion,
+		CalculatedAt:                      enterprise.CalculatedAt,
+		RegisteredCapital:                 enterprise.RegisteredCapital,
+		PaidInCapital:                     enterprise.PaidInCapital,
+		Industry:                          enterprise.Industry,
+		Address:                           enterprise.Address,
+		BusinessScope:                     enterprise.BusinessScope,
+		LegalPerson:                       enterprise.LegalPerson,
+		CompanyType:                       enterprise.CompanyType,
+		EnterpriseNature:                  enterprise.EnterpriseNature,
+		ActualController:                  enterprise.ActualController,
+		ActualControllerControlPath:       enterprise.ActualControllerControlPath,
+		LegalPersonIDCard:                 enterprise.LegalPersonIDCard,
+		Tags:                              aggregate.Tags,
+		PublicOpinions:                    aggregate.PublicOpinions,
+		BondTenders:                       aggregate.BondTenders,
+		BondDetails:                       aggregate.BondDetails,
+		BondRegistrations:                 aggregate.BondRegistrations,
+		FinanceSnapshot:                   aggregate.FinanceSnapshot,
+		FinanceSubjects:                   aggregate.FinanceSubjects,
+		Shareholders:                      aggregate.Shareholders,
+	}
+}

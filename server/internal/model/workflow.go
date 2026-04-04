@@ -16,6 +16,11 @@ const (
 	WorkflowMenuKeyPostLoan = "postloan"
 )
 
+const (
+	DefaultWorkflowBreakerWindowMinutes = 1
+	DefaultWorkflowBreakerMaxRequests   = 5
+)
+
 func IsValidWorkflowStatus(status string) bool {
 	return status == WorkflowStatusActive || status == WorkflowStatusDisabled
 }
@@ -26,27 +31,31 @@ func IsValidWorkflowMenuKey(menuKey string) bool {
 
 type Workflow struct {
 	BaseEntity
-	WorkflowKey              string          `json:"workflowKey"`
-	Name                     string          `json:"name"`
-	Description              string          `json:"description"`
-	MenuKey                  string          `json:"menuKey"`
-	Status                   string          `json:"status"`
-	CurrentDraftVersionNo    int             `json:"currentDraftVersionNo"`
-	CurrentPublishedVersionNo int            `json:"currentPublishedVersionNo"`
-	DSL                      json.RawMessage `json:"dsl,omitempty"`
+	WorkflowKey               string          `json:"workflowKey"`
+	Name                      string          `json:"name"`
+	Description               string          `json:"description"`
+	MenuKey                   string          `json:"menuKey"`
+	Status                    string          `json:"status"`
+	CurrentDraftVersionNo     int             `json:"currentDraftVersionNo"`
+	CurrentPublishedVersionNo int             `json:"currentPublishedVersionNo"`
+	BreakerWindowMinutes      int             `json:"breakerWindowMinutes"`
+	BreakerMaxRequests        int             `json:"breakerMaxRequests"`
+	DSL                       json.RawMessage `json:"dsl,omitempty"`
 }
 
 type WorkflowDTO struct {
-	ID                       int64     `json:"id"`
-	WorkflowKey              string    `json:"workflowKey"`
-	Name                     string    `json:"name"`
-	Description              string    `json:"description"`
-	MenuKey                  string    `json:"menuKey"`
-	Status                   string    `json:"status"`
-	CurrentDraftVersionNo    int       `json:"currentDraftVersionNo"`
-	CurrentPublishedVersionNo int      `json:"currentPublishedVersionNo"`
-	CreatedAt                time.Time `json:"createdAt"`
-	UpdatedAt                time.Time `json:"updatedAt"`
+	ID                        int64     `json:"id"`
+	WorkflowKey               string    `json:"workflowKey"`
+	Name                      string    `json:"name"`
+	Description               string    `json:"description"`
+	MenuKey                   string    `json:"menuKey"`
+	Status                    string    `json:"status"`
+	CurrentDraftVersionNo     int       `json:"currentDraftVersionNo"`
+	CurrentPublishedVersionNo int       `json:"currentPublishedVersionNo"`
+	BreakerWindowMinutes      int       `json:"breakerWindowMinutes"`
+	BreakerMaxRequests        int       `json:"breakerMaxRequests"`
+	CreatedAt                 time.Time `json:"createdAt"`
+	UpdatedAt                 time.Time `json:"updatedAt"`
 }
 
 type WorkflowDetailDTO struct {
@@ -71,6 +80,8 @@ func (workflow Workflow) ToDTO() WorkflowDTO {
 		Status:                    workflow.Status,
 		CurrentDraftVersionNo:     workflow.CurrentDraftVersionNo,
 		CurrentPublishedVersionNo: workflow.CurrentPublishedVersionNo,
+		BreakerWindowMinutes:      workflow.BreakerWindowMinutes,
+		BreakerMaxRequests:        workflow.BreakerMaxRequests,
 		CreatedAt:                 workflow.CreatedAt,
 		UpdatedAt:                 workflow.UpdatedAt,
 	}

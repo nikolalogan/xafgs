@@ -22,7 +22,7 @@ func (repository *PostgresUserConfigRepository) FindByUserID(userID int64) (mode
 
 	var entity model.UserConfig
 	err := repository.db.QueryRowContext(ctx, `
-SELECT user_id, warning_account, warning_password, ai_base_url, ai_api_key, created_at, updated_at, created_by, updated_by
+SELECT user_id, warning_account, warning_password, ai_base_url, ai_api_key, search_ai_base_url, search_ai_api_key, created_at, updated_at, created_by, updated_by
 FROM user_config
 WHERE user_id = $1
 `, userID).Scan(
@@ -31,6 +31,8 @@ WHERE user_id = $1
 		&entity.WarningPassword,
 		&entity.AIBaseURL,
 		&entity.AIApiKey,
+		&entity.SearchServiceBaseURL,
+		&entity.SearchServiceAPIKey,
 		&entity.CreatedAt,
 		&entity.UpdatedAt,
 		&entity.CreatedBy,
@@ -53,16 +55,18 @@ func (repository *PostgresUserConfigRepository) Upsert(config model.UserConfig) 
 	}
 
 	_, err := repository.db.ExecContext(ctx, `
-INSERT INTO user_config (user_id, warning_account, warning_password, ai_base_url, ai_api_key, created_at, updated_at, created_by, updated_by)
-VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $7)
+INSERT INTO user_config (user_id, warning_account, warning_password, ai_base_url, ai_api_key, search_ai_base_url, search_ai_api_key, created_at, updated_at, created_by, updated_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $9)
 ON CONFLICT (user_id) DO UPDATE SET
   warning_account = EXCLUDED.warning_account,
   warning_password = EXCLUDED.warning_password,
   ai_base_url = EXCLUDED.ai_base_url,
   ai_api_key = EXCLUDED.ai_api_key,
+  search_ai_base_url = EXCLUDED.search_ai_base_url,
+  search_ai_api_key = EXCLUDED.search_ai_api_key,
   updated_at = EXCLUDED.updated_at,
   updated_by = EXCLUDED.updated_by
-`, config.UserID, config.WarningAccount, config.WarningPassword, config.AIBaseURL, config.AIApiKey, now, config.UpdatedBy)
+`, config.UserID, config.WarningAccount, config.WarningPassword, config.AIBaseURL, config.AIApiKey, config.SearchServiceBaseURL, config.SearchServiceAPIKey, now, config.UpdatedBy)
 	if err != nil {
 		return model.UserConfigDTO{}, false
 	}
@@ -70,4 +74,3 @@ ON CONFLICT (user_id) DO UPDATE SET
 	dto, ok := repository.FindByUserID(config.UserID)
 	return dto, ok
 }
-

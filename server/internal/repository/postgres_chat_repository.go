@@ -26,10 +26,10 @@ func (repository *PostgresChatRepository) CreateConversation(conversation model.
 
 	var id int64
 	err := repository.db.QueryRowContext(ctx, `
-INSERT INTO chat_conversation (user_id, title, model, system_prompt, created_at, updated_at, created_by, updated_by)
-VALUES ($1, $2, $3, $4, $5, $5, $6, $6)
+INSERT INTO chat_conversation (user_id, title, model, system_prompt, enable_web_search, created_at, updated_at, created_by, updated_by)
+VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $7)
 RETURNING id
-`, conversation.UserID, conversation.Title, conversation.Model, conversation.SystemPrompt, now, conversation.CreatedBy).Scan(&id)
+`, conversation.UserID, conversation.Title, conversation.Model, conversation.SystemPrompt, conversation.EnableWebSearch, now, conversation.CreatedBy).Scan(&id)
 	if err != nil {
 		return model.ChatConversationDTO{}
 	}
@@ -47,7 +47,7 @@ func (repository *PostgresChatRepository) FindConversationByIDForUser(conversati
 
 	var entity model.ChatConversation
 	err := repository.db.QueryRowContext(ctx, `
-SELECT id, user_id, title, model, system_prompt, created_at, updated_at, created_by, updated_by
+SELECT id, user_id, title, model, system_prompt, enable_web_search, created_at, updated_at, created_by, updated_by
 FROM chat_conversation
 WHERE id = $1 AND user_id = $2
 `, conversationID, userID).Scan(
@@ -56,6 +56,7 @@ WHERE id = $1 AND user_id = $2
 		&entity.Title,
 		&entity.Model,
 		&entity.SystemPrompt,
+		&entity.EnableWebSearch,
 		&entity.CreatedAt,
 		&entity.UpdatedAt,
 		&entity.CreatedBy,
@@ -72,7 +73,7 @@ func (repository *PostgresChatRepository) ListConversationsByUser(userID int64) 
 	defer cancel()
 
 	rows, err := repository.db.QueryContext(ctx, `
-SELECT id, user_id, title, model, system_prompt, created_at, updated_at, created_by, updated_by
+SELECT id, user_id, title, model, system_prompt, enable_web_search, created_at, updated_at, created_by, updated_by
 FROM chat_conversation
 WHERE user_id = $1
 ORDER BY updated_at DESC, id DESC
@@ -91,6 +92,7 @@ ORDER BY updated_at DESC, id DESC
 			&entity.Title,
 			&entity.Model,
 			&entity.SystemPrompt,
+			&entity.EnableWebSearch,
 			&entity.CreatedAt,
 			&entity.UpdatedAt,
 			&entity.CreatedBy,
@@ -200,4 +202,3 @@ LIMIT $2
 	}
 	return reversed
 }
-

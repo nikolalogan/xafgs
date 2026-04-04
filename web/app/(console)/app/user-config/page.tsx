@@ -16,6 +16,8 @@ type UserConfigDTO = {
   warningPassword: string
   aiBaseUrl: string
   aiApiKey: string
+  searchServiceBaseUrl: string
+  searchServiceApiKey: string
   updatedAt?: string
 }
 
@@ -33,6 +35,8 @@ const fieldIds = {
   warningPassword: 'warningPassword',
   aiBaseUrl: 'aiBaseUrl',
   aiApiKey: 'aiApiKey',
+  searchServiceBaseUrl: 'searchServiceBaseUrl',
+  searchServiceApiKey: 'searchServiceApiKey',
 } as const
 
 type FieldId = typeof fieldIds[keyof typeof fieldIds]
@@ -50,6 +54,10 @@ const normalizeHashToFieldId = (rawHash: string): FieldId | null => {
     return fieldIds.aiBaseUrl
   if (normalized === 'aiapikey' || normalized === 'apikey')
     return fieldIds.aiApiKey
+  if (normalized === 'searchservicebaseurl' || normalized === 'searchbaseurl' || normalized === 'searchproviderurl' || normalized === 'searchaibaseurl' || normalized === 'searchaiserviceurl')
+    return fieldIds.searchServiceBaseUrl
+  if (normalized === 'searchserviceapikey' || normalized === 'searchapikey' || normalized === 'searchaiapikey')
+    return fieldIds.searchServiceApiKey
   return null
 }
 
@@ -96,6 +104,8 @@ export default function UserConfigPage() {
         warningPassword: data?.warningPassword || '',
         aiBaseUrl: data?.aiBaseUrl || '',
         aiApiKey: data?.aiApiKey || '',
+        searchServiceBaseUrl: data?.searchServiceBaseUrl || '',
+        searchServiceApiKey: data?.searchServiceApiKey || '',
       })
     }
     catch (error) {
@@ -160,6 +170,8 @@ export default function UserConfigPage() {
           warningPassword: values.warningPassword || '',
           aiBaseUrl: values.aiBaseUrl || '',
           aiApiKey: values.aiApiKey || '',
+          searchServiceBaseUrl: values.searchServiceBaseUrl || '',
+          searchServiceApiKey: values.searchServiceApiKey || '',
         }),
       })
       msgApi.success('保存成功')
@@ -210,6 +222,8 @@ export default function UserConfigPage() {
             warningPassword: '',
             aiBaseUrl: '',
             aiApiKey: '',
+            searchServiceBaseUrl: '',
+            searchServiceApiKey: '',
           }}
         >
           <Form.Item label="预警通账号" name="warningAccount">
@@ -241,6 +255,22 @@ export default function UserConfigPage() {
               id={fieldIds.aiApiKey}
               className={highlight === fieldIds.aiApiKey ? 'blinkTwice' : ''}
               placeholder="请输入 APIKey"
+              autoComplete="new-password"
+            />
+          </Form.Item>
+          <Form.Item label="搜索服务地址（可选）" name="searchServiceBaseUrl">
+            <Input
+              id={fieldIds.searchServiceBaseUrl}
+              className={highlight === fieldIds.searchServiceBaseUrl ? 'blinkTwice' : ''}
+              placeholder="默认留空使用系统服务地址"
+              autoComplete="off"
+            />
+          </Form.Item>
+          <Form.Item label="搜索服务 APIKey" name="searchServiceApiKey">
+            <Input.Password
+              id={fieldIds.searchServiceApiKey}
+              className={highlight === fieldIds.searchServiceApiKey ? 'blinkTwice' : ''}
+              placeholder="请输入搜索服务 APIKey（例如 Tavily）"
               autoComplete="new-password"
             />
           </Form.Item>

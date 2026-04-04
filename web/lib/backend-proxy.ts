@@ -10,7 +10,9 @@ const resolveBackendBaseURL = () => {
 type ProxyOptions = {
   method: string
   path: string
+  body?: BodyInit | null
   bodyText?: string
+  contentType?: string
   request: Request
 }
 
@@ -18,7 +20,7 @@ export const proxyToBackend = async (options: ProxyOptions) => {
   const baseURL = resolveBackendBaseURL()
   const url = `${baseURL}${options.path.startsWith('/') ? '' : '/'}${options.path}`
 
-  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  const headers: Record<string, string> = {}
   const authorization = options.request.headers.get('authorization')
   if (authorization)
     headers.authorization = authorization
@@ -28,12 +30,19 @@ export const proxyToBackend = async (options: ProxyOptions) => {
   const requestID = options.request.headers.get('x-request-id')
   if (requestID)
     headers['x-request-id'] = requestID
+  const inboundContentType = options.request.headers.get('content-type')
+  const contentType = options.contentType || inboundContentType
+  if (contentType)
+    headers['content-type'] = contentType
+  else if (typeof options.bodyText === 'string')
+    headers['content-type'] = 'application/json'
 
   try {
+    const requestBody = options.body !== undefined ? options.body : options.bodyText
     const response = await fetch(url, {
       method: options.method,
       headers,
-      body: options.bodyText,
+      body: requestBody,
     })
 
     const raw = await response.text()
@@ -49,4 +58,3 @@ export const proxyToBackend = async (options: ProxyOptions) => {
     return NextResponse.json({ message }, { status: 502 })
   }
 }
-

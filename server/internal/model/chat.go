@@ -10,31 +10,34 @@ const (
 
 type ChatConversation struct {
 	BaseEntity
-	UserID       int64  `json:"userId"`
-	Title        string `json:"title"`
-	Model        string `json:"model"`
-	SystemPrompt string `json:"systemPrompt"`
+	UserID          int64  `json:"userId"`
+	Title           string `json:"title"`
+	Model           string `json:"model"`
+	SystemPrompt    string `json:"systemPrompt"`
+	EnableWebSearch bool   `json:"enableWebSearch"`
 }
 
 type ChatConversationDTO struct {
-	ID           int64     `json:"id"`
-	UserID       int64     `json:"userId"`
-	Title        string    `json:"title"`
-	Model        string    `json:"model"`
-	SystemPrompt string    `json:"systemPrompt"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID              int64     `json:"id"`
+	UserID          int64     `json:"userId"`
+	Title           string    `json:"title"`
+	Model           string    `json:"model"`
+	SystemPrompt    string    `json:"systemPrompt"`
+	EnableWebSearch bool      `json:"enableWebSearch"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 func (conversation ChatConversation) ToDTO() ChatConversationDTO {
 	return ChatConversationDTO{
-		ID:           conversation.ID,
-		UserID:       conversation.UserID,
-		Title:        conversation.Title,
-		Model:        conversation.Model,
-		SystemPrompt: conversation.SystemPrompt,
-		CreatedAt:    conversation.CreatedAt,
-		UpdatedAt:    conversation.UpdatedAt,
+		ID:              conversation.ID,
+		UserID:          conversation.UserID,
+		Title:           conversation.Title,
+		Model:           conversation.Model,
+		SystemPrompt:    conversation.SystemPrompt,
+		EnableWebSearch: conversation.EnableWebSearch,
+		CreatedAt:       conversation.CreatedAt,
+		UpdatedAt:       conversation.UpdatedAt,
 	}
 }
 
@@ -54,6 +57,11 @@ type ChatMessageDTO struct {
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
+type ChatAttachmentRef struct {
+	FileID    int64 `json:"fileId"`
+	VersionNo int   `json:"versionNo"`
+}
+
 func (message ChatMessage) ToDTO() ChatMessageDTO {
 	return ChatMessageDTO{
 		ID:             message.ID,
@@ -69,4 +77,3 @@ type ChatSendResultDTO struct {
 	UserMessage      ChatMessageDTO      `json:"userMessage"`
 	AssistantMessage ChatMessageDTO      `json:"assistantMessage"`
 }
-

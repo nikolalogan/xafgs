@@ -4,10 +4,24 @@ CREATE TABLE workflow (
   name VARCHAR(256) NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+  breaker_window_minutes INT NOT NULL DEFAULT 1 CHECK (breaker_window_minutes > 0),
+  breaker_max_requests INT NOT NULL DEFAULT 5 CHECK (breaker_max_requests > 0),
   current_draft_version_id BIGINT NULL,
   current_published_version_id BIGINT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE system_config (
+  id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  models_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  default_model VARCHAR(128) NOT NULL DEFAULT 'gpt-4o-mini',
+  code_default_model VARCHAR(128) NOT NULL DEFAULT 'gpt-4o-mini',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0,
+  CHECK (jsonb_typeof(models_json) = 'array')
 );
 
 CREATE TABLE workflow_version (

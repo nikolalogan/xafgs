@@ -208,14 +208,28 @@ const buildIterationContainerLayout = (children: IterationNodeConfig['children']
 
 type WorkflowCanvasInnerProps = {
   initialDSL: DifyWorkflowDSL
+  workflowId?: number
   onDSLChange?: (dsl: DifyWorkflowDSL) => void
   apiRef?: React.Ref<WorkflowCanvasHandle>
 }
 
 type WorkflowRunSnapshot = {
+  workflowId?: number
   nodes: DifyNode[]
   edges: DifyEdge[]
   workflowParameters: WorkflowParameter[]
+}
+
+type SystemModelOption = {
+  name: string
+  label: string
+  enabled: boolean
+}
+
+type SystemConfigDTO = {
+  models: SystemModelOption[]
+  defaultModel: string
+  codeDefaultModel: string
 }
 
 export type WorkflowCanvasHandle = {
@@ -223,10 +237,22 @@ export type WorkflowCanvasHandle = {
   getDSL: () => DifyWorkflowDSL
 }
 
-function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvasInnerProps) {
+const getToken = () => {
+  if (typeof window === 'undefined')
+    return ''
+  return window.localStorage.getItem('sxfg_access_token')
+    || window.localStorage.getItem('access_token')
+    || window.localStorage.getItem('token')
+    || ''
+}
+
+function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: WorkflowCanvasInnerProps) {
   const [runModalOpen, setRunModalOpen] = useState(false)
-  const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ nodes: [], edges: [], workflowParameters: [] })
+  const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ workflowId, nodes: [], edges: [], workflowParameters: [] })
   const [nodesForPanel, setNodesForPanel] = useState<DifyNode[]>([])
+  const [llmModelOptions, setLLMModelOptions] = useState<Array<{ name: string; label: string }>>([{ name: 'gpt-4o-mini', label: 'GPT-4o mini' }])
+  const [defaultLLMModel, setDefaultLLMModel] = useState('gpt-4o-mini')
+  const [defaultCodeModel, setDefaultCodeModel] = useState('gpt-4o-mini')
   const latestNodesRef = useRef<DifyNode[]>([])
   const latestEdgesRef = useRef<DifyEdge[]>([])
   const latestWorkflowParametersRef = useRef<WorkflowParameter[]>([])
@@ -292,6 +318,50 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
   }, [edges, nodes, workflowParameters])
 
   useEffect(() => {
+    const run = async () => {
+      const token = getToken()
+      const headers: Record<string, string> = { 'content-type': 'application/json' }
+      if (token)
+        headers.Authorization = `Bearer ${token}`
+      try {
+        const response = await fetch('/api/system-config', {
+          method: 'GET',
+          headers,
+          credentials: 'include',
+        })
+        if (!response.ok)
+          return
+        const payload = await response.json() as { data?: SystemConfigDTO }
+        const rawModels = Array.isArray(payload?.data?.models) ? payload.data.models : []
+        const enabled = rawModels
+          .map(item => ({
+            name: String(item?.name || '').trim(),
+            label: String(item?.label || '').trim(),
+            enabled: Boolean(item?.enabled),
+          }))
+          .filter(item => item.name && item.enabled)
+        if (enabled.length === 0)
+          return
+        const options = enabled.map(item => ({ name: item.name, label: item.label || item.name }))
+        const optionNames = new Set(options.map(item => item.name))
+        const fallbackDefault = options[0].name
+        const nextDefault = optionNames.has(String(payload?.data?.defaultModel || '').trim())
+          ? String(payload?.data?.defaultModel || '').trim()
+          : fallbackDefault
+        const nextCodeDefault = optionNames.has(String(payload?.data?.codeDefaultModel || '').trim())
+          ? String(payload?.data?.codeDefaultModel || '').trim()
+          : nextDefault
+        setLLMModelOptions(options)
+        setDefaultLLMModel(nextDefault)
+        setDefaultCodeModel(nextCodeDefault)
+      }
+      catch {
+      }
+    }
+    run()
+  }, [])
+
+  useEffect(() => {
     setNodesForPanel((prev) => {
       if (prev.length !== nodes.length)
         return nodes
@@ -314,6 +384,7 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
   useEffect(() => {
     const openRunModal = () => {
       setRunSnapshot({
+        workflowId,
         nodes: JSON.parse(JSON.stringify(latestNodesRef.current)) as DifyNode[],
         edges: JSON.parse(JSON.stringify(latestEdgesRef.current)) as DifyEdge[],
         workflowParameters: JSON.parse(JSON.stringify(latestWorkflowParametersRef.current)) as WorkflowParameter[],
@@ -325,6 +396,7 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
     const params = new URLSearchParams(window.location.search)
     if (params.get('run') === '1') {
       setRunSnapshot({
+        workflowId,
         nodes: JSON.parse(JSON.stringify(latestNodesRef.current)) as DifyNode[],
         edges: JSON.parse(JSON.stringify(latestEdgesRef.current)) as DifyEdge[],
         workflowParameters: JSON.parse(JSON.stringify(latestWorkflowParametersRef.current)) as WorkflowParameter[],
@@ -354,6 +426,7 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
     activeNode,
     idRef,
     nodeTypeLabel,
+    defaultLLMModel,
     setNodes,
     record,
   })
@@ -417,6 +490,78 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
     deleteSelection: () => deleteSelection(),
   })
   const issues = useMemo(() => validateWorkflow(nodesForPanel, edges, workflowParameters), [edges, nodesForPanel, workflowParameters])
+
+  useEffect(() => {
+    const allowed = new Set(llmModelOptions.map(item => item.name))
+    const fallbackModel = defaultLLMModel || llmModelOptions[0]?.name || 'gpt-4o-mini'
+    if (allowed.size === 0 || !fallbackModel)
+      return
+
+    let changed = false
+    const nextNodes = nodes.map((node) => {
+      if (node.data.type === BlockEnum.LLM) {
+        const config = ensureNodeConfig(BlockEnum.LLM, node.data.config)
+        const currentModel = String(config.model || '').trim()
+        const nextModel = allowed.has(currentModel) ? currentModel : fallbackModel
+        if (nextModel === config.model)
+          return node
+        changed = true
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            config: {
+              ...config,
+              model: nextModel,
+            },
+          },
+        }
+      }
+      if (node.data.type === BlockEnum.Iteration) {
+        const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
+        let childChanged = false
+        const nextChildren = config.children.nodes.map((child) => {
+          if (child.data.type !== BlockEnum.LLM)
+            return child
+          const childConfig = ensureNodeConfig(BlockEnum.LLM, child.data.config)
+          const currentModel = String(childConfig.model || '').trim()
+          const nextModel = allowed.has(currentModel) ? currentModel : fallbackModel
+          if (nextModel === childConfig.model)
+            return child
+          childChanged = true
+          return {
+            ...child,
+            data: {
+              ...child.data,
+              config: {
+                ...childConfig,
+                model: nextModel,
+              },
+            },
+          }
+        })
+        if (!childChanged)
+          return node
+        changed = true
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            config: {
+              ...config,
+              children: {
+                ...config.children,
+                nodes: nextChildren,
+              },
+            },
+          },
+        }
+      }
+      return node
+    })
+    if (changed)
+      setNodes(nextNodes)
+  }, [defaultLLMModel, llmModelOptions, nodes, setNodes])
 
   useEffect(() => {
     if (!onDSLChange)
@@ -897,6 +1042,7 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
         onLayout={handleAutoLayout}
         onRun={() => {
           setRunSnapshot({
+            workflowId,
             nodes: JSON.parse(JSON.stringify(nodes)) as DifyNode[],
             edges: JSON.parse(JSON.stringify(edges)) as DifyEdge[],
             workflowParameters: JSON.parse(JSON.stringify(workflowParameters)) as typeof workflowParameters,
@@ -916,6 +1062,9 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
           workflowParameters={workflowParameters}
           globalVariables={globalVariables}
           workflowVariableScopes={workflowVariableScopes}
+          llmModelOptions={llmModelOptions}
+          defaultLLMModel={defaultLLMModel}
+          defaultCodeModel={defaultCodeModel}
           activeNode={activeNode}
           onChange={setActiveNode}
           onChangeScopes={setWorkflowVariableScopes}
@@ -1025,6 +1174,7 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
       />
       <WorkflowRunModal
         open={runModalOpen}
+        workflowId={runSnapshot.workflowId}
         nodes={runSnapshot.nodes}
         edges={runSnapshot.edges}
         workflowParameters={runSnapshot.workflowParameters}
@@ -1036,10 +1186,11 @@ function WorkflowCanvasInner({ initialDSL, onDSLChange, apiRef }: WorkflowCanvas
 
 type WorkflowCanvasProps = {
   initialDSL?: DifyWorkflowDSL
+  workflowId?: number
   onDSLChange?: (dsl: DifyWorkflowDSL) => void
 }
 
-const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasProps>(({ initialDSL, onDSLChange }, ref) => {
+const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasProps>(({ initialDSL, workflowId, onDSLChange }, ref) => {
   const safeInitialDSL = useMemo(() => {
     try {
       return parseDifyWorkflowDSL(initialDSL ?? demoDSL)
@@ -1051,7 +1202,7 @@ const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasProps>(({ 
 
   return (
     <ReactFlowProvider>
-      <WorkflowCanvasInner initialDSL={safeInitialDSL} onDSLChange={onDSLChange} apiRef={ref} />
+      <WorkflowCanvasInner initialDSL={safeInitialDSL} workflowId={workflowId} onDSLChange={onDSLChange} apiRef={ref} />
     </ReactFlowProvider>
   )
 })

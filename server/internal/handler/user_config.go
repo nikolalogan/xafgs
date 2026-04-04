@@ -13,10 +13,14 @@ import (
 )
 
 type updateUserConfigRequest struct {
-	WarningAccount  string `json:"warningAccount"`
-	WarningPassword string `json:"warningPassword"`
-	AIBaseURL       string `json:"aiBaseUrl"`
-	AIApiKey        string `json:"aiApiKey"`
+	WarningAccount       string `json:"warningAccount"`
+	WarningPassword      string `json:"warningPassword"`
+	AIBaseURL            string `json:"aiBaseUrl"`
+	AIApiKey             string `json:"aiApiKey"`
+	SearchServiceBaseURL string `json:"searchServiceBaseUrl"`
+	SearchServiceAPIKey  string `json:"searchServiceApiKey"`
+	SearchAIBaseURL      string `json:"searchAiBaseUrl"`
+	SearchAIApiKey       string `json:"searchAiApiKey"`
 }
 
 type UserConfigHandler struct {
@@ -66,15 +70,25 @@ func (handler *UserConfigHandler) UpdateCurrentUserConfig(c *fiber.Ctx, request 
 	}
 	operatorID := userID
 
+	searchServiceBaseURL := strings.TrimSpace(request.SearchServiceBaseURL)
+	if searchServiceBaseURL == "" {
+		searchServiceBaseURL = strings.TrimSpace(request.SearchAIBaseURL)
+	}
+	searchServiceAPIKey := strings.TrimSpace(request.SearchServiceAPIKey)
+	if searchServiceAPIKey == "" {
+		searchServiceAPIKey = strings.TrimSpace(request.SearchAIApiKey)
+	}
+
 	updated, apiError := handler.service.UpdateByUserID(c.UserContext(), userID, model.UpdateUserConfigRequest{
-		WarningAccount:  strings.TrimSpace(request.WarningAccount),
-		WarningPassword: strings.TrimSpace(request.WarningPassword),
-		AIBaseURL:       strings.TrimSpace(request.AIBaseURL),
-		AIApiKey:        strings.TrimSpace(request.AIApiKey),
+		WarningAccount:       strings.TrimSpace(request.WarningAccount),
+		WarningPassword:      strings.TrimSpace(request.WarningPassword),
+		AIBaseURL:            strings.TrimSpace(request.AIBaseURL),
+		AIApiKey:             strings.TrimSpace(request.AIApiKey),
+		SearchServiceBaseURL: searchServiceBaseURL,
+		SearchServiceAPIKey:  searchServiceAPIKey,
 	}, operatorID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, updated, "更新用户配置成功")
 }
-

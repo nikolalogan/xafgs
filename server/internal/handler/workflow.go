@@ -17,21 +17,25 @@ type workflowIDPathRequest struct {
 }
 
 type createWorkflowRequest struct {
-	WorkflowKey string          `json:"workflowKey" validate:"required"`
-	Name        string          `json:"name" validate:"required"`
-	Description string          `json:"description"`
-	MenuKey     string          `json:"menuKey" validate:"required,oneof=reserve review postloan"`
-	Status      string          `json:"status" validate:"required,oneof=active disabled"`
-	DSL         json.RawMessage `json:"dsl" validate:"required"`
+	WorkflowKey          string          `json:"workflowKey" validate:"required"`
+	Name                 string          `json:"name" validate:"required"`
+	Description          string          `json:"description"`
+	MenuKey              string          `json:"menuKey" validate:"required,oneof=reserve review postloan"`
+	Status               string          `json:"status" validate:"required,oneof=active disabled"`
+	BreakerWindowMinutes int             `json:"breakerWindowMinutes" validate:"required,min=1"`
+	BreakerMaxRequests   int             `json:"breakerMaxRequests" validate:"required,min=1"`
+	DSL                  json.RawMessage `json:"dsl" validate:"required"`
 }
 
 type updateWorkflowRequest struct {
-	WorkflowID  int64           `path:"workflowId" validate:"required,min=1"`
-	Name        string          `json:"name" validate:"required"`
-	Description string          `json:"description"`
-	MenuKey     string          `json:"menuKey" validate:"required,oneof=reserve review postloan"`
-	Status      string          `json:"status" validate:"required,oneof=active disabled"`
-	DSL         json.RawMessage `json:"dsl" validate:"required"`
+	WorkflowID           int64           `path:"workflowId" validate:"required,min=1"`
+	Name                 string          `json:"name" validate:"required"`
+	Description          string          `json:"description"`
+	MenuKey              string          `json:"menuKey" validate:"required,oneof=reserve review postloan"`
+	Status               string          `json:"status" validate:"required,oneof=active disabled"`
+	BreakerWindowMinutes int             `json:"breakerWindowMinutes" validate:"required,min=1"`
+	BreakerMaxRequests   int             `json:"breakerMaxRequests" validate:"required,min=1"`
+	DSL                  json.RawMessage `json:"dsl" validate:"required"`
 }
 
 type rollbackWorkflowRequest struct {
@@ -140,12 +144,14 @@ func (handler *WorkflowHandler) CreateWorkflow(c *fiber.Ctx, request *createWork
 	request.Status = strings.TrimSpace(request.Status)
 
 	workflow, apiError := handler.workflowService.Create(c.UserContext(), model.CreateWorkflowRequest{
-		WorkflowKey: request.WorkflowKey,
-		Name:        request.Name,
-		Description: request.Description,
-		MenuKey:     request.MenuKey,
-		Status:      request.Status,
-		DSL:         request.DSL,
+		WorkflowKey:          request.WorkflowKey,
+		Name:                 request.Name,
+		Description:          request.Description,
+		MenuKey:              request.MenuKey,
+		Status:               request.Status,
+		BreakerWindowMinutes: request.BreakerWindowMinutes,
+		BreakerMaxRequests:   request.BreakerMaxRequests,
+		DSL:                  request.DSL,
 	})
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
@@ -160,11 +166,13 @@ func (handler *WorkflowHandler) UpdateWorkflow(c *fiber.Ctx, request *updateWork
 	request.Status = strings.TrimSpace(request.Status)
 
 	workflow, apiError := handler.workflowService.Update(c.UserContext(), request.WorkflowID, model.UpdateWorkflowRequest{
-		Name:        request.Name,
-		Description: request.Description,
-		MenuKey:     request.MenuKey,
-		Status:      request.Status,
-		DSL:         request.DSL,
+		Name:                 request.Name,
+		Description:          request.Description,
+		MenuKey:              request.MenuKey,
+		Status:               request.Status,
+		BreakerWindowMinutes: request.BreakerWindowMinutes,
+		BreakerMaxRequests:   request.BreakerMaxRequests,
+		DSL:                  request.DSL,
 	})
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)

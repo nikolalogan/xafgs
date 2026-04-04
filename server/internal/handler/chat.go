@@ -7,6 +7,7 @@ import (
 
 	"sxfgssever/server/internal/apimeta"
 	"sxfgssever/server/internal/middleware"
+	"sxfgssever/server/internal/model"
 	"sxfgssever/server/internal/response"
 	"sxfgssever/server/internal/service"
 )
@@ -27,8 +28,10 @@ type listChatMessagesRequest struct {
 }
 
 type sendChatMessageRequest struct {
-	ID                int64  `path:"id" validate:"required,min=1"`
-	Content           string `json:"content" validate:"required,min=1"`
+	ID                 int64                     `path:"id" validate:"required,min=1"`
+	Content            string                    `json:"content"`
+	EnableWebSearch    bool                      `json:"enableWebSearch"`
+	Attachments        []model.ChatAttachmentRef `json:"attachments" validate:"max=5,dive"`
 	MaxContextMessages *int64 `json:"maxContextMessages" validate:"min=1,max=100"`
 }
 
@@ -136,7 +139,15 @@ func (handler *ChatHandler) SendMessage(c *fiber.Ctx, request *sendChatMessageRe
 	if request.MaxContextMessages != nil {
 		maxContext = int(*request.MaxContextMessages)
 	}
-	data, apiError := handler.service.SendMessage(c.UserContext(), userID, request.ID, strings.TrimSpace(request.Content), maxContext)
+	data, apiError := handler.service.SendMessage(
+		c.UserContext(),
+		userID,
+		request.ID,
+		strings.TrimSpace(request.Content),
+		request.EnableWebSearch,
+		request.Attachments,
+		maxContext,
+	)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
@@ -154,4 +165,3 @@ func (handler *ChatHandler) DeleteConversation(c *fiber.Ctx, request *chatConver
 	}
 	return response.Success(c, fiber.StatusOK, okResult, "删除成功")
 }
-

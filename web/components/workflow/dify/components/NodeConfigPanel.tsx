@@ -31,6 +31,9 @@ type NodeConfigPanelProps = {
   workflowParameters: WorkflowParameter[]
   globalVariables: WorkflowGlobalVariable[]
   workflowVariableScopes: Record<string, WorkflowVariableScope>
+  llmModelOptions: Array<{ name: string; label: string }>
+  defaultLLMModel: string
+  defaultCodeModel: string
   activeNode: DifyNode | null
   onChange: (node: DifyNode) => void
   onChangeScopes: (scopes: Record<string, WorkflowVariableScope>) => void
@@ -378,6 +381,9 @@ export default function NodeConfigPanel({
   workflowParameters,
   globalVariables,
   workflowVariableScopes,
+  llmModelOptions,
+  defaultLLMModel,
+  defaultCodeModel,
   activeNode,
   onChange,
   onChangeScopes,
@@ -508,6 +514,11 @@ export default function NodeConfigPanel({
       [fieldKey]: scope,
     })
   }
+  const llmModelSelectOptions = useMemo(() => {
+    if (llmModelOptions.length > 0)
+      return llmModelOptions
+    return [{ name: defaultLLMModel, label: defaultLLMModel }]
+  }, [defaultLLMModel, llmModelOptions])
 
   useEffect(() => {
     if (!activeNode)
@@ -524,6 +535,28 @@ export default function NodeConfigPanel({
       },
     })
   }, [activeNode, onChange])
+
+  useEffect(() => {
+    if (!activeNode || activeNode.data.type !== BlockEnum.LLM)
+      return
+    const config = ensureNodeConfig(BlockEnum.LLM, activeNode.data.config) as LLMNodeConfig
+    const optionNames = new Set(llmModelSelectOptions.map(item => item.name))
+    const fallbackModel = llmModelSelectOptions[0]?.name || defaultLLMModel
+    const currentModel = String(config.model || '').trim()
+    const nextModel = optionNames.has(currentModel) ? currentModel : fallbackModel
+    if (nextModel === config.model)
+      return
+    onChange({
+      ...activeNode,
+      data: {
+        ...activeNode.data,
+        config: {
+          ...config,
+          model: nextModel,
+        },
+      },
+    })
+  }, [activeNode, defaultLLMModel, llmModelSelectOptions, onChange])
 
   useEffect(() => {
     if (!activeNode || activeNode.data.type !== BlockEnum.ApiRequest)
@@ -579,6 +612,8 @@ export default function NodeConfigPanel({
         variableOptions={variableOptions}
         getScope={getScope}
         onScopeChange={setScope}
+        modelOptions={llmModelSelectOptions}
+        defaultModel={defaultCodeModel}
       />
     )
   }
@@ -605,6 +640,8 @@ export default function NodeConfigPanel({
         variableOptions={variableOptions}
         getScope={getScope}
         onScopeChange={setScope}
+        modelOptions={llmModelSelectOptions}
+        defaultModel={defaultCodeModel}
       />
     )
   }
@@ -616,7 +653,11 @@ export default function NodeConfigPanel({
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">LLM 配置</div>
         <label className={labelClass}>模型</label>
-        <input className={inputClass} value={config.model} onChange={event => updateConfig({ ...config, model: event.target.value })} />
+        <select className={inputClass} value={config.model} onChange={event => updateConfig({ ...config, model: event.target.value })}>
+          {llmModelSelectOptions.map(item => (
+            <option key={item.name} value={item.name}>{item.label || item.name}</option>
+          ))}
+        </select>
         <label className={labelClass}>温度</label>
         <input className={inputClass} type="number" step="0.1" min="0" max="2" value={config.temperature} onChange={event => updateConfig({ ...config, temperature: Number(event.target.value || 0) })} />
         <label className={labelClass}>最大 Token</label>
@@ -764,6 +805,14 @@ export default function NodeConfigPanel({
           options={variableOptions}
           scope={getScope(codeScopeKey, 'all')}
           onScopeChange={scope => setScope(codeScopeKey, scope)}
+          aiGenerateConfig={{
+            nodeType: 'code',
+            language: config.language,
+            nodeId: activeNode.id,
+            fieldName: 'code',
+            modelOptions: llmModelSelectOptions,
+            defaultModel: defaultCodeModel,
+          }}
         />
         <div className="space-y-2 rounded border border-gray-200 p-2">
           <div className="text-xs font-semibold text-gray-700">输出写入参数</div>
@@ -877,7 +926,14 @@ export default function NodeConfigPanel({
           title: `${type}-${nextIndex}`,
           desc: '',
           type,
-          config: createDefaultNodeConfig(type),
+          config: (() => {
+            const nextConfig = createDefaultNodeConfig(type)
+            if (type === BlockEnum.LLM) {
+              const llmConfig = nextConfig as LLMNodeConfig
+              llmConfig.model = defaultLLMModel
+            }
+            return nextConfig
+          })(),
         },
       }
       updateConfig({

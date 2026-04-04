@@ -27,10 +27,25 @@ CREATE TABLE IF NOT EXISTS user_config (
   warning_password TEXT NOT NULL DEFAULT '',
   ai_base_url TEXT NOT NULL DEFAULT '',
   ai_api_key TEXT NOT NULL DEFAULT '',
+  search_ai_base_url TEXT NOT NULL DEFAULT '',
+  search_ai_api_key TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_by BIGINT NOT NULL DEFAULT 0,
   updated_by BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS system_config (
+  id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  models_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  default_model VARCHAR(128) NOT NULL DEFAULT 'gpt-4o-mini',
+  code_default_model VARCHAR(128) NOT NULL DEFAULT 'gpt-4o-mini',
+  search_service VARCHAR(64) NOT NULL DEFAULT 'tavily',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0,
+  CHECK (jsonb_typeof(models_json) = 'array')
 );
 
 CREATE TABLE IF NOT EXISTS template (
@@ -58,6 +73,8 @@ CREATE TABLE IF NOT EXISTS workflow (
   status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
   current_draft_version_no INT NOT NULL DEFAULT 1,
   current_published_version_no INT NOT NULL DEFAULT 0,
+  breaker_window_minutes INT NOT NULL DEFAULT 1 CHECK (breaker_window_minutes > 0),
+  breaker_max_requests INT NOT NULL DEFAULT 5 CHECK (breaker_max_requests > 0),
   dsl_json JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -83,12 +100,194 @@ CREATE INDEX IF NOT EXISTS idx_workflow_status ON workflow(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_version_workflow_version ON workflow_version(workflow_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_template_status ON template(status);
 
+CREATE TABLE IF NOT EXISTS file (
+  id BIGSERIAL PRIMARY KEY,
+  biz_key VARCHAR(128) NOT NULL DEFAULT '',
+  latest_version_no INT NOT NULL DEFAULT 0,
+  status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deleted')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS file_version (
+  id BIGSERIAL PRIMARY KEY,
+  file_id BIGINT NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+  version_no INT NOT NULL,
+  storage_key TEXT NOT NULL,
+  origin_name TEXT NOT NULL,
+  mime_type VARCHAR(256) NOT NULL DEFAULT 'application/octet-stream',
+  size_bytes BIGINT NOT NULL DEFAULT 0,
+  checksum VARCHAR(128) NOT NULL DEFAULT '',
+  status VARCHAR(32) NOT NULL DEFAULT 'uploaded' CHECK (status IN ('uploading', 'uploaded', 'failed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (file_id, version_no)
+);
+
+CREATE TABLE IF NOT EXISTS upload_session (
+  id VARCHAR(64) PRIMARY KEY,
+  file_id BIGINT NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+  target_version_no INT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'selected' CHECK (status IN ('selected', 'uploading', 'uploaded', 'cancelled', 'expired')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_status ON file(status);
+CREATE INDEX IF NOT EXISTS idx_file_version_file_version ON file_version(file_id, version_no);
+CREATE INDEX IF NOT EXISTS idx_upload_session_status_expires_at ON upload_session(status, expires_at);
+
+CREATE TABLE IF NOT EXISTS enterprise (
+  id BIGSERIAL PRIMARY KEY,
+  short_name VARCHAR(256) NOT NULL,
+  region VARCHAR(128) NOT NULL DEFAULT '',
+  in_hidden_debt_list BOOLEAN NOT NULL DEFAULT false,
+  in_3899_list BOOLEAN NOT NULL DEFAULT false,
+  meets_335_indicator BOOLEAN NOT NULL DEFAULT false,
+  meets_224_indicator BOOLEAN NOT NULL DEFAULT false,
+  enterprise_level VARCHAR(64) NOT NULL DEFAULT '',
+  net_assets NUMERIC(20, 4),
+  real_estate_revenue_ratio NUMERIC(12, 6),
+  main_business_type TEXT NOT NULL DEFAULT '',
+  established_at TIMESTAMPTZ,
+  liability_asset_ratio NUMERIC(12, 6),
+  liability_asset_ratio_industry_median NUMERIC(12, 6),
+  non_standard_financing_ratio NUMERIC(12, 6),
+  main_business TEXT NOT NULL DEFAULT '',
+  related_party_public_opinion TEXT NOT NULL DEFAULT '',
+  admission_status BOOLEAN NOT NULL DEFAULT false,
+  calculated_at TIMESTAMPTZ,
+  registered_capital NUMERIC(20, 4),
+  paid_in_capital NUMERIC(20, 4),
+  industry VARCHAR(128) NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  business_scope TEXT NOT NULL DEFAULT '',
+  legal_person VARCHAR(128) NOT NULL DEFAULT '',
+  company_type VARCHAR(128) NOT NULL DEFAULT '',
+  enterprise_nature VARCHAR(128) NOT NULL DEFAULT '',
+  actual_controller VARCHAR(128) NOT NULL DEFAULT '',
+  actual_controller_control_path TEXT NOT NULL DEFAULT '',
+  unified_credit_code VARCHAR(64) NOT NULL,
+  legal_person_id_card VARCHAR(64) NOT NULL DEFAULT '',
+  status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deleted')),
+  deleted_at TIMESTAMPTZ,
+  deleted_by BIGINT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS enterprise_tag (
+  id BIGSERIAL PRIMARY KEY,
+  enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
+  title VARCHAR(256) NOT NULL DEFAULT '',
+  order_no INT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS enterprise_public_opinion (
+  id BIGSERIAL PRIMARY KEY,
+  enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
+  source VARCHAR(256) NOT NULL DEFAULT '',
+  issue TEXT NOT NULL DEFAULT '',
+  opinion_time TIMESTAMPTZ,
+  title VARCHAR(512) NOT NULL DEFAULT '',
+  order_no INT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS enterprise_bond_tender (
+  id BIGSERIAL PRIMARY KEY,
+  enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
+  tender_time TIMESTAMPTZ,
+  tender_type VARCHAR(128) NOT NULL DEFAULT '',
+  project_type VARCHAR(128) NOT NULL DEFAULT '',
+  winner VARCHAR(256) NOT NULL DEFAULT '',
+  tender_title VARCHAR(512) NOT NULL DEFAULT '',
+  order_no INT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS enterprise_bond_detail (
+  id BIGSERIAL PRIMARY KEY,
+  enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
+  short_name VARCHAR(256) NOT NULL DEFAULT '',
+  bond_code VARCHAR(128) NOT NULL DEFAULT '',
+  bond_type VARCHAR(128) NOT NULL DEFAULT '',
+  balance NUMERIC(20, 4),
+  bond_term VARCHAR(128) NOT NULL DEFAULT '',
+  rating VARCHAR(128) NOT NULL DEFAULT '',
+  guarantor VARCHAR(256) NOT NULL DEFAULT '',
+  order_no INT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS enterprise_bond_registration (
+  id BIGSERIAL PRIMARY KEY,
+  enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
+  project_name VARCHAR(256) NOT NULL DEFAULT '',
+  registration_status VARCHAR(128) NOT NULL DEFAULT '',
+  status_updated_at TIMESTAMPTZ,
+  amount NUMERIC(20, 4),
+  process TEXT NOT NULL DEFAULT '',
+  order_no INT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS enterprise_finance_snapshot (
+  id BIGSERIAL PRIMARY KEY,
+  enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE UNIQUE,
+  roa NUMERIC(12, 6),
+  interest_coverage NUMERIC(12, 6),
+  main_business_1 VARCHAR(256) NOT NULL DEFAULT '',
+  main_business_2 VARCHAR(256) NOT NULL DEFAULT '',
+  main_business_3 VARCHAR(256) NOT NULL DEFAULT '',
+  main_business_4 VARCHAR(256) NOT NULL DEFAULT '',
+  main_business_5 VARCHAR(256) NOT NULL DEFAULT '',
+  main_business_ratio_1 NUMERIC(12, 6),
+  main_business_ratio_2 NUMERIC(12, 6),
+  main_business_ratio_3 NUMERIC(12, 6),
+  main_business_ratio_4 NUMERIC(12, 6),
+  main_business_ratio_5 NUMERIC(12, 6)
+);
+
+CREATE TABLE IF NOT EXISTS enterprise_finance_subject (
+  id BIGSERIAL PRIMARY KEY,
+  enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
+  subject_name VARCHAR(256) NOT NULL DEFAULT '',
+  subject_type VARCHAR(128) NOT NULL DEFAULT '',
+  order_no INT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS enterprise_shareholder (
+  id BIGSERIAL PRIMARY KEY,
+  enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
+  shareholder_id VARCHAR(128) NOT NULL DEFAULT '',
+  order_no INT NOT NULL DEFAULT 1
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_enterprise_credit_code_active
+ON enterprise(unified_credit_code)
+WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_enterprise_region ON enterprise(region);
+CREATE INDEX IF NOT EXISTS idx_enterprise_admission_status ON enterprise(admission_status);
+CREATE INDEX IF NOT EXISTS idx_enterprise_updated_at ON enterprise(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_enterprise_tag_enterprise_order ON enterprise_tag(enterprise_id, order_no);
+CREATE INDEX IF NOT EXISTS idx_enterprise_public_opinion_enterprise_order ON enterprise_public_opinion(enterprise_id, order_no);
+CREATE INDEX IF NOT EXISTS idx_enterprise_bond_tender_enterprise_order ON enterprise_bond_tender(enterprise_id, order_no);
+CREATE INDEX IF NOT EXISTS idx_enterprise_bond_detail_enterprise_order ON enterprise_bond_detail(enterprise_id, order_no);
+CREATE INDEX IF NOT EXISTS idx_enterprise_bond_registration_enterprise_order ON enterprise_bond_registration(enterprise_id, order_no);
+CREATE INDEX IF NOT EXISTS idx_enterprise_finance_subject_enterprise_order ON enterprise_finance_subject(enterprise_id, order_no);
+CREATE INDEX IF NOT EXISTS idx_enterprise_shareholder_enterprise_order ON enterprise_shareholder(enterprise_id, order_no);
+
 CREATE TABLE IF NOT EXISTS chat_conversation (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
   title TEXT NOT NULL DEFAULT '',
   model VARCHAR(128) NOT NULL DEFAULT 'gpt-4o-mini',
   system_prompt TEXT NOT NULL DEFAULT '',
+  enable_web_search BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_by BIGINT NOT NULL DEFAULT 0,
@@ -119,6 +318,61 @@ UPDATE workflow SET menu_key = 'reserve' WHERE menu_key = '' OR menu_key IS NULL
 CREATE INDEX IF NOT EXISTS idx_workflow_menu_key ON workflow(menu_key);
 `); err != nil {
 		return fmt.Errorf("migrate workflow menu_key: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+ALTER TABLE workflow
+ADD COLUMN IF NOT EXISTS breaker_window_minutes INT NOT NULL DEFAULT 1 CHECK (breaker_window_minutes > 0);
+ALTER TABLE workflow
+ADD COLUMN IF NOT EXISTS breaker_max_requests INT NOT NULL DEFAULT 5 CHECK (breaker_max_requests > 0);
+UPDATE workflow SET breaker_window_minutes = 1 WHERE breaker_window_minutes IS NULL OR breaker_window_minutes <= 0;
+UPDATE workflow SET breaker_max_requests = 5 WHERE breaker_max_requests IS NULL OR breaker_max_requests <= 0;
+ALTER TABLE workflow ALTER COLUMN breaker_window_minutes SET DEFAULT 1;
+ALTER TABLE workflow ALTER COLUMN breaker_max_requests SET DEFAULT 5;
+`); err != nil {
+		return fmt.Errorf("migrate workflow breaker config: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+ALTER TABLE system_config
+ADD COLUMN IF NOT EXISTS code_default_model VARCHAR(128) NOT NULL DEFAULT 'gpt-4o-mini';
+UPDATE system_config SET code_default_model = default_model WHERE code_default_model IS NULL OR code_default_model = '';
+ALTER TABLE system_config ALTER COLUMN code_default_model SET DEFAULT 'gpt-4o-mini';
+ALTER TABLE system_config
+ADD COLUMN IF NOT EXISTS search_service VARCHAR(64) NOT NULL DEFAULT 'tavily';
+UPDATE system_config SET search_service = 'tavily' WHERE search_service IS NULL OR search_service = '';
+ALTER TABLE system_config ALTER COLUMN search_service SET DEFAULT 'tavily';
+`); err != nil {
+		return fmt.Errorf("migrate system_config code_default_model: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+ALTER TABLE chat_conversation
+ADD COLUMN IF NOT EXISTS enable_web_search BOOLEAN NOT NULL DEFAULT false;
+`); err != nil {
+		return fmt.Errorf("migrate chat_conversation enable_web_search: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+ALTER TABLE user_config
+ADD COLUMN IF NOT EXISTS search_ai_base_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_config
+ADD COLUMN IF NOT EXISTS search_ai_api_key TEXT NOT NULL DEFAULT '';
+`); err != nil {
+		return fmt.Errorf("migrate user_config search ai config: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+INSERT INTO system_config (id, models_json, default_model, code_default_model, search_service, created_at, updated_at, created_by, updated_by)
+VALUES (
+  1,
+  '[{"name":"gpt-4o-mini","label":"GPT-4o mini","enabled":true}]'::jsonb,
+  'gpt-4o-mini',
+  'gpt-4o-mini',
+  'tavily',
+  NOW(),
+  NOW(),
+  1,
+  1
+)
+ON CONFLICT (id) DO NOTHING;
+`); err != nil {
+		return fmt.Errorf("migrate system_config: %w", err)
 	}
 	return nil
 }
@@ -728,10 +982,12 @@ ON CONFLICT (username) DO NOTHING
 INSERT INTO workflow (
   workflow_key, name, description, menu_key, status,
   current_draft_version_no, current_published_version_no,
+  breaker_window_minutes, breaker_max_requests,
   dsl_json, created_at, updated_at, created_by, updated_by
 ) VALUES (
   'demo_workflow', '示例工作流', '默认初始化工作流', 'reserve', 'active',
   1, 0,
+  1, 5,
   $1::jsonb, $2, $2, 0, 0
 )
 ON CONFLICT (workflow_key) DO UPDATE SET updated_at = EXCLUDED.updated_at
