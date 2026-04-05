@@ -9,12 +9,14 @@ func RegisterRoutes(
 	userHandler *UserHandler,
 	systemConfigHandler *SystemConfigHandler,
 	workflowCodeGenerateHandler *WorkflowCodeGenerateHandler,
+	workflowNodeGenerateHandler *WorkflowNodeGenerateHandler,
 	workflowDSLGenerateHandler *WorkflowDSLGenerateHandler,
 	workflowHandler *WorkflowHandler,
 	workflowExecutionHandler *WorkflowExecutionHandler,
 	fileHandler *FileHandler,
 	templateHandler *TemplateHandler,
 	enterpriseHandler *EnterpriseHandler,
+	regionHandler *RegionHandler,
 	apiMetaHandler *APIMetaHandler,
 	userConfigHandler *UserConfigHandler,
 	chatHandler *ChatHandler,
@@ -31,11 +33,13 @@ func RegisterRoutes(
 	systemConfigHandler.Register(protectedGroup, adminMiddleware)
 	chatHandler.Register(protectedGroup)
 	workflowCodeGenerateHandler.Register(protectedGroup)
+	workflowNodeGenerateHandler.Register(protectedGroup)
 	workflowDSLGenerateHandler.Register(protectedGroup)
 	workflowHandler.Register(protectedGroup)
 	workflowExecutionHandler.Register(protectedGroup, adminMiddleware)
 	fileHandler.Register(protectedGroup)
 	templateHandler.Register(protectedGroup, adminMiddleware)
 	enterpriseHandler.Register(protectedGroup)
+	regionHandler.Register(protectedGroup)
 	apiMetaHandler.Register(protectedGroup, adminMiddleware)
 }

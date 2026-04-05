@@ -8,7 +8,7 @@ type EnterpriseDTO = {
   id: number
   shortName: string
   unifiedCreditCode: string
-  region: string
+  regionId: number
   admissionStatus: boolean
   createdAt: string
   updatedAt: string
@@ -48,19 +48,29 @@ type ApiResponse<T> = {
 
 type ListFilters = {
   keyword: string
-  region: string
+  regionId?: number
   admissionStatus?: 'true' | 'false'
 }
 
 type EnterpriseFormValues = {
   shortName: string
   unifiedCreditCode: string
-  region: string
+  regionId?: number
   admissionStatus: boolean
   enterpriseLevel: string
   industry: string
   address: string
   legalPerson: string
+}
+
+type RegionDTO = {
+  id: number
+  adminCode: string
+  overview: string
+}
+
+type RegionPageResult = {
+  items: RegionDTO[]
 }
 
 const getToken = () => {
@@ -84,7 +94,8 @@ export default function EnterprisesPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
-  const [filters, setFilters] = useState<ListFilters>({ keyword: '', region: '' })
+  const [filters, setFilters] = useState<ListFilters>({ keyword: '' })
+  const [regions, setRegions] = useState<RegionDTO[]>([])
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
@@ -120,8 +131,8 @@ export default function EnterprisesPage() {
       search.set('pageSize', String(pageSize))
       if (filters.keyword.trim())
         search.set('keyword', filters.keyword.trim())
-      if (filters.region.trim())
-        search.set('region', filters.region.trim())
+      if (typeof filters.regionId === 'number' && filters.regionId > 0)
+        search.set('regionId', String(filters.regionId))
       if (filters.admissionStatus)
         search.set('admissionStatus', filters.admissionStatus)
 
@@ -141,12 +152,26 @@ export default function EnterprisesPage() {
     fetchList()
   }, [page, pageSize, filters])
 
+  const fetchRegions = async () => {
+    try {
+      const data = await request<RegionPageResult>('/api/regions?page=1&pageSize=200', { method: 'GET' })
+      setRegions(Array.isArray(data?.items) ? data.items : [])
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '加载区域列表失败')
+    }
+  }
+
+  useEffect(() => {
+    fetchRegions()
+  }, [])
+
   const openCreate = () => {
     setEditingID(null)
     form.setFieldsValue({
       shortName: '',
       unifiedCreditCode: '',
-      region: '',
+      regionId: undefined,
       admissionStatus: false,
       enterpriseLevel: '',
       industry: '',
@@ -163,7 +188,7 @@ export default function EnterprisesPage() {
       form.setFieldsValue({
         shortName: detail.shortName || '',
         unifiedCreditCode: detail.unifiedCreditCode || '',
-        region: detail.region || '',
+        regionId: detail.regionId,
         admissionStatus: !!detail.admissionStatus,
         enterpriseLevel: detail.enterpriseLevel || '',
         industry: detail.industry || '',
@@ -184,7 +209,7 @@ export default function EnterprisesPage() {
       const payload = {
         shortName: values.shortName,
         unifiedCreditCode: values.unifiedCreditCode,
-        region: values.region || '',
+        regionId: Number(values.regionId) || 0,
         admissionStatus: !!values.admissionStatus,
         enterpriseLevel: values.enterpriseLevel || '',
         industry: values.industry || '',
@@ -243,6 +268,17 @@ export default function EnterprisesPage() {
     },
   }), [page, pageSize, total])
 
+  const regionOptions = useMemo(
+    () => regions.map(item => ({ label: `${item.adminCode} - ${item.overview || '未命名区域'}`, value: item.id })),
+    [regions],
+  )
+  const regionLabelMap = useMemo(() => {
+    const out = new Map<number, string>()
+    for (const region of regions)
+      out.set(region.id, `${region.adminCode}`)
+    return out
+  }, [regions])
+
   return (
     <div className="space-y-3">
       {contextHolder}
@@ -254,10 +290,12 @@ export default function EnterprisesPage() {
             value={filters.keyword}
             onChange={event => setFilters(prev => ({ ...prev, keyword: event.target.value }))}
           />
-          <Input
+          <Select
+            allowClear
             placeholder="所在区域"
-            value={filters.region}
-            onChange={event => setFilters(prev => ({ ...prev, region: event.target.value }))}
+            value={filters.regionId}
+            options={regionOptions}
+            onChange={value => setFilters(prev => ({ ...prev, regionId: value }))}
           />
           <Select
             allowClear
@@ -272,7 +310,7 @@ export default function EnterprisesPage() {
           <Space>
             <Button type="primary" onClick={() => setPage(1)}>查询</Button>
             <Button onClick={() => {
-              setFilters({ keyword: '', region: '' })
+              setFilters({ keyword: '' })
               setPage(1)
             }}
             >重置</Button>
@@ -295,7 +333,12 @@ export default function EnterprisesPage() {
             { title: 'ID', dataIndex: 'id', width: 80 },
             { title: '企业简称', dataIndex: 'shortName', width: 180 },
             { title: '统一信用代码', dataIndex: 'unifiedCreditCode', width: 220 },
-            { title: '所在区域', dataIndex: 'region', width: 140 },
+            {
+              title: '所在区域',
+              dataIndex: 'regionId',
+              width: 180,
+              render: (value: number) => regionLabelMap.get(value) || `#${value}`,
+            },
             {
               title: '是否准入',
               dataIndex: 'admissionStatus',
@@ -341,8 +384,8 @@ export default function EnterprisesPage() {
           <Form.Item label="统一信用代码" name="unifiedCreditCode" rules={[{ required: true, message: '请输入统一信用代码' }]}>
             <Input placeholder="请输入统一信用代码" disabled={!!editingID} />
           </Form.Item>
-          <Form.Item label="所在区域" name="region">
-            <Input placeholder="请输入所在区域" />
+          <Form.Item label="所在区域" name="regionId" rules={[{ required: true, message: '请选择所在区域' }]}>
+            <Select placeholder="请选择所在区域" options={regionOptions} />
           </Form.Item>
           <Form.Item label="企业层级" name="enterpriseLevel">
             <Input placeholder="请输入企业层级" />

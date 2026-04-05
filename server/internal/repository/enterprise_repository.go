@@ -10,6 +10,7 @@ import (
 
 type EnterpriseRepository interface {
 	FindByID(enterpriseID int64) (model.EnterpriseDetailDTO, bool)
+	FindByShortName(shortName string) (model.EnterpriseDetailDTO, bool)
 	FindByUnifiedCreditCode(unifiedCreditCode string) (model.Enterprise, bool)
 	FindPage(query model.EnterpriseListQuery) model.EnterprisePageResult
 	Create(aggregate model.EnterpriseAggregate) model.EnterpriseDetailDTO
@@ -34,7 +35,7 @@ func NewEnterpriseRepository() EnterpriseRepository {
 				UpdatedBy: 1,
 			},
 			ShortName:         "示例企业",
-			Region:            "示例区域",
+			RegionID:          1,
 			AdmissionStatus:   true,
 			UnifiedCreditCode: "91310000MA1EXAMPLE",
 			Status:            model.EnterpriseStatusActive,
@@ -59,6 +60,22 @@ func (repository *enterpriseRepository) FindByID(enterpriseID int64) (model.Ente
 	return aggregate.ToDetailDTO(), true
 }
 
+func (repository *enterpriseRepository) FindByShortName(shortName string) (model.EnterpriseDetailDTO, bool) {
+	trimmed := strings.TrimSpace(shortName)
+	if trimmed == "" {
+		return model.EnterpriseDetailDTO{}, false
+	}
+	for _, aggregate := range repository.items {
+		if aggregate.Enterprise.DeletedAt != nil {
+			continue
+		}
+		if aggregate.Enterprise.ShortName == trimmed {
+			return aggregate.ToDetailDTO(), true
+		}
+	}
+	return model.EnterpriseDetailDTO{}, false
+}
+
 func (repository *enterpriseRepository) FindByUnifiedCreditCode(unifiedCreditCode string) (model.Enterprise, bool) {
 	trimmed := strings.TrimSpace(unifiedCreditCode)
 	if trimmed == "" {
@@ -78,7 +95,7 @@ func (repository *enterpriseRepository) FindByUnifiedCreditCode(unifiedCreditCod
 func (repository *enterpriseRepository) FindPage(query model.EnterpriseListQuery) model.EnterprisePageResult {
 	filtered := make([]model.EnterpriseDTO, 0)
 	keyword := strings.ToLower(strings.TrimSpace(query.Keyword))
-	region := strings.TrimSpace(query.Region)
+	regionID := query.RegionID
 	for _, aggregate := range repository.items {
 		enterprise := aggregate.Enterprise
 		if enterprise.DeletedAt != nil {
@@ -91,7 +108,7 @@ func (repository *enterpriseRepository) FindPage(query model.EnterpriseListQuery
 				continue
 			}
 		}
-		if region != "" && enterprise.Region != region {
+		if regionID > 0 && enterprise.RegionID != regionID {
 			continue
 		}
 		if query.AdmissionStatus != nil && enterprise.AdmissionStatus != *query.AdmissionStatus {

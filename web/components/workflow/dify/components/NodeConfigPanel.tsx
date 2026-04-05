@@ -44,6 +44,7 @@ type NodeConfigPanelProps = {
 const labelClass = 'block text-xs text-gray-500'
 const inputClass = 'w-full rounded border border-gray-300 px-2 py-1.5 text-sm'
 const sectionClass = 'space-y-2 rounded border border-gray-200 p-2'
+const mappingCascaderClass = 'w-full min-w-0 [&_.ant-select-selector]:min-w-0 [&_.ant-select-selection-item]:max-w-full [&_.ant-select-selection-item]:truncate'
 
 type TemplateOption = {
   label: string
@@ -371,6 +372,88 @@ const buildMappingCascaderValue = (targetPath: string): string[] => {
     chain.push(acc)
   for (let i = 2; i < parts.length; i += 1) {
     acc = `${acc}.${parts[i]}`
+    chain.push(acc)
+  }
+  return chain
+}
+
+const buildSourcePathCascaderOptions = (paths: string[]): MappingCascaderOption[] => {
+  type SourceTreeNode = {
+    value: string
+    label: string
+    children: Map<string, SourceTreeNode>
+  }
+  const roots = new Map<string, SourceTreeNode>()
+
+  const ensureRoot = (segment: string, value: string) => {
+    const existed = roots.get(segment)
+    if (existed)
+      return existed
+    const node: SourceTreeNode = {
+      value,
+      label: segment,
+      children: new Map(),
+    }
+    roots.set(segment, node)
+    return node
+  }
+
+  paths.forEach((path) => {
+    const trimmed = String(path || '').trim()
+    if (!trimmed)
+      return
+    const segments = trimmed.split('.').filter(Boolean)
+    if (segments.length === 0)
+      return
+
+    let acc = segments[0]
+    let parent = ensureRoot(segments[0], acc)
+    for (let index = 1; index < segments.length; index += 1) {
+      const segment = segments[index]
+      acc = `${acc}.${segment}`
+      const existed = parent.children.get(segment)
+      if (existed) {
+        parent = existed
+        continue
+      }
+      const next: SourceTreeNode = {
+        value: acc,
+        label: segment,
+        children: new Map(),
+      }
+      parent.children.set(segment, next)
+      parent = next
+    }
+  })
+
+  const toOption = (node: SourceTreeNode): MappingCascaderOption => {
+    const children = [...node.children.values()]
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
+      .map(toOption)
+    return {
+      value: node.value,
+      label: node.label,
+      children: children.length ? children : undefined,
+    }
+  }
+
+  return [...roots.values()]
+    .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
+    .map(toOption)
+}
+
+const buildSourcePathCascaderValue = (sourcePath: string): string[] => {
+  const trimmed = String(sourcePath || '').trim()
+  if (!trimmed)
+    return []
+  const segments = trimmed.split('.').filter(Boolean)
+  if (segments.length === 0)
+    return []
+  const chain: string[] = []
+  let acc = segments[0]
+  chain.push(acc)
+  for (let i = 1; i < segments.length; i += 1) {
+    acc = `${acc}.${segments[i]}`
     chain.push(acc)
   }
   return chain
@@ -853,14 +936,14 @@ export default function NodeConfigPanel({
             {config.writebackMappings.map((mapping, index) => (
               <div key={`code-writeback-${index}`} className="grid grid-cols-12 gap-2">
                 <div
-                  className="col-span-5 truncate rounded border border-gray-300 bg-gray-50 px-2 py-1.5 text-xs text-gray-700"
+                  className="col-span-12 md:col-span-5 truncate rounded border border-gray-300 bg-gray-50 px-2 py-1.5 text-xs text-gray-700"
                   style={{ paddingLeft: `${8 + Math.max(0, mapping.sourcePath.split('.').length - 1) * 10}px` }}
                   title={mapping.sourcePath}
                 >
                   {mapping.sourcePath}
                 </div>
                 <Cascader
-                  className="col-span-5"
+                  className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
                   options={mappingTargetCascaderOptions}
                   placeholder="选择全局/流程参数"
                   value={buildMappingCascaderValue(mapping.targetPath)}
@@ -876,13 +959,17 @@ export default function NodeConfigPanel({
                 />
                 <button
                   type="button"
-                  className="col-span-2 rounded bg-red-50 px-2 py-1 text-xs text-red-600"
+                  aria-label="删除映射"
+                  title="删除映射"
+                  className="col-span-12 md:col-span-2 md:min-w-[44px] md:shrink-0 inline-flex items-center justify-center rounded bg-red-50 px-2 py-1 text-red-600"
                   onClick={() => updateConfig({
                     ...config,
                     writebackMappings: config.writebackMappings.filter((_, idx) => idx !== index),
                   })}
                 >
-                  删除
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                    <path fillRule="evenodd" d="M8.75 2.5a1.25 1.25 0 0 0-1.25 1.25V5H5a.75.75 0 0 0 0 1.5h.5v8.25A2.25 2.25 0 0 0 7.75 17h4.5a2.25 2.25 0 0 0 2.25-2.25V6.5H15a.75.75 0 0 0 0-1.5h-2.5V3.75A1.25 1.25 0 0 0 11.25 2.5h-2.5ZM11 5V4h-2v1h2Zm-3 1.5a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6A.75.75 0 0 1 8 6.5Zm4 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0v-6Z" clipRule="evenodd" />
+                  </svg>
                 </button>
               </div>
             ))}
@@ -1103,6 +1190,29 @@ export default function NodeConfigPanel({
       }))
       updateConfig({ ...config, writebackMappings: normalized })
     }
+
+    const schemaPaths = (() => {
+      const parsed = extractSchemaLeafPaths(config.outputSchema ?? '')
+      if (!parsed.ok)
+        return [] as string[]
+      return parsed.paths
+    })()
+    const responseJsonPaths = (() => {
+      const parsed = parseJsonAny(responseJsonDraft)
+      if (!parsed.ok)
+        return [] as string[]
+      return extractPathsFromJson(parsed.value)
+    })()
+    const suggestedSourcePaths = [...new Set([
+      '$',
+      'status',
+      'ok',
+      'body',
+      'raw',
+      ...schemaPaths,
+      ...responseJsonPaths,
+    ])]
+    const sourcePathCascaderOptions = buildSourcePathCascaderOptions(suggestedSourcePaths)
 
     return (
       <div className={sectionClass}>
@@ -1332,15 +1442,35 @@ export default function NodeConfigPanel({
             )}
             {config.writebackMappings.map((mapping, index) => (
               <div key={`http-writeback-${index}`} className="grid grid-cols-12 gap-2">
-                <div
-                  className="col-span-5 rounded border border-gray-300 bg-gray-50 px-2 py-1.5 text-xs text-gray-700 whitespace-normal break-all"
-                  style={{ paddingLeft: `${8 + Math.max(0, mapping.sourcePath.split('.').length - 1) * 10}px` }}
-                  title={mapping.sourcePath}
-                >
-                  {mapping.sourcePath}
+                <div className="col-span-12 md:col-span-5 min-w-0 space-y-1">
+                  <Cascader
+                    className={mappingCascaderClass}
+                    options={sourcePathCascaderOptions}
+                    placeholder="选择 sourcePath"
+                    value={buildSourcePathCascaderValue(mapping.sourcePath)}
+                    allowClear
+                    changeOnSelect
+                    showSearch
+                    onChange={(value) => {
+                      const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                      const next = [...config.writebackMappings]
+                      next[index] = { ...mapping, sourcePath: selected }
+                      updateConfig({ ...config, writebackMappings: next })
+                    }}
+                  />
+                  <input
+                    className={`${inputClass} font-mono text-xs`}
+                    placeholder="手动输入 sourcePath"
+                    value={mapping.sourcePath}
+                    onChange={(event) => {
+                      const next = [...config.writebackMappings]
+                      next[index] = { ...mapping, sourcePath: event.target.value }
+                      updateConfig({ ...config, writebackMappings: next })
+                    }}
+                  />
                 </div>
                 <Cascader
-                  className="col-span-5"
+                  className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
                   options={mappingTargetCascaderOptions}
                   placeholder="选择全局/流程参数"
                   value={buildMappingCascaderValue(mapping.targetPath)}
@@ -1356,13 +1486,17 @@ export default function NodeConfigPanel({
                 />
                 <button
                   type="button"
-                  className="col-span-2 rounded bg-red-50 px-2 py-1 text-xs text-red-600"
+                  aria-label="删除映射"
+                  title="删除映射"
+                  className="col-span-12 md:col-span-2 md:min-w-[44px] md:shrink-0 inline-flex items-center justify-center rounded bg-red-50 px-2 py-1 text-red-600"
                   onClick={() => updateConfig({
                     ...config,
                     writebackMappings: config.writebackMappings.filter((_, idx) => idx !== index),
                   })}
                 >
-                  删除
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                    <path fillRule="evenodd" d="M8.75 2.5a1.25 1.25 0 0 0-1.25 1.25V5H5a.75.75 0 0 0 0 1.5h.5v8.25A2.25 2.25 0 0 0 7.75 17h4.5a2.25 2.25 0 0 0 2.25-2.25V6.5H15a.75.75 0 0 0 0-1.5h-2.5V3.75A1.25 1.25 0 0 0 11.25 2.5h-2.5ZM11 5V4h-2v1h2Zm-3 1.5a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6A.75.75 0 0 1 8 6.5Zm4 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0v-6Z" clipRule="evenodd" />
+                  </svg>
                 </button>
               </div>
             ))}
@@ -1650,6 +1784,12 @@ export default function NodeConfigPanel({
       const data = example?.data
       return extractPathsFromExample(data)
     })()
+    const successExamplePaths = (() => {
+      const success = (selectedRoute?.responses ?? []).find(item => item.httpStatus === config.successStatusCode)
+        ?? (selectedRoute?.responses ?? []).find(item => item.httpStatus === 200)
+        ?? (selectedRoute?.responses ?? [])[0]
+      return extractPathsFromExample(success?.example)
+    })()
 
     const appendMappingsFromExample = () => {
       const paths = successExampleDataPaths
@@ -1659,7 +1799,7 @@ export default function NodeConfigPanel({
       updateConfig({ ...config, writebackMappings: [...config.writebackMappings, ...generated] })
     }
 
-    const suggestedSourcePaths = [
+    const suggestedSourcePaths = [...new Set([
       'ok',
       'statusCode',
       'httpStatus',
@@ -1668,8 +1808,10 @@ export default function NodeConfigPanel({
       'method',
       'data',
       'response',
+      ...successExamplePaths,
       ...successExampleDataPaths.map(path => `data.${path}`),
-    ]
+    ])]
+    const sourcePathCascaderOptions = buildSourcePathCascaderOptions(suggestedSourcePaths)
 
     return (
       <div className={sectionClass}>
@@ -1760,9 +1902,9 @@ export default function NodeConfigPanel({
         <div className="space-y-2 rounded border border-gray-200 p-2">
           <div className="flex items-center justify-between gap-2">
             <div className="text-xs font-semibold text-gray-700">响应写入参数</div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <select
-                className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700"
+                className="max-w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700"
                 value=""
                 onChange={(event) => {
                   const value = String(event.target.value || '').trim()
@@ -1806,18 +1948,35 @@ export default function NodeConfigPanel({
           )}
           {config.writebackMappings.map((mapping, index) => (
             <div key={`api-writeback-${index}`} className="grid grid-cols-12 gap-2">
-              <input
-                className={`${inputClass} col-span-5 font-mono text-xs`}
-                placeholder="sourcePath"
-                value={mapping.sourcePath}
-                onChange={(event) => {
-                  const next = [...config.writebackMappings]
-                  next[index] = { ...mapping, sourcePath: event.target.value }
-                  updateConfig({ ...config, writebackMappings: next })
-                }}
-              />
+              <div className="col-span-12 md:col-span-5 min-w-0 space-y-1">
+                <Cascader
+                  className={mappingCascaderClass}
+                  options={sourcePathCascaderOptions}
+                  placeholder="选择 sourcePath"
+                  value={buildSourcePathCascaderValue(mapping.sourcePath)}
+                  allowClear
+                  changeOnSelect
+                  showSearch
+                  onChange={(value) => {
+                    const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                    const next = [...config.writebackMappings]
+                    next[index] = { ...mapping, sourcePath: selected }
+                    updateConfig({ ...config, writebackMappings: next })
+                  }}
+                />
+                <input
+                  className={`${inputClass} font-mono text-xs`}
+                  placeholder="手动输入 sourcePath"
+                  value={mapping.sourcePath}
+                  onChange={(event) => {
+                    const next = [...config.writebackMappings]
+                    next[index] = { ...mapping, sourcePath: event.target.value }
+                    updateConfig({ ...config, writebackMappings: next })
+                  }}
+                />
+              </div>
               <Cascader
-                className="col-span-5"
+                className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
                 options={mappingTargetCascaderOptions}
                 placeholder="选择全局/流程参数"
                 value={buildMappingCascaderValue(mapping.targetPath)}
@@ -1833,13 +1992,17 @@ export default function NodeConfigPanel({
               />
               <button
                 type="button"
-                className="col-span-2 rounded bg-red-50 px-2 py-1 text-xs text-red-600"
+                aria-label="删除映射"
+                title="删除映射"
+                className="col-span-12 md:col-span-2 md:min-w-[44px] md:shrink-0 inline-flex items-center justify-center rounded bg-red-50 px-2 py-1 text-red-600"
                 onClick={() => updateConfig({
                   ...config,
                   writebackMappings: config.writebackMappings.filter((_, idx) => idx !== index),
                 })}
               >
-                删除
+                <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                  <path fillRule="evenodd" d="M8.75 2.5a1.25 1.25 0 0 0-1.25 1.25V5H5a.75.75 0 0 0 0 1.5h.5v8.25A2.25 2.25 0 0 0 7.75 17h4.5a2.25 2.25 0 0 0 2.25-2.25V6.5H15a.75.75 0 0 0 0-1.5h-2.5V3.75A1.25 1.25 0 0 0 11.25 2.5h-2.5ZM11 5V4h-2v1h2Zm-3 1.5a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6A.75.75 0 0 1 8 6.5Zm4 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0v-6Z" clipRule="evenodd" />
+                </svg>
               </button>
             </div>
           ))}

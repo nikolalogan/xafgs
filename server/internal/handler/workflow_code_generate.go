@@ -43,10 +43,11 @@ func NewWorkflowCodeGenerateHandler(service service.WorkflowCodeGenerateService,
 
 func (handler *WorkflowCodeGenerateHandler) Register(router fiber.Router) {
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[workflowCodeGenerateRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/workflow/code-generate",
-		Summary: "工作流代码 AI 生成",
-		Auth:    "auth",
+		Method:             fiber.MethodPost,
+		Path:               "/workflow/code-generate",
+		Summary:            "工作流代码 AI 生成",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[service.WorkflowCodeGenerateResult](),
 	}, handler.Generate)
 }
 

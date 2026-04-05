@@ -57,58 +57,67 @@ func NewWorkflowHandler(workflowService service.WorkflowService, registry *apime
 
 func (handler *WorkflowHandler) Register(router fiber.Router) {
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[struct{}]{
-		Method:  fiber.MethodGet,
-		Path:    "/workflows",
-		Summary: "获取工作流列表",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/workflows",
+		Summary:            "获取工作流列表",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[[]model.WorkflowDTO](),
 	}, handler.ListWorkflows)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[workflowIDPathRequest]{
-		Method:  fiber.MethodGet,
-		Path:    "/workflows/:workflowId",
-		Summary: "获取工作流详情",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/workflows/:workflowId",
+		Summary:            "获取工作流详情",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.WorkflowDetailDTO](),
 	}, handler.GetWorkflowByID)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[workflowIDPathRequest]{
-		Method:  fiber.MethodGet,
-		Path:    "/workflows/:workflowId/versions",
-		Summary: "获取工作流版本列表",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/workflows/:workflowId/versions",
+		Summary:            "获取工作流版本列表",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[[]model.WorkflowVersionDTO](),
 	}, handler.ListWorkflowVersions)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[createWorkflowRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/workflows",
-		Summary: "创建工作流",
-		Auth:    "auth",
+		Method:             fiber.MethodPost,
+		Path:               "/workflows",
+		Summary:            "创建工作流",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.WorkflowDTO](),
 	}, handler.CreateWorkflow)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[updateWorkflowRequest]{
-		Method:  fiber.MethodPut,
-		Path:    "/workflows/:workflowId",
-		Summary: "更新工作流",
-		Auth:    "auth",
+		Method:             fiber.MethodPut,
+		Path:               "/workflows/:workflowId",
+		Summary:            "更新工作流",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.WorkflowDTO](),
 	}, handler.UpdateWorkflow)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[workflowIDPathRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/workflows/:workflowId/publish",
-		Summary: "发布工作流",
-		Auth:    "auth",
+		Method:             fiber.MethodPost,
+		Path:               "/workflows/:workflowId/publish",
+		Summary:            "发布工作流",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.WorkflowDTO](),
 	}, handler.PublishWorkflow)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[workflowIDPathRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/workflows/:workflowId/offline",
-		Summary: "下线工作流",
-		Auth:    "auth",
+		Method:             fiber.MethodPost,
+		Path:               "/workflows/:workflowId/offline",
+		Summary:            "下线工作流",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.WorkflowDTO](),
 	}, handler.OfflineWorkflow)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[rollbackWorkflowRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/workflows/:workflowId/rollback",
-		Summary: "回滚工作流",
-		Auth:    "auth",
+		Method:             fiber.MethodPost,
+		Path:               "/workflows/:workflowId/rollback",
+		Summary:            "回滚工作流",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.WorkflowDTO](),
 	}, handler.RollbackWorkflow)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[workflowIDPathRequest]{
-		Method:  fiber.MethodDelete,
-		Path:    "/workflows/:workflowId",
-		Summary: "删除工作流",
-		Auth:    "auth",
+		Method:             fiber.MethodDelete,
+		Path:               "/workflows/:workflowId",
+		Summary:            "删除工作流",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[bool](),
 	}, handler.DeleteWorkflow)
 }
 

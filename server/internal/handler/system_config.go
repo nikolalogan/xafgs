@@ -33,18 +33,20 @@ func NewSystemConfigHandler(service service.SystemConfigService, registry *apime
 
 func (handler *SystemConfigHandler) Register(router fiber.Router, adminMiddleware fiber.Handler) {
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[struct{}]{
-		Method:  fiber.MethodGet,
-		Path:    "/system-config",
-		Summary: "获取系统配置",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/system-config",
+		Summary:            "获取系统配置",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.SystemConfigDTO](),
 	}, handler.Get)
 
 	adminGroup := router.Group("", adminMiddleware)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[updateSystemConfigRequest]{
-		Method:  fiber.MethodPut,
-		Path:    "/system-config",
-		Summary: "更新系统配置",
-		Auth:    "admin",
+		Method:             fiber.MethodPut,
+		Path:               "/system-config",
+		Summary:            "更新系统配置",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[model.SystemConfigDTO](),
 	}, handler.Update)
 }
 

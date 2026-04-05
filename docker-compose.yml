@@ -44,7 +44,7 @@ services:
       POSTGRES_USER: sxfg
       POSTGRES_PASSWORD: sxfg_password
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - /Users/logan/Documents/code/pgsql:/var/lib/postgresql/data
       - ./deploy/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     command: ["postgres", "-c", "listen_addresses=*", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
     healthcheck:
@@ -62,5 +62,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
   redisdata:

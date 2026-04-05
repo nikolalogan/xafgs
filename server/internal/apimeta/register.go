@@ -15,6 +15,7 @@ type RouteSpec[T any] struct {
 	Summary   string
 	Auth      string
 	Responses []APIResponseSchema
+	SuccessDataExample any
 }
 
 func Register[T any](router fiber.Router, registry *Registry, spec RouteSpec[T], handler func(c *fiber.Ctx, request *T) error) {
@@ -38,6 +39,10 @@ func Register[T any](router fiber.Router, registry *Registry, spec RouteSpec[T],
 		Responses: spec.Responses,
 	}
 	if len(doc.Responses) == 0 {
+		successData := spec.SuccessDataExample
+		if successData == nil {
+			successData = map[string]any{}
+		}
 		doc.Responses = []APIResponseSchema{
 			{
 				HTTPStatus:  fiber.StatusOK,
@@ -51,7 +56,7 @@ func Register[T any](router fiber.Router, registry *Registry, spec RouteSpec[T],
 					"message":    "成功",
 					"requestId":  "xxxx-xxxx",
 					"timestamp":  "2026-03-31T00:00:00Z",
-					"data":       map[string]any{},
+					"data":       successData,
 				},
 			},
 			{

@@ -44,42 +44,48 @@ func NewUserHandler(userService service.UserService, registry *apimeta.Registry)
 
 func (handler *UserHandler) Register(router fiber.Router, adminMiddleware fiber.Handler) {
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[struct{}]{
-		Method:  fiber.MethodGet,
-		Path:    "/me",
-		Summary: "获取当前用户",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/me",
+		Summary:            "获取当前用户",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.UserDTO](),
 	}, handler.GetCurrentUser)
 
 	adminGroup := router.Group("", adminMiddleware)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[struct{}]{
-		Method:  fiber.MethodGet,
-		Path:    "/users",
-		Summary: "获取用户列表",
-		Auth:    "admin",
+		Method:             fiber.MethodGet,
+		Path:               "/users",
+		Summary:            "获取用户列表",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[[]model.UserDTO](),
 	}, handler.ListUsers)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[userIDPathRequest]{
-		Method:  fiber.MethodGet,
-		Path:    "/users/:userId",
-		Summary: "获取用户详情",
-		Auth:    "admin",
+		Method:             fiber.MethodGet,
+		Path:               "/users/:userId",
+		Summary:            "获取用户详情",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[model.UserDTO](),
 	}, handler.GetUserByID)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[createUserRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/users",
-		Summary: "创建用户",
-		Auth:    "admin",
+		Method:             fiber.MethodPost,
+		Path:               "/users",
+		Summary:            "创建用户",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[model.UserDTO](),
 	}, handler.CreateUser)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[updateUserRequest]{
-		Method:  fiber.MethodPut,
-		Path:    "/users/:userId",
-		Summary: "更新用户",
-		Auth:    "admin",
+		Method:             fiber.MethodPut,
+		Path:               "/users/:userId",
+		Summary:            "更新用户",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[model.UserDTO](),
 	}, handler.UpdateUser)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[userIDPathRequest]{
-		Method:  fiber.MethodDelete,
-		Path:    "/users/:userId",
-		Summary: "删除用户",
-		Auth:    "admin",
+		Method:             fiber.MethodDelete,
+		Path:               "/users/:userId",
+		Summary:            "删除用户",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[bool](),
 	}, handler.DeleteUser)
 }
 

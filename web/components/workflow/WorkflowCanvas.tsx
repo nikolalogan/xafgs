@@ -11,6 +11,7 @@ import {
 import 'reactflow/dist/style.css'
 import CustomConnectionLine from './dify/components/CustomConnectionLine'
 import DSLModals from './dify/components/DSLModals'
+import AINodeGenerateModal from './dify/components/AINodeGenerateModal'
 import NodeConfigPanel from './dify/components/NodeConfigPanel'
 import WorkflowEditor from './dify/components/WorkflowEditor'
 import WorkflowToolbar from './dify/components/WorkflowToolbar'
@@ -18,8 +19,9 @@ import WorkflowRunModal from './dify/components/WorkflowRunModal'
 import { demoDSL, edgeTypes, nodeTypeLabel, nodeTypes } from './dify/config/workflowPreset'
 import { CUSTOM_EDGE, CUSTOM_NODE, ITERATION_CHILDREN_Z_INDEX } from './dify/core/constants'
 import { ensureNodeConfig } from './dify/core/node-config'
-import { BlockEnum, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowParameter } from './dify/core/types'
+import { BlockEnum, type DifyEdge, type DifyNode, type DifyNodeConfig, type IterationNodeConfig, type WorkflowParameter } from './dify/core/types'
 import { validateWorkflow } from './dify/core/validation'
+import { buildWorkflowVariableOptions } from './dify/core/variables'
 import { useClipboardInteractions } from './dify/hooks/useClipboardInteractions'
 import { useContextMenuInteractions } from './dify/hooks/useContextMenuInteractions'
 import { useDSLActions } from './dify/hooks/useDSLActions'
@@ -206,6 +208,41 @@ const buildIterationContainerLayout = (children: IterationNodeConfig['children']
   }
 }
 
+const buildIterationChildRenderNode = (
+  nodes: DifyNode[],
+  parentId: string,
+  childId: string,
+): DifyNode | null => {
+  const parent = nodes.find(node => node.id === parentId && node.data.type === BlockEnum.Iteration)
+  if (!parent)
+    return null
+  const config = ensureNodeConfig(BlockEnum.Iteration, parent.data.config)
+  const childNode = config.children.nodes.find(item => item.id === childId)
+  if (!childNode)
+    return null
+  const layout = buildIterationContainerLayout(config.children.nodes)
+  return {
+    id: buildChildNodeId(parentId, childId),
+    type: CUSTOM_NODE,
+    parentNode: parentId,
+    extent: 'parent',
+    position: {
+      x: layout.paddingX + childNode.position.x,
+      y: layout.paddingY + childNode.position.y,
+    },
+    data: {
+      ...childNode.data,
+      title: childNode.data.title || `${childNode.data.type}-${childNode.id}`,
+      config: childNode.data.config ?? ensureNodeConfig(childNode.data.type, undefined),
+      _iterationRole: 'child',
+      _iterationParentId: parentId,
+      _iterationChildId: childNode.id,
+    },
+    draggable: true,
+    selectable: true,
+  } as DifyNode
+}
+
 type WorkflowCanvasInnerProps = {
   initialDSL: DifyWorkflowDSL
   workflowId?: number
@@ -253,6 +290,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
   const [llmModelOptions, setLLMModelOptions] = useState<Array<{ name: string; label: string }>>([{ name: 'gpt-4o-mini', label: 'GPT-4o mini' }])
   const [defaultLLMModel, setDefaultLLMModel] = useState('gpt-4o-mini')
   const [defaultCodeModel, setDefaultCodeModel] = useState('gpt-4o-mini')
+  const [aiNodeGenerateOpen, setAINodeGenerateOpen] = useState(false)
   const latestNodesRef = useRef<DifyNode[]>([])
   const latestEdgesRef = useRef<DifyEdge[]>([])
   const latestWorkflowParametersRef = useRef<WorkflowParameter[]>([])
@@ -490,6 +528,10 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     deleteSelection: () => deleteSelection(),
   })
   const issues = useMemo(() => validateWorkflow(nodesForPanel, edges, workflowParameters), [edges, nodesForPanel, workflowParameters])
+  const aiVariableOptions = useMemo(
+    () => buildWorkflowVariableOptions(nodesForPanel, workflowParameters, globalVariables, activeNode),
+    [activeNode, globalVariables, nodesForPanel, workflowParameters],
+  )
 
   useEffect(() => {
     const allowed = new Set(llmModelOptions.map(item => item.name))
@@ -942,6 +984,151 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       fitView({ nodes: [{ id: createdNode.id }], duration: 220, padding: 0.28 })
   }
 
+  const handleInsertAINode = useCallback((payload: {
+    nodeType: BlockEnum
+    generatedConfig: DifyNodeConfig
+    suggestedTitle?: string
+    suggestedDesc?: string
+  }) => {
+    const type = payload.nodeType
+    const normalizedConfig = ensureNodeConfig(type, payload.generatedConfig)
+    const iterationParentId = (() => {
+      if (!activeNode)
+        return null
+      if (activeNode.data.type === BlockEnum.Iteration)
+        return activeNode.id
+      if (activeNode.data._iterationRole === 'child' && activeNode.data._iterationParentId)
+        return activeNode.data._iterationParentId
+      return null
+    })()
+
+    if (iterationParentId) {
+      let insertedChildId = ''
+      let linked = false
+      let cannotLink = false
+      let duplicateTypeBlocked = false
+      const nextNodes = updateIterationChildren(nodes, iterationParentId, (children) => {
+        if (type === BlockEnum.Start || type === BlockEnum.End) {
+          const existing = children.nodes.find(item => item.data.type === type)
+          if (existing) {
+            duplicateTypeBlocked = true
+            return children
+          }
+        }
+
+        insertedChildId = `sub-node-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+        const nextNode = {
+          id: insertedChildId,
+          type: 'childNode',
+          position: {
+            x: 40 + (children.nodes.length % 3) * 240,
+            y: 40 + Math.floor(children.nodes.length / 3) * 150,
+          },
+          data: {
+            title: payload.suggestedTitle || `${nodeTypeLabel[type]}-${children.nodes.length + 1}`,
+            desc: payload.suggestedDesc || '',
+            type,
+            config: normalizedConfig,
+          },
+        }
+
+        const nextChildren: IterationNodeConfig['children'] = {
+          ...children,
+          nodes: [...children.nodes, nextNode],
+          edges: [...children.edges],
+        }
+
+        if (activeNode?.data._iterationRole === 'child' && activeNode.data._iterationParentId === iterationParentId && activeNode.data._iterationChildId) {
+          const sourceChildId = activeNode.data._iterationChildId
+          const sourceChild = children.nodes.find(item => item.id === sourceChildId)
+          if (sourceChild && sourceChild.data.type !== BlockEnum.End && type !== BlockEnum.Start) {
+            linked = true
+            nextChildren.edges.push({
+              id: `sub-edge-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              source: sourceChildId,
+              target: insertedChildId,
+              sourceHandle: sourceChild.data.type === BlockEnum.IfElse ? IF_ELSE_FALLBACK_HANDLE : undefined,
+              type: CUSTOM_EDGE,
+            })
+          } else {
+            cannotLink = true
+          }
+        } else if (activeNode) {
+          cannotLink = true
+        }
+
+        return nextChildren
+      })
+
+      if (duplicateTypeBlocked) {
+        globalThis.alert(`${nodeTypeLabel[type]}在当前迭代分支中仅允许一个，已取消插入`)
+        return
+      }
+
+      setNodes(nextNodes)
+      const insertedChildNode = insertedChildId
+        ? buildIterationChildRenderNode(nextNodes, iterationParentId, insertedChildId)
+        : null
+      const nextParentNode = nextNodes.find(node => node.id === iterationParentId) ?? null
+      if (insertedChildNode)
+        setActiveNode(insertedChildNode)
+      else if (nextParentNode)
+        setActiveNode(nextParentNode)
+      record({ nodes: nextNodes, edges })
+      fitView({ nodes: [{ id: iterationParentId }], duration: 220, padding: 0.28 })
+      if (!linked && cannotLink)
+        globalThis.alert('节点已插入，但当前选中节点无法自动连线')
+      return
+    }
+
+    if ((type === BlockEnum.Start || type === BlockEnum.End) && nodes.some(node => node.data.type === type)) {
+      globalThis.alert(`${nodeTypeLabel[type]}仅允许一个，已取消插入`)
+      return
+    }
+
+    const id = `node-${idRef.current++}`
+    const nextNode: DifyNode = {
+      id,
+      type: CUSTOM_NODE,
+      position: { x: 220 + (nodes.length % 5) * 180, y: 90 + (nodes.length % 4) * 120 },
+      data: {
+        title: payload.suggestedTitle || `${nodeTypeLabel[type]}-${idRef.current}`,
+        desc: payload.suggestedDesc || '',
+        type,
+        config: normalizedConfig,
+      },
+    }
+    const nextNodes = [...nodes, nextNode]
+
+    let linked = false
+    let cannotLink = false
+    const nextEdges = [...edges]
+    if (activeNode && !parseChildNodeId(activeNode.id)) {
+      const sourceNodeExists = nextNodes.some(node => node.id === activeNode.id)
+      if (sourceNodeExists && activeNode.data.type !== BlockEnum.End && type !== BlockEnum.Start) {
+        linked = true
+        nextEdges.push({
+          id: `e-${Date.now()}`,
+          source: activeNode.id,
+          target: nextNode.id,
+          sourceHandle: activeNode.data.type === BlockEnum.IfElse ? IF_ELSE_FALLBACK_HANDLE : undefined,
+          type: CUSTOM_EDGE,
+        })
+      } else {
+        cannotLink = true
+      }
+    }
+
+    setNodes(nextNodes)
+    setEdges(nextEdges)
+    setActiveNode(nextNode)
+    record({ nodes: nextNodes, edges: nextEdges })
+    if (type === BlockEnum.Iteration)
+      fitView({ nodes: [{ id: nextNode.id }], duration: 220, padding: 0.28 })
+    if (!linked && cannotLink)
+      globalThis.alert('节点已插入，但当前选中节点无法自动连线')
+  }, [activeNode, edges, fitView, idRef, nodeTypeLabel, nodes, record, setActiveNode, setEdges, setNodes, updateIterationChildren])
+
   const handleSaveActiveNode = () => {
     if (!activeNode)
       return
@@ -1051,6 +1238,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
         }}
         onOpenGlobalParams={() => setGlobalVariableOpen(true)}
         onOpenChecklist={() => setChecklistOpen(true)}
+        onOpenAINodeGenerate={() => setAINodeGenerateOpen(true)}
         onExport={exportDSL}
         onOpenImport={() => setImportOpen(true)}
         onReset={reset}
@@ -1161,6 +1349,16 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
           }}
         />
       </div>
+
+      <AINodeGenerateModal
+        open={aiNodeGenerateOpen}
+        modelOptions={llmModelOptions}
+        defaultModel={defaultLLMModel}
+        activeNodeType={activeNode?.data.type}
+        variableOptions={aiVariableOptions}
+        onClose={() => setAINodeGenerateOpen(false)}
+        onConfirm={handleInsertAINode}
+      />
 
       <DSLModals
         importOpen={importOpen}

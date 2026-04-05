@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"sxfgssever/server/internal/apimeta"
+	"sxfgssever/server/internal/model"
 	"sxfgssever/server/internal/response"
 	"sxfgssever/server/internal/service"
 )
@@ -22,10 +23,11 @@ func NewHealthHandler(systemService service.SystemService, registry *apimeta.Reg
 
 func (handler *HealthHandler) Register(router fiber.Router) {
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[struct{}]{
-		Method:  fiber.MethodGet,
-		Path:    "/health",
-		Summary: "健康检查",
-		Auth:    "public",
+		Method:             fiber.MethodGet,
+		Path:               "/health",
+		Summary:            "健康检查",
+		Auth:               "public",
+		SuccessDataExample: apimeta.ExampleFromType[model.HealthDTO](),
 	}, handler.GetHealth)
 }
 

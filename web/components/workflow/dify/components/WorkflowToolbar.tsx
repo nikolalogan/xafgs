@@ -11,6 +11,7 @@ type WorkflowToolbarProps = {
   onLayout: () => void
   onOpenGlobalParams: () => void
   onOpenChecklist: () => void
+  onOpenAINodeGenerate: () => void
   onRun: () => void
   onExport: () => void
   onOpenImport: () => void
@@ -27,6 +28,7 @@ export default function WorkflowToolbar({
   onLayout,
   onOpenGlobalParams,
   onOpenChecklist,
+  onOpenAINodeGenerate,
   onRun,
   onExport,
   onOpenImport,
@@ -39,6 +41,7 @@ export default function WorkflowToolbar({
     run: onRun,
     globalParams: onOpenGlobalParams,
     check: onOpenChecklist,
+    aiNodeGenerate: onOpenAINodeGenerate,
     export: onExport,
     import: onOpenImport,
     reset: onReset,

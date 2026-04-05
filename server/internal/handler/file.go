@@ -44,52 +44,60 @@ func NewFileHandler(fileService service.FileService, registry *apimeta.Registry)
 
 func (handler *FileHandler) Register(router fiber.Router) {
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[struct{}]{
-		Method:  fiber.MethodGet,
-		Path:    "/files",
-		Summary: "获取文件列表",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/files",
+		Summary:            "获取文件列表",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[[]model.FileDTO](),
 	}, handler.ListFiles)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[createUploadSessionRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/files/sessions",
-		Summary: "创建上传会话（选中文件但未上传）",
-		Auth:    "auth",
+		Method:             fiber.MethodPost,
+		Path:               "/files/sessions",
+		Summary:            "创建上传会话（选中文件但未上传）",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.UploadSessionDTO](),
 	}, handler.CreateSession)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[uploadSessionIDPathRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/files/sessions/:sessionId/content",
-		Summary: "按会话上传文件内容",
-		Auth:    "auth",
+		Method:             fiber.MethodPost,
+		Path:               "/files/sessions/:sessionId/content",
+		Summary:            "按会话上传文件内容",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.FileUploadResultDTO](),
 	}, handler.UploadSessionContent)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[uploadSessionIDPathRequest]{
-		Method:  fiber.MethodDelete,
-		Path:    "/files/sessions/:sessionId",
-		Summary: "取消上传会话",
-		Auth:    "auth",
+		Method:             fiber.MethodDelete,
+		Path:               "/files/sessions/:sessionId",
+		Summary:            "取消上传会话",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[bool](),
 	}, handler.CancelSession)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[fileIDPathRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/files/:fileId/versions",
-		Summary: "上传文件新版本",
-		Auth:    "auth",
+		Method:             fiber.MethodPost,
+		Path:               "/files/:fileId/versions",
+		Summary:            "上传文件新版本",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.FileUploadResultDTO](),
 	}, handler.UploadVersion)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[fileIDPathRequest]{
-		Method:  fiber.MethodGet,
-		Path:    "/files/:fileId",
-		Summary: "获取文件详情",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/files/:fileId",
+		Summary:            "获取文件详情",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.FileDTO](),
 	}, handler.GetFile)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[fileIDPathRequest]{
-		Method:  fiber.MethodGet,
-		Path:    "/files/:fileId/versions",
-		Summary: "获取文件版本列表",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/files/:fileId/versions",
+		Summary:            "获取文件版本列表",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[[]model.FileVersionDTO](),
 	}, handler.ListVersions)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[fileVersionResolveRequest]{
-		Method:  fiber.MethodGet,
-		Path:    "/files/:fileId/resolve",
-		Summary: "按 fileId/versionNo 解析已上传文件版本",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/files/:fileId/resolve",
+		Summary:            "按 fileId/versionNo 解析已上传文件版本",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.FileVersionDTO](),
 	}, handler.ResolveReference)
 }
 

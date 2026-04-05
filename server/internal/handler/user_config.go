@@ -37,17 +37,19 @@ func NewUserConfigHandler(service service.UserConfigService, registry *apimeta.R
 
 func (handler *UserConfigHandler) Register(router fiber.Router) {
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[struct{}]{
-		Method:  fiber.MethodGet,
-		Path:    "/user-config",
-		Summary: "获取当前用户配置",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/user-config",
+		Summary:            "获取当前用户配置",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.UserConfigDTO](),
 	}, handler.GetCurrentUserConfig)
 
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[updateUserConfigRequest]{
-		Method:  fiber.MethodPut,
-		Path:    "/user-config",
-		Summary: "更新当前用户配置",
-		Auth:    "auth",
+		Method:             fiber.MethodPut,
+		Path:               "/user-config",
+		Summary:            "更新当前用户配置",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.UserConfigDTO](),
 	}, handler.UpdateCurrentUserConfig)
 }
 

@@ -4,7 +4,7 @@ import "time"
 
 type CreateEnterpriseRequest struct {
 	ShortName                         string                         `json:"shortName"`
-	Region                            string                         `json:"region"`
+	RegionID                          int64                          `json:"regionId"`
 	InHiddenDebtList                  bool                           `json:"inHiddenDebtList"`
 	In3899List                        bool                           `json:"in3899List"`
 	Meets335Indicator                 bool                           `json:"meets335Indicator"`
@@ -31,6 +31,8 @@ type CreateEnterpriseRequest struct {
 	EnterpriseNature                  string                         `json:"enterpriseNature"`
 	ActualController                  string                         `json:"actualController"`
 	ActualControllerControlPath       string                         `json:"actualControllerControlPath"`
+	IssuerRating                      string                         `json:"issuerRating"`
+	IssuerRatingAgency                string                         `json:"issuerRatingAgency"`
 	UnifiedCreditCode                 string                         `json:"unifiedCreditCode"`
 	LegalPersonIDCard                 string                         `json:"legalPersonIdCard"`
 	Tags                              []EnterpriseTag                `json:"tags"`

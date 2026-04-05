@@ -1,6 +1,6 @@
 import { BlockEnum } from '../core/types'
 
-export type ToolbarActionKey = 'undo' | 'redo' | 'layout' | 'run' | 'globalParams' | 'check' | 'export' | 'import' | 'reset'
+export type ToolbarActionKey = 'undo' | 'redo' | 'layout' | 'run' | 'globalParams' | 'check' | 'export' | 'import' | 'reset' | 'aiNodeGenerate'
 
 export const toolbarNodeButtons: Array<{ type: BlockEnum; label: string }> = [
   { type: BlockEnum.Start, label: '开始节点' },
@@ -21,6 +21,7 @@ export const toolbarActionButtons: Array<{ key: ToolbarActionKey; label: string;
   { key: 'run', label: '运行', className: 'rounded bg-violet-600 px-3 py-1.5 text-xs text-white hover:bg-violet-700' },
   { key: 'globalParams', label: '全局参数', className: 'rounded bg-indigo-600 px-3 py-1.5 text-xs text-white hover:bg-indigo-700' },
   { key: 'check', label: '错误检查', className: 'rounded bg-rose-600 px-3 py-1.5 text-xs text-white hover:bg-rose-700' },
+  { key: 'aiNodeGenerate', label: 'AI 配置节点', className: 'rounded bg-cyan-600 px-3 py-1.5 text-xs text-white hover:bg-cyan-700' },
   { key: 'export', label: '导出 DSL', className: 'rounded bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700' },
   { key: 'import', label: '导入 DSL', className: 'rounded bg-emerald-600 px-3 py-1.5 text-xs text-white hover:bg-emerald-700' },
   { key: 'reset', label: '重置', className: 'rounded bg-amber-500 px-3 py-1.5 text-xs text-white hover:bg-amber-600' },

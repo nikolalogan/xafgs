@@ -230,6 +230,50 @@ const normalizeInputFieldOptions = (raw: unknown): Array<{ label: string; value:
   }).filter(item => item.value)
 }
 
+const normalizeHttpKeyValueArray = (raw: unknown): Array<{ key: string; value: string }> => {
+  if (Array.isArray(raw)) {
+    return raw.map((item) => {
+      const entry = isObject(item) ? item as Record<string, unknown> : {}
+      return {
+        key: typeof entry.key === 'string' ? entry.key : '',
+        value: typeof entry.value === 'string' ? entry.value : '',
+      }
+    })
+  }
+  if (isObject(raw)) {
+    return Object.entries(raw as Record<string, unknown>).map(([key, value]) => ({
+      key,
+      value: typeof value === 'string' ? value : (() => {
+        if (value === undefined || value === null)
+          return ''
+        try {
+          return JSON.stringify(value)
+        }
+        catch {
+          return String(value)
+        }
+      })(),
+    }))
+  }
+  return []
+}
+
+const normalizeHttpBodyValue = (raw: unknown, bodyType: HttpNodeConfig['bodyType']) => {
+  if (typeof raw === 'string')
+    return raw
+  if (raw === undefined || raw === null)
+    return ''
+  if (bodyType === 'json') {
+    try {
+      return JSON.stringify(raw, null, 2)
+    }
+    catch {
+      return ''
+    }
+  }
+  return String(raw)
+}
+
 const defaultFactories: { [K in BlockEnum]: () => DifyNodeConfigMap[K] } = {
   [BlockEnum.Start]: defaultStartConfig,
   [BlockEnum.End]: defaultEndConfig,
@@ -392,11 +436,20 @@ export const ensureNodeConfig = <K extends BlockEnum>(
     if (!config || !isObject(config))
       return fallback as DifyNodeConfigMap[K]
     const http = config as Partial<HttpNodeConfig>
+    const bodyType = (http.bodyType === 'none'
+      || http.bodyType === 'json'
+      || http.bodyType === 'raw'
+      || http.bodyType === 'x-www-form-urlencoded'
+      || http.bodyType === 'form-data')
+      ? http.bodyType
+      : fallback.bodyType
     return {
       ...fallback,
       ...http,
-      query: Array.isArray(http.query) ? http.query : fallback.query,
-      headers: Array.isArray(http.headers) ? http.headers : fallback.headers,
+      bodyType,
+      query: normalizeHttpKeyValueArray(http.query),
+      headers: normalizeHttpKeyValueArray(http.headers),
+      body: normalizeHttpBodyValue(http.body, bodyType),
       outputSchema: typeof http.outputSchema === 'string' ? http.outputSchema : fallback.outputSchema,
       writebackMappings: Array.isArray(http.writebackMappings)
         ? http.writebackMappings.map(item => ({

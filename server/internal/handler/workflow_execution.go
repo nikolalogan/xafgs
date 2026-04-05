@@ -73,28 +73,32 @@ func NewWorkflowExecutionHandler(
 func (handler *WorkflowExecutionHandler) Register(router fiber.Router, adminMiddleware fiber.Handler) {
 	group := router.Group("", adminMiddleware)
 	apimeta.Register(group, handler.registry, apimeta.RouteSpec[startWorkflowExecutionRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/workflow/executions",
-		Summary: "创建并启动执行",
-		Auth:    "admin",
+		Method:             fiber.MethodPost,
+		Path:               "/workflow/executions",
+		Summary:            "创建并启动执行",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowExecution](),
 	}, handler.Start)
 	apimeta.Register(group, handler.registry, apimeta.RouteSpec[executionIDPathRequest]{
-		Method:  fiber.MethodGet,
-		Path:    "/workflow/executions/:id",
-		Summary: "获取执行详情",
-		Auth:    "admin",
+		Method:             fiber.MethodGet,
+		Path:               "/workflow/executions/:id",
+		Summary:            "获取执行详情",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowExecution](),
 	}, handler.Get)
 	apimeta.Register(group, handler.registry, apimeta.RouteSpec[resumeWorkflowExecutionRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/workflow/executions/:id/resume",
-		Summary: "提交节点输入并继续",
-		Auth:    "admin",
+		Method:             fiber.MethodPost,
+		Path:               "/workflow/executions/:id/resume",
+		Summary:            "提交节点输入并继续",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowExecution](),
 	}, handler.Resume)
 	apimeta.Register(group, handler.registry, apimeta.RouteSpec[executionIDPathRequest]{
-		Method:  fiber.MethodDelete,
-		Path:    "/workflow/executions/:id",
-		Summary: "取消执行",
-		Auth:    "admin",
+		Method:             fiber.MethodDelete,
+		Path:               "/workflow/executions/:id",
+		Summary:            "取消执行",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowExecution](),
 	}, handler.Cancel)
 }
 

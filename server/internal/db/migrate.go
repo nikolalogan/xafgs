@@ -142,10 +142,49 @@ CREATE INDEX IF NOT EXISTS idx_file_status ON file(status);
 CREATE INDEX IF NOT EXISTS idx_file_version_file_version ON file_version(file_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_upload_session_status_expires_at ON upload_session(status, expires_at);
 
+CREATE TABLE IF NOT EXISTS region (
+  id BIGSERIAL PRIMARY KEY,
+  admin_code VARCHAR(64) NOT NULL UNIQUE,
+  overview TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS region_economy (
+  id BIGSERIAL PRIMARY KEY,
+  region_id BIGINT NOT NULL REFERENCES region(id) ON DELETE CASCADE,
+  gdp_rank_province INT,
+  gdp_rank_province_total INT,
+  is_top100_county BOOLEAN NOT NULL DEFAULT false,
+  is_top100_city BOOLEAN NOT NULL DEFAULT false,
+  gdp NUMERIC(20, 4),
+  gdp_growth NUMERIC(12, 6),
+  population NUMERIC(20, 4),
+  fiscal_self_sufficiency_ratio NUMERIC(12, 6),
+  general_budget_revenue NUMERIC(20, 4),
+  general_budget_revenue_growth NUMERIC(12, 6),
+  general_budget_revenue_total NUMERIC(20, 4),
+  general_budget_revenue_tax NUMERIC(20, 4),
+  general_budget_revenue_non_tax NUMERIC(20, 4),
+  general_budget_revenue_superior_subsidy NUMERIC(20, 4),
+  liability_ratio NUMERIC(12, 6),
+  liability_ratio_broad NUMERIC(12, 6),
+  debt_ratio NUMERIC(12, 6),
+  debt_ratio_broad NUMERIC(12, 6),
+  year INT NOT NULL CHECK (year >= 1900),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0,
+  UNIQUE (region_id, year)
+);
+
 CREATE TABLE IF NOT EXISTS enterprise (
   id BIGSERIAL PRIMARY KEY,
   short_name VARCHAR(256) NOT NULL,
-  region VARCHAR(128) NOT NULL DEFAULT '',
+  region_id BIGINT NOT NULL REFERENCES region(id),
   in_hidden_debt_list BOOLEAN NOT NULL DEFAULT false,
   in_3899_list BOOLEAN NOT NULL DEFAULT false,
   meets_335_indicator BOOLEAN NOT NULL DEFAULT false,
@@ -172,6 +211,8 @@ CREATE TABLE IF NOT EXISTS enterprise (
   enterprise_nature VARCHAR(128) NOT NULL DEFAULT '',
   actual_controller VARCHAR(128) NOT NULL DEFAULT '',
   actual_controller_control_path TEXT NOT NULL DEFAULT '',
+  issuer_rating VARCHAR(64) NOT NULL DEFAULT '',
+  issuer_rating_agency VARCHAR(128) NOT NULL DEFAULT '',
   unified_credit_code VARCHAR(64) NOT NULL,
   legal_person_id_card VARCHAR(64) NOT NULL DEFAULT '',
   status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deleted')),
@@ -240,6 +281,9 @@ CREATE TABLE IF NOT EXISTS enterprise_finance_snapshot (
   enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE UNIQUE,
   roa NUMERIC(12, 6),
   interest_coverage NUMERIC(12, 6),
+  liability_asset_ratio_industry_median NUMERIC(12, 6),
+  roe_industry_median NUMERIC(12, 6),
+  non_standard_financing_ratio_industry_median NUMERIC(12, 6),
   main_business_1 VARCHAR(256) NOT NULL DEFAULT '',
   main_business_2 VARCHAR(256) NOT NULL DEFAULT '',
   main_business_3 VARCHAR(256) NOT NULL DEFAULT '',
@@ -267,10 +311,35 @@ CREATE TABLE IF NOT EXISTS enterprise_shareholder (
   order_no INT NOT NULL DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS enterprise_financial_report (
+  id BIGSERIAL PRIMARY KEY,
+  enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
+  year INT NOT NULL CHECK (year >= 1900),
+  month INT NOT NULL CHECK (month >= 1 AND month <= 12),
+  accounting_firm VARCHAR(256) NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0,
+  UNIQUE (enterprise_id, year, month)
+);
+
+CREATE TABLE IF NOT EXISTS enterprise_financial_report_item (
+  id BIGSERIAL PRIMARY KEY,
+  financial_report_id BIGINT NOT NULL REFERENCES enterprise_financial_report(id) ON DELETE CASCADE,
+  subject_id BIGINT NOT NULL REFERENCES enterprise_finance_subject(id) ON DELETE RESTRICT,
+  value NUMERIC(20, 4),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0,
+  UNIQUE (financial_report_id, subject_id)
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_enterprise_credit_code_active
 ON enterprise(unified_credit_code)
 WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_enterprise_region ON enterprise(region);
+CREATE INDEX IF NOT EXISTS idx_enterprise_region_id ON enterprise(region_id);
 CREATE INDEX IF NOT EXISTS idx_enterprise_admission_status ON enterprise(admission_status);
 CREATE INDEX IF NOT EXISTS idx_enterprise_updated_at ON enterprise(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_enterprise_tag_enterprise_order ON enterprise_tag(enterprise_id, order_no);
@@ -280,6 +349,10 @@ CREATE INDEX IF NOT EXISTS idx_enterprise_bond_detail_enterprise_order ON enterp
 CREATE INDEX IF NOT EXISTS idx_enterprise_bond_registration_enterprise_order ON enterprise_bond_registration(enterprise_id, order_no);
 CREATE INDEX IF NOT EXISTS idx_enterprise_finance_subject_enterprise_order ON enterprise_finance_subject(enterprise_id, order_no);
 CREATE INDEX IF NOT EXISTS idx_enterprise_shareholder_enterprise_order ON enterprise_shareholder(enterprise_id, order_no);
+CREATE INDEX IF NOT EXISTS idx_enterprise_financial_report_enterprise_year_month ON enterprise_financial_report(enterprise_id, year, month);
+CREATE INDEX IF NOT EXISTS idx_enterprise_financial_report_item_report_id ON enterprise_financial_report_item(financial_report_id);
+CREATE INDEX IF NOT EXISTS idx_region_admin_code ON region(admin_code);
+CREATE INDEX IF NOT EXISTS idx_region_economy_region_year ON region_economy(region_id, year DESC);
 
 CREATE TABLE IF NOT EXISTS chat_conversation (
   id BIGSERIAL PRIMARY KEY,
@@ -309,6 +382,52 @@ CREATE INDEX IF NOT EXISTS idx_chat_message_conversation_id_id ON chat_message(c
 func Migrate(ctx context.Context, conn *sql.DB) error {
 	if _, err := conn.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+INSERT INTO region (admin_code, overview, created_at, updated_at, created_by, updated_by)
+VALUES ('000000', '默认区域', NOW(), NOW(), 1, 1)
+ON CONFLICT (admin_code) DO NOTHING;
+
+ALTER TABLE enterprise
+ADD COLUMN IF NOT EXISTS region_id BIGINT;
+ALTER TABLE enterprise
+ADD COLUMN IF NOT EXISTS issuer_rating VARCHAR(64) NOT NULL DEFAULT '';
+ALTER TABLE enterprise
+ADD COLUMN IF NOT EXISTS issuer_rating_agency VARCHAR(128) NOT NULL DEFAULT '';
+
+UPDATE enterprise
+SET region_id = (SELECT id FROM region WHERE admin_code = '000000' LIMIT 1)
+WHERE region_id IS NULL;
+
+ALTER TABLE enterprise
+ALTER COLUMN region_id SET NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname IN ('fk_enterprise_region_id', 'enterprise_region_id_fkey')
+  ) THEN
+    ALTER TABLE enterprise
+    ADD CONSTRAINT fk_enterprise_region_id
+    FOREIGN KEY (region_id) REFERENCES region(id);
+  END IF;
+END $$;
+
+ALTER TABLE enterprise
+DROP COLUMN IF EXISTS region;
+
+DROP INDEX IF EXISTS idx_enterprise_region;
+CREATE INDEX IF NOT EXISTS idx_enterprise_region_id ON enterprise(region_id);
+
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS liability_asset_ratio_industry_median NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS roe_industry_median NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS non_standard_financing_ratio_industry_median NUMERIC(12, 6);
+`); err != nil {
+		return fmt.Errorf("migrate enterprise region/finance extension: %w", err)
 	}
 	if _, err := conn.ExecContext(ctx, `
 ALTER TABLE workflow

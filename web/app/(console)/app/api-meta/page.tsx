@@ -347,6 +347,16 @@ export default function ApiMetaPage() {
                               {resp.contentType ? <span className="ml-2 text-gray-500">{resp.contentType}</span> : null}
                               {resp.description ? <span className="ml-2 text-gray-500">{resp.description}</span> : null}
                               {resp.dataShape ? <span className="ml-2 text-gray-400">{resp.dataShape}</span> : null}
+                              {resp.httpStatus === 200 && resp.example && typeof resp.example === 'object' && resp.example !== null && 'data' in (resp.example as Record<string, unknown>)
+                                ? (
+                                  <div className="mt-1">
+                                    <div className="mb-1 text-[11px] font-semibold text-gray-600">data（200 结果对象）</div>
+                                    <pre className="overflow-auto rounded bg-blue-50 p-2 text-[11px] leading-4 text-gray-700">
+                                      {JSON.stringify((resp.example as Record<string, unknown>).data, null, 2)}
+                                    </pre>
+                                  </div>
+                                )
+                                : null}
                               {resp.example
                                 ? (
                                   <pre className="mt-1 overflow-auto rounded bg-gray-50 p-2 text-[11px] leading-4 text-gray-700">

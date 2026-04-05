@@ -464,13 +464,36 @@ func (apiRequestExecutor) Execute(ctx context.Context, input NodeExecutorContext
 	} else {
 		ok = resp.StatusCode == expectedStatusCode
 	}
+	if ok && !hasValue(data) {
+		// 200 成功但响应不是常见 {data: ...} 包装时，返回完整响应，避免信息丢失。
+		data = parsed
+	}
+	responsePayload := parsed
+	if ok {
+		switch typed := data.(type) {
+		case map[string]any:
+			if len(typed) > 0 {
+				responsePayload = typed
+			}
+		case []any:
+			if len(typed) > 0 {
+				responsePayload = typed
+			}
+		default:
+			if hasValue(typed) {
+				responsePayload = typed
+			}
+		}
+	}
 
 	output := map[string]any{
 		"httpStatus": resp.StatusCode,
 		"statusCode": statusCode,
 		"ok":         ok,
 		"message":    message,
-		"response":   parsedObj,
+		"response":   responsePayload,
+		"result":     responsePayload,
+		"rawResponse": parsed,
 		"data":       data,
 		"url":        finalURL,
 		"method":     method,

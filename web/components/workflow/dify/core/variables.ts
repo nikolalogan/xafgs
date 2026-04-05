@@ -325,12 +325,22 @@ export const buildWorkflowVariableOptions = (
   return [...finalUnique.values()]
 }
 
-export const formatValueForDisplay = (rawValue: string, options: WorkflowVariableOption[]): string => {
-  if (!rawValue)
+export const formatValueForDisplay = (rawValue: unknown, options: WorkflowVariableOption[]): string => {
+  if (rawValue === undefined || rawValue === null || rawValue === '')
     return ''
+  const safeRawValue = (() => {
+    if (typeof rawValue === 'string')
+      return rawValue
+    try {
+      return JSON.stringify(rawValue)
+    }
+    catch {
+      return String(rawValue)
+    }
+  })()
 
   const map = new Map(options.map(option => [option.placeholder, option.displayLabel]))
-  return rawValue.replace(/\{\{\s*([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_.-]+)\s*\}\}/g, (full, nodeId, param) => {
+  return safeRawValue.replace(/\{\{\s*([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_.-]+)\s*\}\}/g, (full, nodeId, param) => {
     const placeholder = `{{${nodeId}.${param}}}`
     const display = map.get(placeholder)
     if (!display)

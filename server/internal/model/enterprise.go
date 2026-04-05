@@ -10,7 +10,7 @@ const (
 type Enterprise struct {
 	BaseEntity
 	ShortName                         string     `json:"shortName"`
-	Region                            string     `json:"region"`
+	RegionID                          int64      `json:"regionId"`
 	InHiddenDebtList                  bool       `json:"inHiddenDebtList"`
 	In3899List                        bool       `json:"in3899List"`
 	Meets335Indicator                 bool       `json:"meets335Indicator"`
@@ -37,6 +37,8 @@ type Enterprise struct {
 	EnterpriseNature                  string     `json:"enterpriseNature"`
 	ActualController                  string     `json:"actualController"`
 	ActualControllerControlPath       string     `json:"actualControllerControlPath"`
+	IssuerRating                      string     `json:"issuerRating"`
+	IssuerRatingAgency                string     `json:"issuerRatingAgency"`
 	UnifiedCreditCode                 string     `json:"unifiedCreditCode"`
 	LegalPersonIDCard                 string     `json:"legalPersonIdCard"`
 	Status                            string     `json:"status"`
@@ -94,6 +96,9 @@ type EnterpriseFinanceSnapshot struct {
 	ID                 int64    `json:"id"`
 	ROA                *float64 `json:"roa,omitempty"`
 	InterestCoverage   *float64 `json:"interestCoverage,omitempty"`
+	LiabilityAssetRatioIndustryMedian *float64 `json:"liabilityAssetRatioIndustryMedian,omitempty"`
+	ROEIndustryMedian                 *float64 `json:"roeIndustryMedian,omitempty"`
+	NonStandardFinancingRatioIndustryMedian *float64 `json:"nonStandardFinancingRatioIndustryMedian,omitempty"`
 	MainBusiness1      string   `json:"mainBusiness1"`
 	MainBusiness2      string   `json:"mainBusiness2"`
 	MainBusiness3      string   `json:"mainBusiness3"`
@@ -135,7 +140,7 @@ type EnterpriseDTO struct {
 	ID                int64     `json:"id"`
 	ShortName         string    `json:"shortName"`
 	UnifiedCreditCode string    `json:"unifiedCreditCode"`
-	Region            string    `json:"region"`
+	RegionID          int64     `json:"regionId"`
 	AdmissionStatus   bool      `json:"admissionStatus"`
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
@@ -168,6 +173,8 @@ type EnterpriseDetailDTO struct {
 	EnterpriseNature                  string                       `json:"enterpriseNature"`
 	ActualController                  string                       `json:"actualController"`
 	ActualControllerControlPath       string                       `json:"actualControllerControlPath"`
+	IssuerRating                      string                       `json:"issuerRating"`
+	IssuerRatingAgency                string                       `json:"issuerRatingAgency"`
 	LegalPersonIDCard                 string                       `json:"legalPersonIdCard"`
 	Tags                              []EnterpriseTag              `json:"tags"`
 	PublicOpinions                    []EnterprisePublicOpinion    `json:"publicOpinions"`
@@ -183,7 +190,7 @@ type EnterpriseListQuery struct {
 	Page            int    `json:"page"`
 	PageSize        int    `json:"pageSize"`
 	Keyword         string `json:"keyword"`
-	Region          string `json:"region"`
+	RegionID        int64  `json:"regionId"`
 	AdmissionStatus *bool  `json:"admissionStatus,omitempty"`
 }
 
@@ -199,7 +206,7 @@ func (enterprise Enterprise) ToDTO() EnterpriseDTO {
 		ID:                enterprise.ID,
 		ShortName:         enterprise.ShortName,
 		UnifiedCreditCode: enterprise.UnifiedCreditCode,
-		Region:            enterprise.Region,
+		RegionID:          enterprise.RegionID,
 		AdmissionStatus:   enterprise.AdmissionStatus,
 		CreatedAt:         enterprise.CreatedAt,
 		UpdatedAt:         enterprise.UpdatedAt,
@@ -235,6 +242,8 @@ func (aggregate EnterpriseAggregate) ToDetailDTO() EnterpriseDetailDTO {
 		EnterpriseNature:                  enterprise.EnterpriseNature,
 		ActualController:                  enterprise.ActualController,
 		ActualControllerControlPath:       enterprise.ActualControllerControlPath,
+		IssuerRating:                      enterprise.IssuerRating,
+		IssuerRatingAgency:                enterprise.IssuerRatingAgency,
 		LegalPersonIDCard:                 enterprise.LegalPersonIDCard,
 		Tags:                              aggregate.Tags,
 		PublicOpinions:                    aggregate.PublicOpinions,

@@ -32,10 +32,11 @@ func NewWorkflowDSLGenerateHandler(service service.WorkflowDSLGenerateService, r
 
 func (handler *WorkflowDSLGenerateHandler) Register(router fiber.Router) {
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[workflowDSLGenerateRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/workflow/dsl-generate",
-		Summary: "工作流 DSL AI 生成",
-		Auth:    "auth",
+		Method:             fiber.MethodPost,
+		Path:               "/workflow/dsl-generate",
+		Summary:            "工作流 DSL AI 生成",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[service.WorkflowDSLGenerateResult](),
 	}, handler.Generate)
 }
 
@@ -56,4 +57,3 @@ func (handler *WorkflowDSLGenerateHandler) Generate(c *fiber.Ctx, request *workf
 	}
 	return response.Success(c, fiber.StatusOK, data, "生成成功")
 }
-

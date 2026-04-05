@@ -49,38 +49,43 @@ func NewChatHandler(service service.ChatService, registry *apimeta.Registry) *Ch
 
 func (handler *ChatHandler) Register(router fiber.Router) {
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[createChatConversationRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/chat/conversations",
-		Summary: "创建聊天会话",
-		Auth:    "auth",
+		Method:             fiber.MethodPost,
+		Path:               "/chat/conversations",
+		Summary:            "创建聊天会话",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.ChatConversationDTO](),
 	}, handler.CreateConversation)
 
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[struct{}]{
-		Method:  fiber.MethodGet,
-		Path:    "/chat/conversations",
-		Summary: "查询聊天会话列表",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/chat/conversations",
+		Summary:            "查询聊天会话列表",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[[]model.ChatConversationDTO](),
 	}, handler.ListConversations)
 
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[listChatMessagesRequest]{
-		Method:  fiber.MethodGet,
-		Path:    "/chat/conversations/:id/messages",
-		Summary: "查询会话消息",
-		Auth:    "auth",
+		Method:             fiber.MethodGet,
+		Path:               "/chat/conversations/:id/messages",
+		Summary:            "查询会话消息",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[[]model.ChatMessageDTO](),
 	}, handler.ListMessages)
 
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[sendChatMessageRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/chat/conversations/:id/messages",
-		Summary: "发送消息并获得回复",
-		Auth:    "auth",
+		Method:             fiber.MethodPost,
+		Path:               "/chat/conversations/:id/messages",
+		Summary:            "发送消息并获得回复",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.ChatSendResultDTO](),
 	}, handler.SendMessage)
 
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[chatConversationIDPathRequest]{
-		Method:  fiber.MethodDelete,
-		Path:    "/chat/conversations/:id",
-		Summary: "删除聊天会话",
-		Auth:    "auth",
+		Method:             fiber.MethodDelete,
+		Path:               "/chat/conversations/:id",
+		Summary:            "删除聊天会话",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[bool](),
 	}, handler.DeleteConversation)
 }
 

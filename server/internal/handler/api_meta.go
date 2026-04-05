@@ -39,12 +39,20 @@ func (handler *APIMetaHandler) Register(router fiber.Router, adminMiddleware fib
 		Path:    "/meta/routes",
 		Summary: "查询 API 列表与参数校验",
 		Auth:    "admin",
+		SuccessDataExample: map[string]any{
+			"count":  1,
+			"routes": []any{apimeta.ExampleFromType[apimeta.APIRouteDoc]()},
+		},
 	}, handler.ListRoutes)
 	apimeta.Register(group, handler.registry, apimeta.RouteSpec[listTracesRequest]{
 		Method:  fiber.MethodGet,
 		Path:    "/meta/traces",
 		Summary: "查询最近请求/响应样例",
 		Auth:    "admin",
+		SuccessDataExample: map[string]any{
+			"count":  1,
+			"traces": []any{apimeta.ExampleFromType[apimeta.Trace]()},
+		},
 	}, handler.ListTraces)
 }
 

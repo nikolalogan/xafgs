@@ -58,40 +58,46 @@ func NewTemplateHandler(templateService service.TemplateService, registry *apime
 func (handler *TemplateHandler) Register(router fiber.Router, adminMiddleware fiber.Handler) {
 	adminGroup := router.Group("", adminMiddleware)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[struct{}]{
-		Method:  fiber.MethodGet,
-		Path:    "/templates",
-		Summary: "获取模板列表",
-		Auth:    "admin",
+		Method:             fiber.MethodGet,
+		Path:               "/templates",
+		Summary:            "获取模板列表",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[[]model.TemplateDTO](),
 	}, handler.ListTemplates)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[templateIDPathRequest]{
-		Method:  fiber.MethodGet,
-		Path:    "/templates/:templateId",
-		Summary: "获取模板详情",
-		Auth:    "admin",
+		Method:             fiber.MethodGet,
+		Path:               "/templates/:templateId",
+		Summary:            "获取模板详情",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[model.TemplateDetailDTO](),
 	}, handler.GetTemplateByID)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[createTemplateRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/templates",
-		Summary: "创建模板",
-		Auth:    "admin",
+		Method:             fiber.MethodPost,
+		Path:               "/templates",
+		Summary:            "创建模板",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[model.TemplateDTO](),
 	}, handler.CreateTemplate)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[previewTemplateRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/templates/preview",
-		Summary: "预览模板渲染",
-		Auth:    "admin",
+		Method:             fiber.MethodPost,
+		Path:               "/templates/preview",
+		Summary:            "预览模板渲染",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[model.PreviewTemplateResponse](),
 	}, handler.PreviewTemplate)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[updateTemplateRequest]{
-		Method:  fiber.MethodPut,
-		Path:    "/templates/:templateId",
-		Summary: "更新模板",
-		Auth:    "admin",
+		Method:             fiber.MethodPut,
+		Path:               "/templates/:templateId",
+		Summary:            "更新模板",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[model.TemplateDTO](),
 	}, handler.UpdateTemplate)
 	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[templateIDPathRequest]{
-		Method:  fiber.MethodDelete,
-		Path:    "/templates/:templateId",
-		Summary: "删除模板",
-		Auth:    "admin",
+		Method:             fiber.MethodDelete,
+		Path:               "/templates/:templateId",
+		Summary:            "删除模板",
+		Auth:               "admin",
+		SuccessDataExample: apimeta.ExampleFromType[bool](),
 	}, handler.DeleteTemplate)
 }
 

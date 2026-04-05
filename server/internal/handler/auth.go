@@ -6,6 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"sxfgssever/server/internal/apimeta"
+	"sxfgssever/server/internal/model"
 	"sxfgssever/server/internal/response"
 	"sxfgssever/server/internal/service"
 )
@@ -29,10 +30,11 @@ func NewAuthHandler(authService service.AuthService, registry *apimeta.Registry)
 
 func (handler *AuthHandler) Register(router fiber.Router) {
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[loginRequest]{
-		Method:  fiber.MethodPost,
-		Path:    "/auth/login",
-		Summary: "登录",
-		Auth:    "public",
+		Method:             fiber.MethodPost,
+		Path:               "/auth/login",
+		Summary:            "登录",
+		Auth:               "public",
+		SuccessDataExample: apimeta.ExampleFromType[model.LoginResponse](),
 	}, handler.Login)
 }
 
