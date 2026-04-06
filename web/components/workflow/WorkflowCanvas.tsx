@@ -818,7 +818,11 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     }
   }, [onNodesChangeBase, record, setNodes, updateIterationChildren])
 
-  const handleNodeDragStop = useCallback(() => {
+  const handleNodeDragStop = useCallback((_: React.MouseEvent, node: DifyNode) => {
+    if (activeNode?.id === node.id) {
+      // 同步 activeNode，避免保存时使用旧 position 覆盖最新拖拽结果。
+      setActiveNode(node)
+    }
     if (!dragRecordPendingRef.current)
       return
     dragRecordPendingRef.current = false
@@ -828,7 +832,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
         edges: latestEdgesRef.current,
       })
     })
-  }, [record])
+  }, [activeNode?.id, record, setActiveNode])
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     const mainChanges: EdgeChange[] = []
@@ -1180,7 +1184,18 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
 
     const childRef = parseChildNodeId(activeNode.id)
     if (!childRef) {
-      return nodes.map(item => (item.id === activeNode.id ? activeNode : item))
+      return nodes.map((item) => {
+        if (item.id !== activeNode.id)
+          return item
+        // 合并 activeNode.data，保留节点当前位置/尺寸等运行态属性。
+        return {
+          ...item,
+          data: {
+            ...item.data,
+            ...activeNode.data,
+          },
+        }
+      })
     }
 
     return updateIterationChildren(nodes, childRef.parentId, children => ({

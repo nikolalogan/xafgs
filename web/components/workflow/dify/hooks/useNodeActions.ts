@@ -61,7 +61,18 @@ export const useNodeActions = ({
 
   const saveNode = useCallback(() => {
     if (!activeNode) return
-    const nextNodes = nodes.map(item => (item.id === activeNode.id ? activeNode : item))
+    const nextNodes = nodes.map((item) => {
+      if (item.id !== activeNode.id)
+        return item
+      // 仅回写节点可编辑数据，避免用过期 activeNode 覆盖画布中的最新位置/尺寸信息。
+      return {
+        ...item,
+        data: {
+          ...item.data,
+          ...activeNode.data,
+        },
+      }
+    })
     setNodes(nextNodes)
     record({ nodes: nextNodes, edges })
   }, [activeNode, edges, nodes, record, setNodes])
