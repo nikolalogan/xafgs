@@ -471,6 +471,11 @@ export default function AINodeGenerateModal({
           )}
 
           <label className="block text-xs text-gray-500">需求描述</label>
+          {nodeType === BlockEnum.HttpRequest && (
+            <div className="rounded border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs text-blue-700">
+              建议在描述中粘贴“HTTP 响应 JSON 示例”并写明映射关系（如 data.list[].name 到 workflow.names[]），AI 会按“按 JSON 生成映射”规则生成 writebackMappings。
+            </div>
+          )}
           <div className="grid grid-cols-12 gap-2">
             <select
               className="col-span-10 rounded border border-gray-300 px-2 py-1.5 text-xs"

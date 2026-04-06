@@ -263,20 +263,6 @@ export const validateWorkflow = (
         groupedOutgoing.get(key)!.push(edge)
       })
 
-      const needExplicitFanOutMode = node.data.type === BlockEnum.IfElse
-        ? [...groupedOutgoing.values()].some(group => group.length > 1)
-        : outCount > 1
-
-      if (needExplicitFanOutMode && !hasExplicitFanOutMode) {
-        issues.push({
-          id: `${prefix}-fanout-mode-required`,
-          nodeId: node.id,
-          level: 'error',
-          title: `${node.data.title} 多后续执行策略未配置`,
-          message: '当前节点存在多后续节点，必须显式设置 fanOutMode（parallel/sequential）。',
-        })
-      }
-
       if (fanOutMode === 'parallel') {
         const groupsToCheck = node.data.type === BlockEnum.IfElse
           ? [...groupedOutgoing.values()].filter(group => group.length > 1)

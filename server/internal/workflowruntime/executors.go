@@ -697,21 +697,25 @@ func buildHTTPWritebacks(mappings any, parsed any, output map[string]any) []Writ
 		if strings.TrimSpace(sourcePath) == "$" {
 			return parsed, true
 		}
+		candidates := buildHTTPSourcePathCandidates(sourcePath)
 		// 兼容历史配置：
 		// 1. 直接从响应 body 取值
 		// 2. 若 body 为统一报文，允许省略最外层 data.
 		// 3. 兜底支持显式从 output wrapper 取值
-		if value, found := readFromOutputByPathWithFound(bodyObj, sourcePath); found {
-			return value, true
-		}
-		if value, found := readFromOutputByPathWithFound(bodyObj, "data."+sourcePath); found {
-			return value, true
-		}
-		if value, found := readFromOutputByPathWithFound(output, sourcePath); found {
-			return value, true
-		}
-		if value, found := readFromOutputByPathWithFound(output, "body."+sourcePath); found {
-			return value, true
+		// 4. 增强兼容：sourcePath 含 data./body. 前缀时自动去前缀重试
+		for _, candidate := range candidates {
+			if value, found := readFromOutputByPathWithFound(bodyObj, candidate); found {
+				return value, true
+			}
+			if value, found := readFromOutputByPathWithFound(bodyObj, "data."+candidate); found {
+				return value, true
+			}
+			if value, found := readFromOutputByPathWithFound(output, candidate); found {
+				return value, true
+			}
+			if value, found := readFromOutputByPathWithFound(output, "body."+candidate); found {
+				return value, true
+			}
 		}
 		return nil, false
 	})
@@ -741,7 +745,11 @@ func buildWritebacksByResolver(mappings any, resolve func(sourcePath string) (an
 			arrayGroups[arrayMapping.TargetArrayPath] = append(arrayGroups[arrayMapping.TargetArrayPath], arrayMapping)
 			continue
 		}
-		value, _ := resolve(mapping.SourcePath)
+		value, found := resolve(mapping.SourcePath)
+		if !found {
+			// sourcePath 未命中时跳过写回，避免覆盖已有变量为 nil。
+			continue
+		}
 		result = append(result, Writeback{TargetPath: mapping.TargetPath, Value: value})
 	}
 
@@ -770,6 +778,32 @@ func buildWritebacksByResolver(mappings any, resolve func(sourcePath string) (an
 		})
 	}
 	return result
+}
+
+func buildHTTPSourcePathCandidates(sourcePath string) []string {
+	raw := strings.TrimSpace(sourcePath)
+	if raw == "" {
+		return nil
+	}
+	candidates := []string{raw}
+	for _, prefix := range []string{"data.", "$.data.", "body.", "$.body."} {
+		if strings.HasPrefix(raw, prefix) {
+			trimmed := strings.TrimSpace(strings.TrimPrefix(raw, prefix))
+			if trimmed != "" {
+				candidates = append(candidates, trimmed)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	deduped := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		deduped = append(deduped, candidate)
+	}
+	return deduped
 }
 
 func parseWritebackMappings(mappings any) []writebackMapping {

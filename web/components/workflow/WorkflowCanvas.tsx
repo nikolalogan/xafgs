@@ -818,7 +818,9 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     }
   }, [onNodesChangeBase, record, setNodes, updateIterationChildren])
 
-  const handleNodeDragStop = useCallback((_: React.MouseEvent, node: DifyNode) => {
+  const handleNodeDragStop = useCallback((_: React.MouseEvent, node?: DifyNode) => {
+    if (!node)
+      return
     if (activeNode?.id === node.id) {
       // 同步 activeNode，避免保存时使用旧 position 覆盖最新拖拽结果。
       setActiveNode(node)

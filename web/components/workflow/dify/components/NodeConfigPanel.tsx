@@ -968,6 +968,8 @@ export default function NodeConfigPanel({
                   showSearch
                   onChange={(value) => {
                     const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                    if (selected === mapping.targetPath)
+                      return
                     const next = [...config.writebackMappings]
                     next[index] = { ...mapping, targetPath: selected }
                     updateConfig({ ...config, writebackMappings: next })
@@ -1472,6 +1474,8 @@ export default function NodeConfigPanel({
                     showSearch
                     onChange={(value) => {
                       const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                      if (selected === mapping.sourcePath)
+                        return
                       const next = [...config.writebackMappings]
                       next[index] = { ...mapping, sourcePath: selected }
                       updateConfig({ ...config, writebackMappings: next })
@@ -1498,6 +1502,8 @@ export default function NodeConfigPanel({
                   showSearch
                   onChange={(value) => {
                     const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                    if (selected === mapping.targetPath)
+                      return
                     const next = [...config.writebackMappings]
                     next[index] = { ...mapping, targetPath: selected }
                     updateConfig({ ...config, writebackMappings: next })
@@ -1981,6 +1987,8 @@ export default function NodeConfigPanel({
                   showSearch
                   onChange={(value) => {
                     const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                    if (selected === mapping.sourcePath)
+                      return
                     const next = [...config.writebackMappings]
                     next[index] = { ...mapping, sourcePath: selected }
                     updateConfig({ ...config, writebackMappings: next })
@@ -2007,6 +2015,8 @@ export default function NodeConfigPanel({
                 showSearch
                 onChange={(value) => {
                   const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                  if (selected === mapping.targetPath)
+                    return
                   const next = [...config.writebackMappings]
                   next[index] = { ...mapping, targetPath: selected }
                   updateConfig({ ...config, writebackMappings: next })

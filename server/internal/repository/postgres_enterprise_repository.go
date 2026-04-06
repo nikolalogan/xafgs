@@ -441,9 +441,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 	}
 	for i, item := range aggregate.BondDetails {
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO enterprise_bond_detail (enterprise_id, short_name, bond_code, bond_type, balance, bond_term, rating, guarantor, order_no)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-`, aggregate.Enterprise.ID, strings.TrimSpace(item.ShortName), strings.TrimSpace(item.Code), strings.TrimSpace(item.Type), item.Balance, strings.TrimSpace(item.Term), strings.TrimSpace(item.Rating), strings.TrimSpace(item.Guarantor), i+1); err != nil {
+INSERT INTO enterprise_bond_detail (
+  enterprise_id, short_name, bond_code, bond_type, balance, bond_term, rating, guarantor,
+  guarantor_type, issue_time, issue_rate, maturity_date, usefor, order_no
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+`, aggregate.Enterprise.ID, strings.TrimSpace(item.ShortName), strings.TrimSpace(item.Code), strings.TrimSpace(item.Type), item.Balance, strings.TrimSpace(item.Term), strings.TrimSpace(item.Rating), strings.TrimSpace(item.Guarantor), strings.TrimSpace(item.GuarantorType), item.Time, item.Rate, item.MaturityDate, strings.TrimSpace(item.Usefor), i+1); err != nil {
 			return err
 		}
 	}
@@ -638,13 +641,35 @@ WHERE id = $1 AND deleted_at IS NULL
 	}
 	_ = rows.Close()
 
-	rows, err = query(`SELECT id, short_name, bond_code, bond_type, balance, bond_term, rating, guarantor, order_no FROM enterprise_bond_detail WHERE enterprise_id = $1 ORDER BY order_no ASC, id ASC`, enterpriseID)
+	rows, err = query(`
+SELECT
+  id, short_name, bond_code, bond_type, balance, bond_term, rating, guarantor,
+  guarantor_type, issue_time, issue_rate, maturity_date, usefor, order_no
+FROM enterprise_bond_detail
+WHERE enterprise_id = $1
+ORDER BY order_no ASC, id ASC
+`, enterpriseID)
 	if err != nil {
 		return model.EnterpriseAggregate{}, false
 	}
 	for rows.Next() {
 		var row model.EnterpriseBondDetail
-		if err := rows.Scan(&row.ID, &row.ShortName, &row.Code, &row.Type, floatPtrScanner{dst: &row.Balance}, &row.Term, &row.Rating, &row.Guarantor, &row.OrderNo); err == nil {
+		if err := rows.Scan(
+			&row.ID,
+			&row.ShortName,
+			&row.Code,
+			&row.Type,
+			floatPtrScanner{dst: &row.Balance},
+			&row.Term,
+			&row.Rating,
+			&row.Guarantor,
+			&row.GuarantorType,
+			timePtrScanner{dst: &row.Time},
+			floatPtrScanner{dst: &row.Rate},
+			timePtrScanner{dst: &row.MaturityDate},
+			&row.Usefor,
+			&row.OrderNo,
+		); err == nil {
 			aggregate.BondDetails = append(aggregate.BondDetails, row)
 		}
 	}

@@ -71,15 +71,20 @@ type EnterpriseBondTender struct {
 }
 
 type EnterpriseBondDetail struct {
-	ID        int64    `json:"id"`
-	ShortName string   `json:"shortName"`
-	Code      string   `json:"code"`
-	Type      string   `json:"type"`
-	Balance   *float64 `json:"balance,omitempty"`
-	Term      string   `json:"term"`
-	Rating    string   `json:"rating"`
-	Guarantor string   `json:"guarantor"`
-	OrderNo   int      `json:"orderNo"`
+	ID            int64      `json:"id"`
+	ShortName     string     `json:"shortName"`
+	Code          string     `json:"code"`
+	Type          string     `json:"type"`
+	Balance       *float64   `json:"balance,omitempty"`
+	Term          string     `json:"term"`
+	Rating        string     `json:"rating"`
+	Guarantor     string     `json:"guarantor"`
+	GuarantorType string     `json:"guarantorType"`
+	Time          *time.Time `json:"time,omitempty"`
+	Rate          *float64   `json:"rate,omitempty"`
+	MaturityDate  *time.Time `json:"maturityDate,omitempty"`
+	Usefor        string     `json:"usefor"`
+	OrderNo       int        `json:"orderNo"`
 }
 
 type EnterpriseBondRegistration struct {

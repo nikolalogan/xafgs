@@ -338,6 +338,11 @@ func buildNodeTypeConstraintText(request WorkflowNodeGenerateRequest) string {
 	case "http-request":
 		writeLine("config 必须包含 method、url、query、headers、bodyType、body、timeout、authorization。")
 		writeLine("写回映射使用 writebackMappings，元素需包含 sourcePath 与 targetPath。")
+		writeLine("若用户描述中提供了 HTTP 响应 JSON 示例，必须按“按 JSON 生成映射”规则生成 writebackMappings：遍历响应 JSON 可映射路径并写入 sourcePath。")
+		writeLine("“按 JSON 生成映射”路径规则：对象路径与叶子路径均可映射；数组路径使用 []（例如 data.list[]、data.list[].id）。")
+		writeLine("HTTP 节点的 sourcePath 以响应 body 为根路径，不要自动增加 data. 或 body. 前缀。")
+		writeLine("若用户明确给出了目标参数关系（例如 a.b -> workflow.x），则填写对应 targetPath；未明确指定时 targetPath 允许为空字符串。")
+		writeLine("若描述包含数组逐项映射语义（如 a[].x -> b[].y），保留 [] 语义并按索引聚合字段。")
 	case "api-request":
 		writeLine("config 必须包含 route、params、paramValues、timeout、successStatusCode、writebackMappings。")
 		if request.Context.SelectedAPI != nil {

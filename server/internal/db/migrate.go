@@ -262,6 +262,11 @@ CREATE TABLE IF NOT EXISTS enterprise_bond_detail (
   bond_term VARCHAR(128) NOT NULL DEFAULT '',
   rating VARCHAR(128) NOT NULL DEFAULT '',
   guarantor VARCHAR(256) NOT NULL DEFAULT '',
+  guarantor_type VARCHAR(128) NOT NULL DEFAULT '',
+  issue_time TIMESTAMPTZ,
+  issue_rate NUMERIC(12, 6),
+  maturity_date TIMESTAMPTZ,
+  usefor TEXT NOT NULL DEFAULT '',
   order_no INT NOT NULL DEFAULT 1
 );
 
@@ -426,6 +431,16 @@ ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS roe_industry_median NUMERIC(12, 6);
 ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS non_standard_financing_ratio_industry_median NUMERIC(12, 6);
+ALTER TABLE enterprise_bond_detail
+ADD COLUMN IF NOT EXISTS guarantor_type VARCHAR(128) NOT NULL DEFAULT '';
+ALTER TABLE enterprise_bond_detail
+ADD COLUMN IF NOT EXISTS issue_time TIMESTAMPTZ;
+ALTER TABLE enterprise_bond_detail
+ADD COLUMN IF NOT EXISTS issue_rate NUMERIC(12, 6);
+ALTER TABLE enterprise_bond_detail
+ADD COLUMN IF NOT EXISTS maturity_date TIMESTAMPTZ;
+ALTER TABLE enterprise_bond_detail
+ADD COLUMN IF NOT EXISTS usefor TEXT NOT NULL DEFAULT '';
 `); err != nil {
 		return fmt.Errorf("migrate enterprise region/finance extension: %w", err)
 	}

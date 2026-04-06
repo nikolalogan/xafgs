@@ -209,6 +209,8 @@ func normalizeEnterpriseRequest(request model.CreateEnterpriseRequest) model.Cre
 		request.BondDetails[i].Term = strings.TrimSpace(request.BondDetails[i].Term)
 		request.BondDetails[i].Rating = strings.TrimSpace(request.BondDetails[i].Rating)
 		request.BondDetails[i].Guarantor = strings.TrimSpace(request.BondDetails[i].Guarantor)
+		request.BondDetails[i].GuarantorType = strings.TrimSpace(request.BondDetails[i].GuarantorType)
+		request.BondDetails[i].Usefor = strings.TrimSpace(request.BondDetails[i].Usefor)
 	}
 	for i := range request.BondRegistrations {
 		request.BondRegistrations[i].ProjectName = strings.TrimSpace(request.BondRegistrations[i].ProjectName)
