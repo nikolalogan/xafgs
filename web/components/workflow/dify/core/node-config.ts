@@ -101,6 +101,7 @@ const defaultStartConfig = (): StartNodeConfig => ({
 })
 
 const defaultEndConfig = (): EndNodeConfig => ({
+  joinMode: 'all',
   outputs: [
     { name: 'result', source: 'llm.text' },
   ],
@@ -108,6 +109,7 @@ const defaultEndConfig = (): EndNodeConfig => ({
 })
 
 const defaultLLMConfig = (): LLMNodeConfig => ({
+  joinMode: 'all',
   model: 'gpt-4o-mini',
   temperature: 0.7,
   maxTokens: 1024,
@@ -117,6 +119,7 @@ const defaultLLMConfig = (): LLMNodeConfig => ({
 })
 
 const defaultIfElseConfig = (): IfElseNodeConfig => ({
+  joinMode: 'all',
   conditions: [
     { name: '分支1', left: 'query', operator: 'contains', right: '' },
   ],
@@ -124,6 +127,7 @@ const defaultIfElseConfig = (): IfElseNodeConfig => ({
 })
 
 const defaultCodeConfig = (): CodeNodeConfig => ({
+  joinMode: 'all',
   language: 'javascript',
   code: 'function main(input) {\n  return { result: input }\n}',
   outputSchema: '',
@@ -150,6 +154,7 @@ const createDefaultIterationChildren = (): IterationNodeConfig['children'] => ({
 })
 
 const defaultIterationConfig = (): IterationNodeConfig => ({
+  joinMode: 'all',
   iteratorSource: '',
   outputSource: '',
   outputVar: 'results',
@@ -163,6 +168,7 @@ const defaultIterationConfig = (): IterationNodeConfig => ({
 })
 
 const defaultHttpConfig = (): HttpNodeConfig => ({
+  joinMode: 'all',
   method: 'GET',
   url: '',
   query: [],
@@ -180,6 +186,7 @@ const defaultHttpConfig = (): HttpNodeConfig => ({
 })
 
 const defaultApiRequestConfig = (): ApiRequestNodeConfig => ({
+  joinMode: 'all',
   route: {
     method: 'GET',
     path: '',
@@ -192,6 +199,8 @@ const defaultApiRequestConfig = (): ApiRequestNodeConfig => ({
 })
 
 const defaultInputConfig = (): InputNodeConfig => ({
+  joinMode: 'all',
+  prompt: '',
   fields: [
     {
       name: 'input',
@@ -227,7 +236,7 @@ const normalizeInputFieldOptions = (raw: unknown): Array<{ label: string; value:
     }
     const value = String(option ?? '')
     return { label: value, value }
-  }).filter(item => item.value)
+  })
 }
 
 const normalizeHttpKeyValueArray = (raw: unknown): Array<{ key: string; value: string }> => {
@@ -273,6 +282,8 @@ const normalizeHttpBodyValue = (raw: unknown, bodyType: HttpNodeConfig['bodyType
   }
   return String(raw)
 }
+
+const normalizeJoinMode = (value: unknown): 'all' | 'any' => (value === 'any' ? 'any' : 'all')
 
 const defaultFactories: { [K in BlockEnum]: () => DifyNodeConfigMap[K] } = {
   [BlockEnum.Start]: defaultStartConfig,
@@ -351,6 +362,8 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       : fallback.fields
     return {
       ...fallback,
+      joinMode: normalizeJoinMode(input.joinMode),
+      prompt: typeof input.prompt === 'string' ? input.prompt : fallback.prompt,
       fields: normalizedFields,
     } as DifyNodeConfigMap[K]
   }
@@ -363,6 +376,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
     return {
       ...fallback,
       ...llm,
+      joinMode: normalizeJoinMode(llm.joinMode),
     } as DifyNodeConfigMap[K]
   }
 
@@ -381,6 +395,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       : fallback.conditions
     return {
       ...fallback,
+      joinMode: normalizeJoinMode(condition.joinMode),
       conditions: normalizedConditions,
       elseBranchName: typeof condition.elseBranchName === 'string' && condition.elseBranchName.trim()
         ? condition.elseBranchName
@@ -396,6 +411,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
     return {
       ...fallback,
       ...code,
+      joinMode: normalizeJoinMode(code.joinMode),
       outputSchema: typeof code.outputSchema === 'string' ? code.outputSchema : fallback.outputSchema,
       writebackMappings: Array.isArray(code.writebackMappings)
         ? code.writebackMappings.map(item => ({
@@ -424,6 +440,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
     return {
       ...fallback,
       ...iteration,
+      joinMode: normalizeJoinMode(iteration.joinMode),
       itemVar: typeof iteration.itemVar === 'string' && iteration.itemVar.trim() ? iteration.itemVar : fallback.itemVar,
       indexVar: typeof iteration.indexVar === 'string' && iteration.indexVar.trim() ? iteration.indexVar : fallback.indexVar,
       parallelNums: typeof iteration.parallelNums === 'number' ? iteration.parallelNums : fallback.parallelNums,
@@ -446,6 +463,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
     return {
       ...fallback,
       ...http,
+      joinMode: normalizeJoinMode(http.joinMode),
       bodyType,
       query: normalizeHttpKeyValueArray(http.query),
       headers: normalizeHttpKeyValueArray(http.headers),
@@ -473,6 +491,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
     return {
       ...fallback,
       ...api,
+      joinMode: normalizeJoinMode(api.joinMode),
       route: {
         ...fallback.route,
         ...route,
@@ -539,6 +558,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
     return {
       ...fallback,
       outputs: Array.isArray(end.outputs) ? end.outputs : fallback.outputs,
+      joinMode: normalizeJoinMode(end.joinMode),
       templateId: normalizedTemplateId,
     } as DifyNodeConfigMap[K]
   }

@@ -330,7 +330,7 @@ func buildNodeTypeConstraintText(request WorkflowNodeGenerateRequest) string {
 	case "start":
 		writeLine("config 必须包含 variables 数组，每项至少包含 name、label、type、required。")
 	case "input":
-		writeLine("config 必须包含 fields 数组，每项至少包含 name、label、type、required。")
+		writeLine("config 必须包含 fields 数组，每项至少包含 name、label、type、required；可选 prompt（输入提示词）。")
 	case "llm":
 		writeLine("config 必须包含 model、temperature、maxTokens、systemPrompt、userPrompt、contextEnabled。")
 	case "if-else":
@@ -350,7 +350,10 @@ func buildNodeTypeConstraintText(request WorkflowNodeGenerateRequest) string {
 		writeLine("config 必须包含 iteratorSource、outputSource、outputVar、itemVar、indexVar、isParallel、parallelNums、errorHandleMode、flattenOutput。")
 		writeLine("不要输出 children 字段。")
 	case "end":
-		writeLine("config 必须包含 outputs 数组，元素需包含 name 与 source。")
+		writeLine("config 必须包含 outputs 数组，元素需包含 name 与 source；可选 joinMode（all/any）。")
+	}
+	if request.NodeType != "start" {
+		writeLine("可选 joinMode（all/any），用于多入边时控制汇聚策略。")
 	}
 
 	return builder.String()

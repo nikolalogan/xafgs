@@ -1227,6 +1227,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
         onUndo={doUndo}
         onRedo={doRedo}
         onLayout={handleAutoLayout}
+        onSave={handleSaveActiveNode}
         onRun={() => {
           setRunSnapshot({
             workflowId,

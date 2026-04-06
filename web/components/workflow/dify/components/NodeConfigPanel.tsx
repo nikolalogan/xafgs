@@ -712,20 +712,33 @@ export default function NodeConfigPanel({
     }
 
     return (
-      <StartNodeFormConfig
-        nodeId={activeNode.id}
-        sectionKey="input"
-        title="输入节点表单"
-        addButtonLabel="新增字段"
-        allowedTypes={['text-input', 'paragraph', 'number', 'select', 'checkbox']}
-        config={adaptedStartConfig}
-        onChange={handleChange}
-        variableOptions={variableOptions}
-        getScope={getScope}
-        onScopeChange={setScope}
-        modelOptions={llmModelSelectOptions}
-        defaultModel={defaultCodeModel}
-      />
+      <div className="space-y-2">
+        <VariableValueInput
+          label="提示词"
+          value={config.prompt ?? ''}
+          onChange={nextValue => updateBase({ config: { ...config, prompt: nextValue } })}
+          options={variableOptions}
+          scope={getScope(`${activeNode.id}.input.prompt`, 'all')}
+          onScopeChange={scope => setScope(`${activeNode.id}.input.prompt`, scope)}
+          allowMultiline
+          rows={4}
+          placeholder="请输入提示词（可插入参数）"
+        />
+        <StartNodeFormConfig
+          nodeId={activeNode.id}
+          sectionKey="input"
+          title="输入节点表单"
+          addButtonLabel="新增字段"
+          allowedTypes={['text-input', 'paragraph', 'number', 'select', 'checkbox']}
+          config={adaptedStartConfig}
+          onChange={handleChange}
+          variableOptions={variableOptions}
+          getScope={getScope}
+          onScopeChange={setScope}
+          modelOptions={llmModelSelectOptions}
+          defaultModel={defaultCodeModel}
+        />
+      </div>
     )
   }
 
@@ -2097,6 +2110,37 @@ export default function NodeConfigPanel({
     return null
   }
 
+  const renderJoinModeConfig = () => {
+    if (activeNode.data.type === BlockEnum.Start)
+      return null
+    const rawConfig = activeNode.data.config
+    const current = rawConfig && typeof rawConfig === 'object' && (rawConfig as { joinMode?: unknown }).joinMode === 'any'
+      ? 'any'
+      : 'all'
+    return (
+      <div className="space-y-1 rounded border border-gray-200 p-2">
+        <div className="text-xs text-gray-600">多入边汇聚策略</div>
+        <select
+          className={inputClass}
+          value={current}
+          onChange={(event) => {
+            const base = ensureNodeConfig(activeNode.data.type as never, activeNode.data.config as never) as Record<string, unknown>
+            updateBase({
+              config: {
+                ...base,
+                joinMode: event.target.value === 'any' ? 'any' : 'all',
+              } as never,
+            })
+          }}
+        >
+          <option value="all">等待全部上游（all）</option>
+          <option value="any">任一上游到达即执行（any）</option>
+        </select>
+        <div className="text-[11px] text-gray-400">仅当当前节点存在多条输入连线时生效。</div>
+      </div>
+    )
+  }
+
   return (
     <div className="col-span-3 rounded-xl border border-gray-200 bg-white p-3">
       <div className="mb-2 text-sm font-semibold">节点配置</div>
@@ -2113,6 +2157,7 @@ export default function NodeConfigPanel({
           value={activeNode.data.desc || ''}
           onChange={event => updateBase({ desc: event.target.value })}
         />
+        {renderJoinModeConfig()}
         {renderNodeSpecificConfig()}
         <button type="button" onClick={onSave} className="w-full rounded bg-blue-600 px-3 py-2 text-xs text-white hover:bg-blue-700">保存节点配置</button>
       </div>

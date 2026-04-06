@@ -43,7 +43,15 @@ func ParseInputFields(config map[string]any) []DynamicField {
 	return parseDynamicFields(raw)
 }
 
-func BuildInputSchema(fields []DynamicField) map[string]any {
+func ParseInputPrompt(config map[string]any) string {
+	if config == nil {
+		return ""
+	}
+	prompt, _ := config["prompt"].(string)
+	return prompt
+}
+
+func BuildInputSchema(fields []DynamicField, prompt string) map[string]any {
 	schemaFields := make([]map[string]any, 0, len(fields))
 	for _, field := range fields {
 		defaultValue := field.DefaultValue
@@ -69,7 +77,10 @@ func BuildInputSchema(fields []DynamicField) map[string]any {
 			"defaultValue": defaultValue,
 		})
 	}
-	return map[string]any{"fields": schemaFields}
+	return map[string]any{
+		"fields": schemaFields,
+		"prompt": prompt,
+	}
 }
 
 func ValidateAndNormalizeDynamicInput(fields []DynamicField, input map[string]any) (map[string]any, error) {

@@ -1532,6 +1532,19 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
               const nodeOutput = execution.variables[node.id]
               const isWaitingCurrent = execution.waitingInput?.nodeId === node.id && status === 'waiting_input'
               const nodeConfig: Record<string, unknown> = isObject(node.data.config) ? node.data.config : {}
+              const waitingPrompt = (() => {
+                if (!isWaitingCurrent)
+                  return ''
+                const schemaPromptRaw = execution.waitingInput?.schema?.['prompt']
+                const schemaPrompt = typeof schemaPromptRaw === 'string'
+                  ? schemaPromptRaw
+                  : ''
+                const nodePrompt = typeof nodeConfig.prompt === 'string' ? nodeConfig.prompt : ''
+                const rawPrompt = schemaPrompt || nodePrompt
+                if (!rawPrompt.trim())
+                  return ''
+                return renderRuntimeTemplate(rawPrompt, execution.variables ?? {})
+              })()
 
               return (
                 <div key={node.id} ref={(el) => { nodeCardRefs.current[node.id] = el }} className="rounded border border-gray-200">
@@ -1564,6 +1577,11 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                   {isWaitingCurrent && (
                         <div className="space-y-2 rounded border border-gray-200 bg-white p-2">
                           <div className="text-xs font-medium text-gray-800">节点等待输入，请提交后继续</div>
+                          {!!waitingPrompt && (
+                            <div className="whitespace-pre-wrap rounded border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-800">
+                              {waitingPrompt}
+                            </div>
+                          )}
                           <DynamicForm fields={waitingFields} values={waitingInput} onChange={setWaitingInput} />
                           <div className="flex justify-end pt-1">
                             <button

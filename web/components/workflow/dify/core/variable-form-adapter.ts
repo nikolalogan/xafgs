@@ -15,7 +15,7 @@ const normalizeSelectOptions = (raw: unknown): Array<{ label: string; value: str
     }
     const value = String(option ?? '')
     return { label: value, value }
-  }).filter(item => item.value)
+  })
 }
 
 const normalizeDefaultValue = (
@@ -65,7 +65,7 @@ export const adaptStartConfigToInputConfig = (
   const fields: InputNodeConfig['fields'] = startConfig.variables.map((item) => {
     const type = item.type === 'text-input' ? 'text' : (item.type as InputNodeConfig['fields'][number]['type'])
     const options = type === 'select'
-      ? (item.options ?? []).map(option => ({ label: option.label, value: option.value })).filter(option => option.value)
+      ? (item.options ?? []).map(option => ({ label: option.label, value: option.value }))
       : undefined
     const defaultValue = item.defaultValue === undefined ? undefined : item.defaultValue
 

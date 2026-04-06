@@ -19,9 +19,12 @@ import ReactFlow, {
 } from 'reactflow'
 import { createDefaultNodeConfig, ensureNodeConfig } from '../core/node-config'
 import CodeEditorField from './CodeEditorField'
+import VariableValueInput from './VariableValueInput'
+import { buildWorkflowVariableOptions } from '../core/variables'
 import {
   BlockEnum,
   type CodeNodeConfig,
+  type DifyNode,
   type DifyNodeConfig,
   type EndNodeConfig,
   type HttpNodeConfig,
@@ -122,6 +125,15 @@ function IterationSubflowEditorInner({
   const activeNode = useMemo(
     () => nodes.find(node => node.id === activeNodeId) ?? null,
     [activeNodeId, nodes],
+  )
+  const variableOptions = useMemo(
+    () => buildWorkflowVariableOptions(
+      nodes as unknown as DifyNode[],
+      [],
+      [],
+      activeNode as unknown as DifyNode | null,
+    ),
+    [activeNode, nodes],
   )
 
   const onNodesChange = (changes: NodeChange[]) => {
@@ -283,6 +295,15 @@ function IterationSubflowEditorInner({
       const config = ensureNodeConfig(BlockEnum.Input, activeNode.data.config) as InputNodeConfig
       return (
         <div className="space-y-2">
+          <VariableValueInput
+            label="提示词"
+            value={config.prompt ?? ''}
+            onChange={nextValue => updateActiveNodeConfig({ ...config, prompt: nextValue })}
+            options={variableOptions}
+            allowMultiline
+            rows={4}
+            placeholder="请输入提示词（可插入参数）"
+          />
           <label className={labelClass}>字段数量</label>
           <input
             className={inputClass}
@@ -411,6 +432,26 @@ function IterationSubflowEditorInner({
                   value={activeNode.data.desc || ''}
                   onChange={event => updateActiveNode({ desc: event.target.value })}
                 />
+                {activeNode.data.type !== BlockEnum.Start && (
+                  <div className="space-y-1 rounded border border-gray-200 p-2">
+                    <label className={labelClass}>多入边汇聚策略</label>
+                    <select
+                      className={inputClass}
+                      value={activeNode.data.config && typeof activeNode.data.config === 'object' && (activeNode.data.config as { joinMode?: unknown }).joinMode === 'any' ? 'any' : 'all'}
+                      onChange={(event) => {
+                        const base = ensureNodeConfig(activeNode.data.type as never, activeNode.data.config as never) as Record<string, unknown>
+                        updateActiveNodeConfig({
+                          ...base,
+                          joinMode: event.target.value === 'any' ? 'any' : 'all',
+                        } as DifyNodeConfig)
+                      }}
+                    >
+                      <option value="all">等待全部上游（all）</option>
+                      <option value="any">任一上游到达即执行（any）</option>
+                    </select>
+                    <div className="text-[11px] text-gray-400">仅当当前节点存在多条输入连线时生效。</div>
+                  </div>
+                )}
                 {renderNodeConfig()}
                 <button
                   className="rounded bg-red-50 px-2 py-1 text-xs text-red-600"

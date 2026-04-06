@@ -46,6 +46,7 @@ export type StartNodeConfig = {
 }
 
 export type EndNodeConfig = {
+  joinMode?: 'all' | 'any'
   outputs: Array<{
     name: string
     source: string
@@ -54,6 +55,7 @@ export type EndNodeConfig = {
 }
 
 export type LLMNodeConfig = {
+  joinMode?: 'all' | 'any'
   model: string
   temperature: number
   maxTokens: number
@@ -63,6 +65,7 @@ export type LLMNodeConfig = {
 }
 
 export type IfElseNodeConfig = {
+  joinMode?: 'all' | 'any'
   conditions: Array<{
     name: string
     left: string
@@ -73,6 +76,7 @@ export type IfElseNodeConfig = {
 }
 
 export type CodeNodeConfig = {
+  joinMode?: 'all' | 'any'
   language: 'javascript' | 'python3'
   code: string
   outputSchema?: string
@@ -84,6 +88,7 @@ export type CodeNodeConfig = {
 }
 
 export type IterationNodeConfig = {
+  joinMode?: 'all' | 'any'
   iteratorSource: string
   outputSource: string
   outputVar: string
@@ -118,6 +123,7 @@ export type IterationNodeConfig = {
 }
 
 export type HttpNodeConfig = {
+  joinMode?: 'all' | 'any'
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   url: string
   query: Array<{ key: string; value: string }>
@@ -160,6 +166,7 @@ export type ApiRequestParamValue = {
 }
 
 export type ApiRequestNodeConfig = {
+  joinMode?: 'all' | 'any'
   route: {
     method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
     path: string
@@ -175,6 +182,8 @@ export type ApiRequestNodeConfig = {
 }
 
 export type InputNodeConfig = {
+  joinMode?: 'all' | 'any'
+  prompt?: string
   fields: Array<{
     name: string
     label: string

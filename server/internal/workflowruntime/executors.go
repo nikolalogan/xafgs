@@ -86,7 +86,8 @@ type inputNodeExecutor struct{}
 
 func (inputNodeExecutor) Execute(_ context.Context, input NodeExecutorContext) (NodeExecutorResult, error) {
 	fields := ParseInputFields(input.Node.Data.Config)
-	schema := BuildInputSchema(fields)
+	prompt := ParseInputPrompt(input.Node.Data.Config)
+	schema := BuildInputSchema(fields, prompt)
 	if input.NodeInput == nil {
 		return NodeExecutorResult{Type: NodeExecutorResultWaitingInput, Schema: schema}, nil
 	}

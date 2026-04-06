@@ -131,6 +131,21 @@ export const validateWorkflow = (
         message: '结束节点至少需要一条输入连线。',
       })
     }
+    if (node.data.type !== BlockEnum.Start && inCount > 1) {
+      const rawConfig = node.data.config
+      const hasExplicitJoinMode = !!rawConfig
+        && typeof rawConfig === 'object'
+        && typeof (rawConfig as { joinMode?: unknown }).joinMode === 'string'
+      if (!hasExplicitJoinMode) {
+        issues.push({
+          id: `${prefix}-join-mode-default`,
+          nodeId: node.id,
+          level: 'warning',
+          title: `${node.data.title} 多入边汇聚策略未显式配置`,
+          message: '当前节点存在多条输入连线，建议显式设置 joinMode（all/any）以避免执行歧义。',
+        })
+      }
+    }
 
     if (node.data.type !== BlockEnum.Start && node.data.type !== BlockEnum.End) {
       if (inCount === 0) {
