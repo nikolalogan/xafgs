@@ -20,7 +20,10 @@ export enum NodeRunningStatus {
   Exception = 'exception',
 }
 
+export type FanOutMode = 'parallel' | 'sequential'
+
 export type StartNodeConfig = {
+  fanOutMode?: FanOutMode
   variables: Array<{
     name: string
     label: string
@@ -56,6 +59,7 @@ export type EndNodeConfig = {
 
 export type LLMNodeConfig = {
   joinMode?: 'all' | 'any'
+  fanOutMode?: FanOutMode
   model: string
   temperature: number
   maxTokens: number
@@ -66,6 +70,7 @@ export type LLMNodeConfig = {
 
 export type IfElseNodeConfig = {
   joinMode?: 'all' | 'any'
+  fanOutMode?: FanOutMode
   conditions: Array<{
     name: string
     left: string
@@ -77,6 +82,7 @@ export type IfElseNodeConfig = {
 
 export type CodeNodeConfig = {
   joinMode?: 'all' | 'any'
+  fanOutMode?: FanOutMode
   language: 'javascript' | 'python3'
   code: string
   outputSchema?: string
@@ -89,6 +95,7 @@ export type CodeNodeConfig = {
 
 export type IterationNodeConfig = {
   joinMode?: 'all' | 'any'
+  fanOutMode?: FanOutMode
   iteratorSource: string
   outputSource: string
   outputVar: string
@@ -124,6 +131,7 @@ export type IterationNodeConfig = {
 
 export type HttpNodeConfig = {
   joinMode?: 'all' | 'any'
+  fanOutMode?: FanOutMode
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   url: string
   query: Array<{ key: string; value: string }>
@@ -167,6 +175,7 @@ export type ApiRequestParamValue = {
 
 export type ApiRequestNodeConfig = {
   joinMode?: 'all' | 'any'
+  fanOutMode?: FanOutMode
   route: {
     method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
     path: string
@@ -183,6 +192,7 @@ export type ApiRequestNodeConfig = {
 
 export type InputNodeConfig = {
   joinMode?: 'all' | 'any'
+  fanOutMode?: FanOutMode
   prompt?: string
   fields: Array<{
     name: string

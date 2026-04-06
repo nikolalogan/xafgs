@@ -2141,6 +2141,37 @@ export default function NodeConfigPanel({
     )
   }
 
+  const renderFanOutModeConfig = () => {
+    if (activeNode.data.type === BlockEnum.End)
+      return null
+    const rawConfig = activeNode.data.config
+    const current = rawConfig && typeof rawConfig === 'object' && (rawConfig as { fanOutMode?: unknown }).fanOutMode === 'parallel'
+      ? 'parallel'
+      : 'sequential'
+    return (
+      <div className="space-y-1 rounded border border-gray-200 p-2">
+        <div className="text-xs text-gray-600">多后续执行策略</div>
+        <select
+          className={inputClass}
+          value={current}
+          onChange={(event) => {
+            const base = ensureNodeConfig(activeNode.data.type as never, activeNode.data.config as never) as Record<string, unknown>
+            updateBase({
+              config: {
+                ...base,
+                fanOutMode: event.target.value === 'parallel' ? 'parallel' : 'sequential',
+              } as never,
+            })
+          }}
+        >
+          <option value="sequential">顺序执行（sequential）</option>
+          <option value="parallel">并行执行（parallel）</option>
+        </select>
+        <div className="text-[11px] text-gray-400">仅当当前节点存在多个后续节点时生效。顺序模式按画布坐标（x→y）执行。</div>
+      </div>
+    )
+  }
+
   return (
     <div className="col-span-3 rounded-xl border border-gray-200 bg-white p-3">
       <div className="mb-2 text-sm font-semibold">节点配置</div>
@@ -2158,6 +2189,7 @@ export default function NodeConfigPanel({
           onChange={event => updateBase({ desc: event.target.value })}
         />
         {renderJoinModeConfig()}
+        {renderFanOutModeConfig()}
         {renderNodeSpecificConfig()}
         <button type="button" onClick={onSave} className="w-full rounded bg-blue-600 px-3 py-2 text-xs text-white hover:bg-blue-700">保存节点配置</button>
       </div>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -446,12 +447,13 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"handleId":    result.HandleID,
 					"branchName":  result.BranchName,
 				})
-			outgoing := outgoingEdgesMap[nodeID]
-			for _, edge := range selectIfElseNextEdges(outgoing, result.HandleID) {
-				markArrived(edge.Target, nodeID)
-				enqueue(edge.Target)
-			}
-			continue
+				outgoing := outgoingEdgesMap[nodeID]
+				nextEdges := orderFanOutEdges(node, selectIfElseNextEdges(outgoing, result.HandleID), nodeMap)
+				for _, edge := range nextEdges {
+					markArrived(edge.Target, nodeID)
+					enqueue(edge.Target)
+				}
+				continue
 
 			case NodeExecutorResultFailed:
 			failedState := next.NodeStates[nodeID]
@@ -538,12 +540,13 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"nodeId":      nodeID,
 					"durationMs":  nodeDurationMs(state.StartedAt, succeededState.EndedAt),
 				})
-			for _, edge := range outgoingEdgesMap[nodeID] {
-				markArrived(edge.Target, nodeID)
-				enqueue(edge.Target)
+				nextEdges := orderFanOutEdges(node, outgoingEdgesMap[nodeID], nodeMap)
+				for _, edge := range nextEdges {
+					markArrived(edge.Target, nodeID)
+					enqueue(edge.Target)
+				}
 			}
 		}
-	}
 
 	for nodeID, state := range next.NodeStates {
 		if state.Status == NodeRunStatusPending {
@@ -658,6 +661,60 @@ func selectIfElseNextEdges(edges []WorkflowEdge, handleID string) []WorkflowEdge
 		return edges[:1]
 	}
 	return nil
+}
+
+func orderFanOutEdges(node WorkflowNode, edges []WorkflowEdge, nodeMap map[string]WorkflowNode) []WorkflowEdge {
+	if len(edges) <= 1 {
+		return edges
+	}
+	if fanOutMode(node) == "parallel" {
+		return edges
+	}
+	ordered := append([]WorkflowEdge(nil), edges...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		left, leftOK := nodeMap[ordered[i].Target]
+		right, rightOK := nodeMap[ordered[j].Target]
+		if !leftOK || !rightOK {
+			if ordered[i].Target != ordered[j].Target {
+				return ordered[i].Target < ordered[j].Target
+			}
+			return ordered[i].ID < ordered[j].ID
+		}
+		leftX, leftY := nodeXY(left)
+		rightX, rightY := nodeXY(right)
+		if leftX != rightX {
+			return leftX < rightX
+		}
+		if leftY != rightY {
+			return leftY < rightY
+		}
+		if left.ID != right.ID {
+			return left.ID < right.ID
+		}
+		return ordered[i].ID < ordered[j].ID
+	})
+	return ordered
+}
+
+func fanOutMode(node WorkflowNode) string {
+	if node.Data.Config == nil {
+		return "sequential"
+	}
+	mode, _ := node.Data.Config["fanOutMode"].(string)
+	mode = strings.TrimSpace(mode)
+	if mode == "parallel" {
+		return "parallel"
+	}
+	return "sequential"
+}
+
+func nodeXY(node WorkflowNode) (float64, float64) {
+	if node.Position == nil {
+		return 0, 0
+	}
+	x := toFloat(node.Position["x"])
+	y := toFloat(node.Position["y"])
+	return x, y
 }
 
 func defaultMap(value map[string]any) map[string]any {

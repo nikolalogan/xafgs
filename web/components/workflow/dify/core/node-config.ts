@@ -95,6 +95,7 @@ const normalizeStartVariableFileTypes = (value: unknown): string[] | undefined =
 }
 
 const defaultStartConfig = (): StartNodeConfig => ({
+  fanOutMode: 'sequential',
   variables: [
     { name: 'query', label: '用户输入', type: 'text-input', required: true },
   ],
@@ -110,6 +111,7 @@ const defaultEndConfig = (): EndNodeConfig => ({
 
 const defaultLLMConfig = (): LLMNodeConfig => ({
   joinMode: 'all',
+  fanOutMode: 'sequential',
   model: 'gpt-4o-mini',
   temperature: 0.7,
   maxTokens: 1024,
@@ -120,6 +122,7 @@ const defaultLLMConfig = (): LLMNodeConfig => ({
 
 const defaultIfElseConfig = (): IfElseNodeConfig => ({
   joinMode: 'all',
+  fanOutMode: 'sequential',
   conditions: [
     { name: '分支1', left: 'query', operator: 'contains', right: '' },
   ],
@@ -128,6 +131,7 @@ const defaultIfElseConfig = (): IfElseNodeConfig => ({
 
 const defaultCodeConfig = (): CodeNodeConfig => ({
   joinMode: 'all',
+  fanOutMode: 'sequential',
   language: 'javascript',
   code: 'function main(input) {\n  return { result: input }\n}',
   outputSchema: '',
@@ -155,6 +159,7 @@ const createDefaultIterationChildren = (): IterationNodeConfig['children'] => ({
 
 const defaultIterationConfig = (): IterationNodeConfig => ({
   joinMode: 'all',
+  fanOutMode: 'sequential',
   iteratorSource: '',
   outputSource: '',
   outputVar: 'results',
@@ -169,6 +174,7 @@ const defaultIterationConfig = (): IterationNodeConfig => ({
 
 const defaultHttpConfig = (): HttpNodeConfig => ({
   joinMode: 'all',
+  fanOutMode: 'sequential',
   method: 'GET',
   url: '',
   query: [],
@@ -187,6 +193,7 @@ const defaultHttpConfig = (): HttpNodeConfig => ({
 
 const defaultApiRequestConfig = (): ApiRequestNodeConfig => ({
   joinMode: 'all',
+  fanOutMode: 'sequential',
   route: {
     method: 'GET',
     path: '',
@@ -200,6 +207,7 @@ const defaultApiRequestConfig = (): ApiRequestNodeConfig => ({
 
 const defaultInputConfig = (): InputNodeConfig => ({
   joinMode: 'all',
+  fanOutMode: 'sequential',
   prompt: '',
   fields: [
     {
@@ -284,6 +292,7 @@ const normalizeHttpBodyValue = (raw: unknown, bodyType: HttpNodeConfig['bodyType
 }
 
 const normalizeJoinMode = (value: unknown): 'all' | 'any' => (value === 'any' ? 'any' : 'all')
+const normalizeFanOutMode = (value: unknown): 'parallel' | 'sequential' => (value === 'parallel' ? 'parallel' : 'sequential')
 
 const defaultFactories: { [K in BlockEnum]: () => DifyNodeConfigMap[K] } = {
   [BlockEnum.Start]: defaultStartConfig,
@@ -339,6 +348,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       : fallback.variables
     return {
       ...fallback,
+      fanOutMode: normalizeFanOutMode(start.fanOutMode),
       variables: normalizedVariables,
     } as DifyNodeConfigMap[K]
   }
@@ -363,6 +373,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
     return {
       ...fallback,
       joinMode: normalizeJoinMode(input.joinMode),
+      fanOutMode: normalizeFanOutMode(input.fanOutMode),
       prompt: typeof input.prompt === 'string' ? input.prompt : fallback.prompt,
       fields: normalizedFields,
     } as DifyNodeConfigMap[K]
@@ -377,6 +388,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       ...fallback,
       ...llm,
       joinMode: normalizeJoinMode(llm.joinMode),
+      fanOutMode: normalizeFanOutMode(llm.fanOutMode),
     } as DifyNodeConfigMap[K]
   }
 
@@ -396,6 +408,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
     return {
       ...fallback,
       joinMode: normalizeJoinMode(condition.joinMode),
+      fanOutMode: normalizeFanOutMode(condition.fanOutMode),
       conditions: normalizedConditions,
       elseBranchName: typeof condition.elseBranchName === 'string' && condition.elseBranchName.trim()
         ? condition.elseBranchName
@@ -412,6 +425,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       ...fallback,
       ...code,
       joinMode: normalizeJoinMode(code.joinMode),
+      fanOutMode: normalizeFanOutMode(code.fanOutMode),
       outputSchema: typeof code.outputSchema === 'string' ? code.outputSchema : fallback.outputSchema,
       writebackMappings: Array.isArray(code.writebackMappings)
         ? code.writebackMappings.map(item => ({
@@ -441,6 +455,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       ...fallback,
       ...iteration,
       joinMode: normalizeJoinMode(iteration.joinMode),
+      fanOutMode: normalizeFanOutMode(iteration.fanOutMode),
       itemVar: typeof iteration.itemVar === 'string' && iteration.itemVar.trim() ? iteration.itemVar : fallback.itemVar,
       indexVar: typeof iteration.indexVar === 'string' && iteration.indexVar.trim() ? iteration.indexVar : fallback.indexVar,
       parallelNums: typeof iteration.parallelNums === 'number' ? iteration.parallelNums : fallback.parallelNums,
@@ -464,6 +479,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       ...fallback,
       ...http,
       joinMode: normalizeJoinMode(http.joinMode),
+      fanOutMode: normalizeFanOutMode(http.fanOutMode),
       bodyType,
       query: normalizeHttpKeyValueArray(http.query),
       headers: normalizeHttpKeyValueArray(http.headers),
@@ -492,6 +508,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       ...fallback,
       ...api,
       joinMode: normalizeJoinMode(api.joinMode),
+      fanOutMode: normalizeFanOutMode(api.fanOutMode),
       route: {
         ...fallback.route,
         ...route,

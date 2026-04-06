@@ -18,6 +18,38 @@ const hasDuplicate = (values: string[]) => {
   return normalized.length !== new Set(normalized).size
 }
 
+const extractWritebackTargets = (node: DifyNode) => {
+  const config = node.data.config
+  if (!config || typeof config !== 'object')
+    return []
+  const raw = (config as { writebackMappings?: unknown }).writebackMappings
+  if (!Array.isArray(raw))
+    return []
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== 'object')
+        return ''
+      const targetPath = (item as { targetPath?: unknown }).targetPath
+      return typeof targetPath === 'string' ? trim(targetPath) : ''
+    })
+    .filter(Boolean)
+}
+
+const findParallelWritebackConflicts = (targetNodes: DifyNode[]) => {
+  const pathOwners = new Map<string, Set<string>>()
+  targetNodes.forEach((node) => {
+    extractWritebackTargets(node).forEach((path) => {
+      if (!pathOwners.has(path))
+        pathOwners.set(path, new Set<string>())
+      pathOwners.get(path)!.add(node.id)
+    })
+  })
+  return [...pathOwners.entries()]
+    .filter(([, owners]) => owners.size > 1)
+    .map(([path]) => path)
+    .sort()
+}
+
 export const validateWorkflow = (
   nodes: DifyNode[],
   edges: DifyEdge[],
@@ -98,19 +130,25 @@ export const validateWorkflow = (
 
   const inDegree = new Map<string, number>()
   const outDegree = new Map<string, number>()
+  const outgoingBySource = new Map<string, DifyEdge[]>()
   nodes.forEach((node) => {
     inDegree.set(node.id, 0)
     outDegree.set(node.id, 0)
+    outgoingBySource.set(node.id, [])
   })
   edges.forEach((edge) => {
     inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1)
     outDegree.set(edge.source, (outDegree.get(edge.source) ?? 0) + 1)
+    const list = outgoingBySource.get(edge.source)
+    if (list)
+      list.push(edge)
   })
 
   nodes.forEach((node) => {
     const inCount = inDegree.get(node.id) ?? 0
     const outCount = outDegree.get(node.id) ?? 0
     const prefix = `node-${node.id}`
+    const nodeOutgoing = outgoingBySource.get(node.id) ?? []
 
     if (node.data.type === BlockEnum.Start && outCount === 0) {
       issues.push({
@@ -164,6 +202,60 @@ export const validateWorkflow = (
           level: 'warning',
           title: `${node.data.title} 未输出`,
           message: '该节点没有输出连线，流程可能在此中断。',
+        })
+      }
+    }
+
+    if (node.data.type !== BlockEnum.End) {
+      const rawConfig = node.data.config
+      const hasExplicitFanOutMode = !!rawConfig
+        && typeof rawConfig === 'object'
+        && typeof (rawConfig as { fanOutMode?: unknown }).fanOutMode === 'string'
+      const fanOutMode = hasExplicitFanOutMode && (rawConfig as { fanOutMode?: unknown }).fanOutMode === 'parallel'
+        ? 'parallel'
+        : 'sequential'
+      const groupedOutgoing = new Map<string, DifyEdge[]>()
+      nodeOutgoing.forEach((edge) => {
+        const key = trim(edge.sourceHandle || '__default__')
+        if (!groupedOutgoing.has(key))
+          groupedOutgoing.set(key, [])
+        groupedOutgoing.get(key)!.push(edge)
+      })
+
+      const needExplicitFanOutMode = node.data.type === BlockEnum.IfElse
+        ? [...groupedOutgoing.values()].some(group => group.length > 1)
+        : outCount > 1
+
+      if (needExplicitFanOutMode && !hasExplicitFanOutMode) {
+        issues.push({
+          id: `${prefix}-fanout-mode-required`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 多后续执行策略未配置`,
+          message: '当前节点存在多后续节点，必须显式设置 fanOutMode（parallel/sequential）。',
+        })
+      }
+
+      if (fanOutMode === 'parallel') {
+        const groupsToCheck = node.data.type === BlockEnum.IfElse
+          ? [...groupedOutgoing.values()].filter(group => group.length > 1)
+          : (outCount > 1 ? [nodeOutgoing] : [])
+        groupsToCheck.forEach((group, groupIndex) => {
+          const targetNodes = group
+            .map(edge => nodes.find(item => item.id === edge.target))
+            .filter((item): item is DifyNode => !!item)
+          const conflictPaths = findParallelWritebackConflicts(targetNodes)
+          if (conflictPaths.length === 0)
+            return
+          const preview = conflictPaths.slice(0, 3).join('，')
+          const suffix = conflictPaths.length > 3 ? ` 等 ${conflictPaths.length} 项` : ''
+          issues.push({
+            id: `${prefix}-parallel-writeback-conflict-${groupIndex}`,
+            nodeId: node.id,
+            level: 'warning',
+            title: `${node.data.title} 并行写入可能互相影响`,
+            message: `并行后续节点存在相同写入路径：${preview}${suffix}。建议改为顺序执行或拆分目标路径。`,
+          })
         })
       }
     }
