@@ -50,6 +50,47 @@ const findParallelWritebackConflicts = (targetNodes: DifyNode[]) => {
     .sort()
 }
 
+const countArrayToken = (value: string) => (value.match(/\[\]/g) || []).length
+
+const validateArrayWritebackMappings = (
+  prefix: string,
+  nodeId: string,
+  nodeTitle: string,
+  mappings: Array<{ sourcePath: string; targetPath: string }>,
+): WorkflowIssue[] => {
+  const issues: WorkflowIssue[] = []
+  mappings.forEach((item, index) => {
+    const sourcePath = trim(item.sourcePath || '')
+    const targetPath = trim(item.targetPath || '')
+    if (!sourcePath || !targetPath)
+      return
+    const sourceCount = countArrayToken(sourcePath)
+    const targetCount = countArrayToken(targetPath)
+
+    if (sourceCount > 1 || targetCount > 1) {
+      issues.push({
+        id: `${prefix}-writeback-array-nested-${index}`,
+        nodeId,
+        level: 'error',
+        title: `${nodeTitle} 数组映射层级不支持`,
+        message: 'writeback 映射暂不支持多层 []，请拆分为单层数组映射。',
+      })
+      return
+    }
+
+    if (targetCount === 1 && sourceCount === 0) {
+      issues.push({
+        id: `${prefix}-writeback-array-source-missing-${index}`,
+        nodeId,
+        level: 'warning',
+        title: `${nodeTitle} 数组映射来源可能不正确`,
+        message: 'targetPath 使用了 [] 但 sourcePath 未使用 []，该映射不会逐项索引对应。',
+      })
+    }
+  })
+  return issues
+}
+
 export const validateWorkflow = (
   nodes: DifyNode[],
   edges: DifyEdge[],
@@ -581,6 +622,9 @@ export const validateWorkflow = (
           message: '代码节点写入参数映射的 sourcePath/targetPath 不能为空。',
         })
       }
+      issues.push(
+        ...validateArrayWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings),
+      )
     }
 
     if (node.data.type === BlockEnum.HttpRequest) {
@@ -633,6 +677,9 @@ export const validateWorkflow = (
           message: 'HTTP 节点写入参数映射的 sourcePath/targetPath 不能为空。',
         })
       }
+      issues.push(
+        ...validateArrayWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings),
+      )
     }
 
     if (node.data.type === BlockEnum.ApiRequest) {
@@ -671,6 +718,9 @@ export const validateWorkflow = (
           message: 'API 请求节点写入参数映射的 sourcePath/targetPath 不能为空。',
         })
       }
+      issues.push(
+        ...validateArrayWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings),
+      )
     }
 
     if (node.data.type === BlockEnum.End) {

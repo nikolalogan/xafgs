@@ -50,6 +50,18 @@ type Writeback struct {
 	Value      any
 }
 
+type writebackMapping struct {
+	SourcePath string
+	TargetPath string
+}
+
+type arrayWritebackMapping struct {
+	SourceArrayPath string
+	SourceFieldPath string
+	TargetArrayPath string
+	TargetFieldPath string
+}
+
 type NodeExecutor interface {
 	Execute(ctx context.Context, input NodeExecutorContext) (NodeExecutorResult, error)
 }
@@ -680,55 +692,92 @@ func buildNodeWritebacks(mappings any, source any) []Writeback {
 }
 
 func buildHTTPWritebacks(mappings any, parsed any, output map[string]any) []Writeback {
-	list, ok := mappings.([]any)
-	if !ok {
+	bodyObj := toObject(parsed)
+	return buildWritebacksByResolver(mappings, func(sourcePath string) (any, bool) {
+		if strings.TrimSpace(sourcePath) == "$" {
+			return parsed, true
+		}
+		// 兼容历史配置：
+		// 1. 直接从响应 body 取值
+		// 2. 若 body 为统一报文，允许省略最外层 data.
+		// 3. 兜底支持显式从 output wrapper 取值
+		if value, found := readFromOutputByPathWithFound(bodyObj, sourcePath); found {
+			return value, true
+		}
+		if value, found := readFromOutputByPathWithFound(bodyObj, "data."+sourcePath); found {
+			return value, true
+		}
+		if value, found := readFromOutputByPathWithFound(output, sourcePath); found {
+			return value, true
+		}
+		if value, found := readFromOutputByPathWithFound(output, "body."+sourcePath); found {
+			return value, true
+		}
+		return nil, false
+	})
+}
+
+func buildWritebacks(mappings any, output map[string]any) []Writeback {
+	return buildWritebacksByResolver(mappings, func(sourcePath string) (any, bool) {
+		if strings.TrimSpace(sourcePath) == "$" {
+			return output, true
+		}
+		return readFromOutputByPathWithFound(output, sourcePath)
+	})
+}
+
+func buildWritebacksByResolver(mappings any, resolve func(sourcePath string) (any, bool)) []Writeback {
+	parsedMappings := parseWritebackMappings(mappings)
+	if len(parsedMappings) == 0 {
 		return nil
 	}
 
-	bodyObj := toObject(parsed)
-	result := make([]Writeback, 0, len(list))
-	for _, item := range list {
-		m, ok := item.(map[string]any)
-		if !ok {
+	result := make([]Writeback, 0, len(parsedMappings))
+	arrayGroups := map[string][]arrayWritebackMapping{}
+
+	for _, mapping := range parsedMappings {
+		arrayMapping, isArrayMapping := parseArrayWritebackMapping(mapping.SourcePath, mapping.TargetPath)
+		if isArrayMapping {
+			arrayGroups[arrayMapping.TargetArrayPath] = append(arrayGroups[arrayMapping.TargetArrayPath], arrayMapping)
 			continue
 		}
-		sourcePath := strings.TrimSpace(toString(m["sourcePath"]))
-		targetPath := strings.TrimSpace(toString(m["targetPath"]))
-		if sourcePath == "" || targetPath == "" {
+		value, _ := resolve(mapping.SourcePath)
+		result = append(result, Writeback{TargetPath: mapping.TargetPath, Value: value})
+	}
+
+	if len(arrayGroups) == 0 {
+		return result
+	}
+
+	keys := make([]string, 0, len(arrayGroups))
+	for key := range arrayGroups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, targetArrayPath := range keys {
+		group := arrayGroups[targetArrayPath]
+		if len(group) == 0 {
 			continue
 		}
-
-		var value any
-		if sourcePath == "$" {
-			value = parsed
-		} else {
-			// 兼容历史配置：
-			// 1. 直接从响应 body 取值
-			// 2. 若 body 为统一报文，允许省略最外层 data.
-			// 3. 兜底支持显式从 output wrapper 取值
-			value = readFromOutputByPath(bodyObj, sourcePath)
-			if !hasValue(value) {
-				value = readFromOutputByPath(bodyObj, "data."+sourcePath)
-			}
-			if !hasValue(value) {
-				value = readFromOutputByPath(output, sourcePath)
-			}
-			if !hasValue(value) {
-				value = readFromOutputByPath(output, "body."+sourcePath)
-			}
+		generated := buildArrayWritebackValue(group, resolve)
+		if len(generated) == 0 {
+			continue
 		}
-
-		result = append(result, Writeback{TargetPath: targetPath, Value: value})
+		result = append(result, Writeback{
+			TargetPath: targetArrayPath,
+			Value:      generated,
+		})
 	}
 	return result
 }
 
-func buildWritebacks(mappings any, output map[string]any) []Writeback {
+func parseWritebackMappings(mappings any) []writebackMapping {
 	list, ok := mappings.([]any)
 	if !ok {
 		return nil
 	}
-	result := make([]Writeback, 0, len(list))
+	out := make([]writebackMapping, 0, len(list))
 	for _, item := range list {
 		m, ok := item.(map[string]any)
 		if !ok {
@@ -739,15 +788,110 @@ func buildWritebacks(mappings any, output map[string]any) []Writeback {
 		if sourcePath == "" || targetPath == "" {
 			continue
 		}
-		var value any
-		if sourcePath == "$" {
-			value = output
-		} else {
-			value = readFromOutputByPath(output, sourcePath)
-		}
-		result = append(result, Writeback{TargetPath: targetPath, Value: value})
+		out = append(out, writebackMapping{
+			SourcePath: sourcePath,
+			TargetPath: targetPath,
+		})
 	}
-	return result
+	return out
+}
+
+func parseArrayWritebackMapping(sourcePath string, targetPath string) (arrayWritebackMapping, bool) {
+	if strings.Count(sourcePath, "[]") != 1 || strings.Count(targetPath, "[]") != 1 {
+		return arrayWritebackMapping{}, false
+	}
+	sourcePos := strings.Index(sourcePath, "[]")
+	targetPos := strings.Index(targetPath, "[]")
+	if sourcePos < 0 || targetPos < 0 {
+		return arrayWritebackMapping{}, false
+	}
+	sourceArrayPath := strings.TrimSpace(sourcePath[:sourcePos+2])
+	targetArrayPath := strings.TrimSpace(targetPath[:targetPos+2])
+	if sourceArrayPath == "" || targetArrayPath == "" {
+		return arrayWritebackMapping{}, false
+	}
+	sourceFieldPath := strings.TrimSpace(strings.TrimPrefix(sourcePath[sourcePos+2:], "."))
+	targetFieldPath := strings.TrimSpace(strings.TrimPrefix(targetPath[targetPos+2:], "."))
+	if targetFieldPath == "" {
+		return arrayWritebackMapping{}, false
+	}
+	return arrayWritebackMapping{
+		SourceArrayPath: sourceArrayPath,
+		SourceFieldPath: sourceFieldPath,
+		TargetArrayPath: targetArrayPath,
+		TargetFieldPath: targetFieldPath,
+	}, true
+}
+
+func buildArrayWritebackValue(
+	group []arrayWritebackMapping,
+	resolve func(sourcePath string) (any, bool),
+) []any {
+	type sourceInfo struct {
+		items []any
+	}
+	sources := make([]sourceInfo, len(group))
+	maxLen := 0
+	for index, mapping := range group {
+		value, found := resolve(mapping.SourceArrayPath)
+		if !found {
+			sources[index] = sourceInfo{items: []any{}}
+			continue
+		}
+		switch typed := value.(type) {
+		case []any:
+			sources[index] = sourceInfo{items: typed}
+			if len(typed) > maxLen {
+				maxLen = len(typed)
+			}
+		default:
+			sources[index] = sourceInfo{items: []any{}}
+		}
+	}
+	if maxLen == 0 {
+		return nil
+	}
+
+	generated := make([]any, 0, maxLen)
+	for row := 0; row < maxLen; row++ {
+		itemObj := map[string]any{}
+		for idx, mapping := range group {
+			items := sources[idx].items
+			if row >= len(items) {
+				setByPath(itemObj, mapping.TargetFieldPath, "")
+				continue
+			}
+			rawItem := items[row]
+			var value any
+			if strings.TrimSpace(mapping.SourceFieldPath) == "" {
+				value = rawItem
+			} else if objectItem, ok := rawItem.(map[string]any); ok {
+				if inner, found := getByPath(objectItem, mapping.SourceFieldPath); found {
+					value = inner
+				} else {
+					value = ""
+				}
+			} else if objectItem, ok := rawItem.(map[string]interface{}); ok {
+				normalized := map[string]any{}
+				for k, v := range objectItem {
+					normalized[k] = v
+				}
+				if inner, found := getByPath(normalized, mapping.SourceFieldPath); found {
+					value = inner
+				} else {
+					value = ""
+				}
+			} else {
+				value = ""
+			}
+			if value == nil {
+				value = ""
+			}
+			setByPath(itemObj, mapping.TargetFieldPath, value)
+		}
+		generated = append(generated, itemObj)
+	}
+	return generated
 }
 
 func resolveValue(raw any, variables map[string]any) any {
@@ -844,6 +988,14 @@ func readFromOutputByPath(output map[string]any, path string) any {
 	}
 	value, _ := getByPath(output, normalized)
 	return value
+}
+
+func readFromOutputByPathWithFound(output map[string]any, path string) (any, bool) {
+	normalized := normalizePath(path)
+	if normalized == "" || normalized == "$" {
+		return output, true
+	}
+	return getByPath(output, normalized)
 }
 
 func getByPath(source map[string]any, path string) (any, bool) {

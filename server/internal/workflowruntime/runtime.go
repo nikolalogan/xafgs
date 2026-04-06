@@ -491,14 +491,14 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			next.NodeStates[nodeID] = succeededState
 			output := defaultMap(result.Output)
 			next.Variables[nodeID] = output
-			for _, mapping := range result.Writebacks {
-				targetPath := strings.TrimSpace(mapping.TargetPath)
-				if targetPath == "" {
-					continue
-				}
+				for _, mapping := range result.Writebacks {
+					targetPath := strings.TrimSpace(mapping.TargetPath)
+					if targetPath == "" {
+						continue
+					}
 				// 保护：避免 writeback 覆盖保留根对象，导致后续变量解析失败
 				// 仅允许写入 workflow.xxx / global.xxx / user.xxx
-				if targetPath == "workflow" || targetPath == "global" || targetPath == "user" {
+					if targetPath == "workflow" || targetPath == "global" || targetPath == "user" {
 					runtime.log(ctx, map[string]any{
 						"event":       "writeback.blocked",
 						"requestId":   requestIDFromContext(ctx),
@@ -506,10 +506,32 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 						"nodeId":      nodeID,
 						"targetPath":  targetPath,
 					})
-					continue
+						continue
+					}
+					if strings.HasSuffix(targetPath, "[]") {
+						if incoming, ok := mapping.Value.([]any); ok {
+							appendPath := strings.TrimSuffix(targetPath, "[]")
+							appendPath = strings.TrimSuffix(appendPath, ".")
+							existing, found := getByPath(next.Variables, appendPath)
+							switch typed := existing.(type) {
+							case []any:
+								combined := make([]any, 0, len(typed)+len(incoming))
+								combined = append(combined, typed...)
+								combined = append(combined, incoming...)
+								setByPath(next.Variables, appendPath, combined)
+							default:
+								if found {
+									// 已有值但不是数组：按覆盖新数组处理，避免类型冲突造成 append 失败。
+									setByPath(next.Variables, appendPath, incoming)
+								} else {
+									setByPath(next.Variables, appendPath, incoming)
+								}
+							}
+							continue
+						}
+					}
+					setByPath(next.Variables, targetPath, mapping.Value)
 				}
-				setByPath(next.Variables, targetPath, mapping.Value)
-			}
 			runtime.log(ctx, map[string]any{
 				"event":       "variables.after_writeback",
 				"requestId":   requestIDFromContext(ctx),

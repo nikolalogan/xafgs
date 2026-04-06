@@ -946,6 +946,9 @@ export default function NodeConfigPanel({
                 请先配置输出 Schema 并点击“按 Schema 生成映射”。
               </div>
             )}
+            <div className="text-[11px] text-gray-400">
+              支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
+            </div>
             {config.writebackMappings.map((mapping, index) => (
               <div key={`code-writeback-${index}`} className="grid grid-cols-12 gap-2">
                 <div
@@ -1453,6 +1456,9 @@ export default function NodeConfigPanel({
                 请先配置响应 Schema 并点击“按 Schema 生成映射”。
               </div>
             )}
+            <div className="text-[11px] text-gray-400">
+              支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
+            </div>
             {config.writebackMappings.map((mapping, index) => (
               <div key={`http-writeback-${index}`} className="grid grid-cols-12 gap-2">
                 <div className="col-span-12 md:col-span-5 min-w-0 space-y-1">
@@ -1959,6 +1965,9 @@ export default function NodeConfigPanel({
               sourcePath 从节点输出读取（示例：data.id / response.data.id）。
             </div>
           )}
+          <div className="text-[11px] text-gray-400">
+            支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
+          </div>
           {config.writebackMappings.map((mapping, index) => (
             <div key={`api-writeback-${index}`} className="grid grid-cols-12 gap-2">
               <div className="col-span-12 md:col-span-5 min-w-0 space-y-1">
