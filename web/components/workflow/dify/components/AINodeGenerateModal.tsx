@@ -227,16 +227,16 @@ const normalizeGeneratedAPIConfig = (
     : undefined
   const dataPaths = extractPathsFromExample(successData)
   const generatedMappings = dataPaths.map(path => ({
-    sourcePath: `data.${path}`,
+    expression: `data.${path}`,
     targetPath: '',
   }))
   const existingMappings = Array.isArray(apiConfig.writebackMappings) ? apiConfig.writebackMappings : []
   const mergedMappings = [...existingMappings]
   generatedMappings.forEach((item) => {
-    const normalizedSourcePath = String(item.sourcePath || '').trim()
+    const normalizedSourcePath = String(item.expression || '').trim()
     if (!normalizedSourcePath)
       return
-    const exists = mergedMappings.some(existing => String(existing?.sourcePath || '').trim() === normalizedSourcePath)
+    const exists = mergedMappings.some(existing => String(existing?.expression || existing?.sourcePath || '').trim() === normalizedSourcePath)
     if (!exists)
       mergedMappings.push(item)
   })

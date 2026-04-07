@@ -12,6 +12,7 @@ import (
 
 type WorkflowService interface {
 	GetByID(ctx context.Context, workflowID int64) (model.WorkflowDetailDTO, *model.APIError)
+	GetDraftDSLByID(ctx context.Context, workflowID int64) (json.RawMessage, *model.APIError)
 	List(ctx context.Context) ([]model.WorkflowDTO, *model.APIError)
 	ListVersions(ctx context.Context, workflowID int64) ([]model.WorkflowVersionDTO, *model.APIError)
 	Create(ctx context.Context, request model.CreateWorkflowRequest) (model.WorkflowDTO, *model.APIError)
@@ -38,6 +39,14 @@ func (service *workflowService) GetByID(_ context.Context, workflowID int64) (mo
 		return model.WorkflowDetailDTO{}, model.NewAPIError(404, response.CodeNotFound, "工作流不存在")
 	}
 	return workflow.ToDetailDTO(), nil
+}
+
+func (service *workflowService) GetDraftDSLByID(_ context.Context, workflowID int64) (json.RawMessage, *model.APIError) {
+	dsl, ok := service.workflowRepository.FindDraftDSLByWorkflowID(workflowID)
+	if !ok {
+		return nil, model.NewAPIError(404, response.CodeNotFound, "工作流不存在")
+	}
+	return dsl, nil
 }
 
 func (service *workflowService) List(_ context.Context) ([]model.WorkflowDTO, *model.APIError) {

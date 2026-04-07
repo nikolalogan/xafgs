@@ -20,8 +20,6 @@ type Enterprise struct {
 	RealEstateRevenueRatio            *float64   `json:"realEstateRevenueRatio,omitempty"`
 	MainBusinessType                  string     `json:"mainBusinessType"`
 	EstablishedAt                     *time.Time `json:"establishedAt,omitempty"`
-	LiabilityAssetRatio               *float64   `json:"liabilityAssetRatio,omitempty"`
-	LiabilityAssetRatioIndustryMedian *float64   `json:"liabilityAssetRatioIndustryMedian,omitempty"`
 	NonStandardFinancingRatio         *float64   `json:"nonStandardFinancingRatio,omitempty"`
 	MainBusiness                      string     `json:"mainBusiness"`
 	RelatedPartyPublicOpinion         string     `json:"relatedPartyPublicOpinion"`
@@ -99,15 +97,27 @@ type EnterpriseBondRegistration struct {
 
 type EnterpriseFinanceSnapshot struct {
 	ID                 int64    `json:"id"`
+	LiabilityAssetRatio *float64 `json:"liabilityAssetRatio,omitempty"`
 	ROA                *float64 `json:"roa,omitempty"`
+	ROAIndustryMedian  *float64 `json:"roaIndustryMedian,omitempty"`
 	ROE                *float64 `json:"roe,omitempty"`
 	InterestCoverage   *float64 `json:"interestCoverage,omitempty"`
 	EBITCoverage       *float64 `json:"ebitCoverage,omitempty"`
 	EBITCoverageIndustryMedian *float64 `json:"ebitCoverageIndustryMedian,omitempty"`
+	EBITCoverageIndustry1_4    *float64 `json:"ebitCoverageIndustry1_4,omitempty"`
+	EBITCoverageIndustry3_4    *float64 `json:"ebitCoverageIndustry3_4,omitempty"`
 	EBITDACoverage             *float64 `json:"ebitdaCoverage,omitempty"`
 	EBITDACoverageIndustryMedian *float64 `json:"ebitdaCoverageIndustryMedian,omitempty"`
+	EBITDACoverageIndustry1_4    *float64 `json:"ebitdaCoverageIndustry1_4,omitempty"`
+	EBITDACoverageIndustry3_4    *float64 `json:"ebitdaCoverageIndustry3_4,omitempty"`
 	LiabilityAssetRatioIndustryMedian *float64 `json:"liabilityAssetRatioIndustryMedian,omitempty"`
+	LiabilityAssetRatioIndustry1_4    *float64 `json:"liabilityAssetRatioIndustry1_4,omitempty"`
+	LiabilityAssetRatioIndustry3_4    *float64 `json:"liabilityAssetRatioIndustry3_4,omitempty"`
 	ROEIndustryMedian                 *float64 `json:"roeIndustryMedian,omitempty"`
+	ROEIndustry1_4                    *float64 `json:"roeIndustry1_4,omitempty"`
+	ROEIndustry3_4                    *float64 `json:"roeIndustry3_4,omitempty"`
+	ROAIndustry1_4                    *float64 `json:"roaIndustry1_4,omitempty"`
+	ROAIndustry3_4                    *float64 `json:"roaIndustry3_4,omitempty"`
 	NonStandardFinancingRatioIndustryMedian *float64 `json:"nonStandardFinancingRatioIndustryMedian,omitempty"`
 	MainBusiness1      string   `json:"mainBusiness1"`
 	MainBusiness2      string   `json:"mainBusiness2"`
@@ -167,8 +177,6 @@ type EnterpriseDetailDTO struct {
 	RealEstateRevenueRatio            *float64                     `json:"realEstateRevenueRatio,omitempty"`
 	MainBusinessType                  string                       `json:"mainBusinessType"`
 	EstablishedAt                     *time.Time                   `json:"establishedAt,omitempty"`
-	LiabilityAssetRatio               *float64                     `json:"liabilityAssetRatio,omitempty"`
-	LiabilityAssetRatioIndustryMedian *float64                     `json:"liabilityAssetRatioIndustryMedian,omitempty"`
 	NonStandardFinancingRatio         *float64                     `json:"nonStandardFinancingRatio,omitempty"`
 	MainBusiness                      string                       `json:"mainBusiness"`
 	RelatedPartyPublicOpinion         string                       `json:"relatedPartyPublicOpinion"`
@@ -236,8 +244,6 @@ func (aggregate EnterpriseAggregate) ToDetailDTO() EnterpriseDetailDTO {
 		RealEstateRevenueRatio:            enterprise.RealEstateRevenueRatio,
 		MainBusinessType:                  enterprise.MainBusinessType,
 		EstablishedAt:                     enterprise.EstablishedAt,
-		LiabilityAssetRatio:               enterprise.LiabilityAssetRatio,
-		LiabilityAssetRatioIndustryMedian: enterprise.LiabilityAssetRatioIndustryMedian,
 		NonStandardFinancingRatio:         enterprise.NonStandardFinancingRatio,
 		MainBusiness:                      enterprise.MainBusiness,
 		RelatedPartyPublicOpinion:         enterprise.RelatedPartyPublicOpinion,

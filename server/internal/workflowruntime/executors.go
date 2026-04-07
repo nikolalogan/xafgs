@@ -5,17 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sort"
-	"net/http"
-	"net/url"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
+	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/blues/jsonata-go"
 	"github.com/dop251/goja"
 )
 
@@ -51,7 +53,8 @@ type Writeback struct {
 }
 
 type writebackMapping struct {
-	SourcePath string
+	Mode       string
+	Expression string
 	TargetPath string
 }
 
@@ -121,8 +124,14 @@ func (codeNodeExecutor) Execute(_ context.Context, input NodeExecutorContext) (N
 		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "代码节点 code 为空"}, nil
 	}
 
+	safeInput, hasInputCycle := sanitizeForRuntimeJSON(input.Variables)
+	if hasInputCycle {
+		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "代码节点入参包含循环引用，无法执行"}, nil
+	}
+	safeInputMap := toObject(safeInput)
+
 	vm := goja.New()
-	if err := vm.Set("input", input.Variables); err != nil {
+	if err := vm.Set("input", safeInputMap); err != nil {
 		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "代码执行失败"}, nil
 	}
 
@@ -132,7 +141,11 @@ func (codeNodeExecutor) Execute(_ context.Context, input NodeExecutorContext) (N
 		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: err.Error()}, nil
 	}
 	exported := value.Export()
-	output := toObject(exported)
+	safeOutput, hasOutputCycle := sanitizeForRuntimeJSON(exported)
+	if hasOutputCycle {
+		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "代码节点输出包含循环引用，无法写回执行快照"}, nil
+	}
+	output := toObject(safeOutput)
 	writebacks := buildNodeWritebacks(input.Node.Data.Config["writebackMappings"], output)
 	return NodeExecutorResult{Type: NodeExecutorResultSuccess, Output: output, Writebacks: writebacks}, nil
 }
@@ -693,44 +706,16 @@ func buildNodeWritebacks(mappings any, source any) []Writeback {
 
 func buildHTTPWritebacks(mappings any, parsed any, output map[string]any) []Writeback {
 	bodyObj := toObject(parsed)
-	return buildWritebacksByResolver(mappings, func(sourcePath string) (any, bool) {
-		if strings.TrimSpace(sourcePath) == "$" {
-			return parsed, true
-		}
-		candidates := buildHTTPSourcePathCandidates(sourcePath)
-		// 兼容历史配置：
-		// 1. 直接从响应 body 取值
-		// 2. 若 body 为统一报文，允许省略最外层 data.
-		// 3. 兜底支持显式从 output wrapper 取值
-		// 4. 增强兼容：sourcePath 含 data./body. 前缀时自动去前缀重试
-		for _, candidate := range candidates {
-			if value, found := readFromOutputByPathWithFound(bodyObj, candidate); found {
-				return value, true
-			}
-			if value, found := readFromOutputByPathWithFound(bodyObj, "data."+candidate); found {
-				return value, true
-			}
-			if value, found := readFromOutputByPathWithFound(output, candidate); found {
-				return value, true
-			}
-			if value, found := readFromOutputByPathWithFound(output, "body."+candidate); found {
-				return value, true
-			}
-		}
-		return nil, false
-	})
+	return buildWritebacksByJSONata(mappings, buildHTTPWritebackContext(bodyObj, output))
 }
 
 func buildWritebacks(mappings any, output map[string]any) []Writeback {
-	return buildWritebacksByResolver(mappings, func(sourcePath string) (any, bool) {
-		if strings.TrimSpace(sourcePath) == "$" {
-			return output, true
-		}
-		return readFromOutputByPathWithFound(output, sourcePath)
-	})
+	context := cloneMap(output)
+	context["output"] = output
+	return buildWritebacksByJSONata(mappings, context)
 }
 
-func buildWritebacksByResolver(mappings any, resolve func(sourcePath string) (any, bool)) []Writeback {
+func buildWritebacksByJSONata(mappings any, context map[string]any) []Writeback {
 	parsedMappings := parseWritebackMappings(mappings)
 	if len(parsedMappings) == 0 {
 		return nil
@@ -738,72 +723,60 @@ func buildWritebacksByResolver(mappings any, resolve func(sourcePath string) (an
 
 	result := make([]Writeback, 0, len(parsedMappings))
 	arrayGroups := map[string][]arrayWritebackMapping{}
-
 	for _, mapping := range parsedMappings {
-		arrayMapping, isArrayMapping := parseArrayWritebackMapping(mapping.SourcePath, mapping.TargetPath)
-		if isArrayMapping {
-			arrayGroups[arrayMapping.TargetArrayPath] = append(arrayGroups[arrayMapping.TargetArrayPath], arrayMapping)
+		if mapping.Mode == "value" {
+			if arrayMapping, ok := parseArrayWritebackMapping(mapping.Expression, mapping.TargetPath); ok {
+				arrayGroups[arrayMapping.TargetArrayPath] = append(arrayGroups[arrayMapping.TargetArrayPath], arrayMapping)
+				continue
+			}
+		}
+		value, found := evalJSONataExpression(mapping.Expression, context)
+		if !found {
 			continue
 		}
-		value, found := resolve(mapping.SourcePath)
-		if !found {
-			// sourcePath 未命中时跳过写回，避免覆盖已有变量为 nil。
+		if mapping.Mode == "writebacks" {
+			result = append(result, convertWritebacksResult(value)...)
+			continue
+		}
+		if strings.TrimSpace(mapping.TargetPath) == "" {
 			continue
 		}
 		result = append(result, Writeback{TargetPath: mapping.TargetPath, Value: value})
 	}
-
-	if len(arrayGroups) == 0 {
-		return result
-	}
-
-	keys := make([]string, 0, len(arrayGroups))
-	for key := range arrayGroups {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	for _, targetArrayPath := range keys {
-		group := arrayGroups[targetArrayPath]
-		if len(group) == 0 {
-			continue
+	if len(arrayGroups) > 0 {
+		keys := make([]string, 0, len(arrayGroups))
+		for key := range arrayGroups {
+			keys = append(keys, key)
 		}
-		generated := buildArrayWritebackValue(group, resolve)
-		if len(generated) == 0 {
-			continue
+		sort.Strings(keys)
+		resolve := func(sourcePath string) (any, bool) {
+			if strings.TrimSpace(sourcePath) == "$" {
+				return context, true
+			}
+			if value, found := readFromOutputByPathWithFound(context, sourcePath); found {
+				return value, true
+			}
+			if value, found := readFromOutputByPathWithFound(context, "data."+sourcePath); found {
+				return value, true
+			}
+			return nil, false
 		}
-		result = append(result, Writeback{
-			TargetPath: targetArrayPath,
-			Value:      generated,
-		})
+		for _, targetArrayPath := range keys {
+			group := arrayGroups[targetArrayPath]
+			if len(group) == 0 {
+				continue
+			}
+			generated := buildArrayWritebackValue(group, resolve)
+			if len(generated) == 0 {
+				continue
+			}
+			result = append(result, Writeback{
+				TargetPath: targetArrayPath,
+				Value:      generated,
+			})
+		}
 	}
 	return result
-}
-
-func buildHTTPSourcePathCandidates(sourcePath string) []string {
-	raw := strings.TrimSpace(sourcePath)
-	if raw == "" {
-		return nil
-	}
-	candidates := []string{raw}
-	for _, prefix := range []string{"data.", "$.data.", "body.", "$.body."} {
-		if strings.HasPrefix(raw, prefix) {
-			trimmed := strings.TrimSpace(strings.TrimPrefix(raw, prefix))
-			if trimmed != "" {
-				candidates = append(candidates, trimmed)
-			}
-		}
-	}
-	seen := map[string]bool{}
-	deduped := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		if seen[candidate] {
-			continue
-		}
-		seen[candidate] = true
-		deduped = append(deduped, candidate)
-	}
-	return deduped
 }
 
 func parseWritebackMappings(mappings any) []writebackMapping {
@@ -817,17 +790,100 @@ func parseWritebackMappings(mappings any) []writebackMapping {
 		if !ok {
 			continue
 		}
-		sourcePath := strings.TrimSpace(toString(m["sourcePath"]))
+		mode := strings.TrimSpace(toString(m["mode"]))
+		expression := strings.TrimSpace(toString(m["expression"]))
+		if expression == "" {
+			expression = strings.TrimSpace(toString(m["sourcePath"]))
+		}
 		targetPath := strings.TrimSpace(toString(m["targetPath"]))
-		if sourcePath == "" || targetPath == "" {
+		if mode != "writebacks" && mode != "value" {
+			if targetPath == "" {
+				mode = "writebacks"
+			} else {
+				mode = "value"
+			}
+		}
+		if expression == "" {
+			continue
+		}
+		if mode == "value" && targetPath == "" {
 			continue
 		}
 		out = append(out, writebackMapping{
-			SourcePath: sourcePath,
+			Mode:       mode,
+			Expression: expression,
 			TargetPath: targetPath,
 		})
 	}
 	return out
+}
+
+func buildHTTPWritebackContext(bodyObj map[string]any, output map[string]any) map[string]any {
+	context := cloneMap(output)
+	for key, value := range bodyObj {
+		if _, exists := context[key]; !exists {
+			context[key] = value
+		}
+	}
+	context["body"] = bodyObj
+	if _, exists := context["data"]; !exists {
+		context["data"] = bodyObj
+	}
+	context["output"] = output
+	context["response"] = output
+	return context
+}
+
+func evalJSONataExpression(expression string, context map[string]any) (any, bool) {
+	compiled, err := jsonata.Compile(strings.TrimSpace(expression))
+	if err != nil {
+		return nil, false
+	}
+	value, err := compiled.Eval(context)
+	if err != nil {
+		return nil, false
+	}
+	if value == nil {
+		return nil, false
+	}
+	return value, true
+}
+
+func convertWritebacksResult(value any) []Writeback {
+	switch typed := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			if strings.TrimSpace(key) != "" {
+				keys = append(keys, key)
+			}
+		}
+		sort.Strings(keys)
+		out := make([]Writeback, 0, len(keys))
+		for _, key := range keys {
+			out = append(out, Writeback{TargetPath: key, Value: typed[key]})
+		}
+		return out
+	case []any:
+		out := make([]Writeback, 0, len(typed))
+		for _, item := range typed {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			targetPath := strings.TrimSpace(toString(m["targetPath"]))
+			if targetPath == "" {
+				continue
+			}
+			out = append(out, Writeback{
+				TargetPath: targetPath,
+				Value:      m["value"],
+			})
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func parseArrayWritebackMapping(sourcePath string, targetPath string) (arrayWritebackMapping, bool) {
@@ -907,8 +963,8 @@ func buildArrayWritebackValue(
 				}
 			} else if objectItem, ok := rawItem.(map[string]interface{}); ok {
 				normalized := map[string]any{}
-				for k, v := range objectItem {
-					normalized[k] = v
+				for key, item := range objectItem {
+					normalized[key] = item
 				}
 				if inner, found := getByPath(normalized, mapping.SourceFieldPath); found {
 					value = inner
@@ -1287,6 +1343,98 @@ func cloneMap(source map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+func sanitizeForRuntimeJSON(value any) (any, bool) {
+	if value == nil {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneMapForRuntimeJSON(typed, map[uintptr]struct{}{}, map[uintptr]struct{}{})
+	case []any:
+		return cloneSliceForRuntimeJSON(typed, map[uintptr]struct{}{}, map[uintptr]struct{}{})
+	default:
+		return value, false
+	}
+}
+
+func cloneMapForRuntimeJSON(source map[string]any, seenMaps map[uintptr]struct{}, seenSlices map[uintptr]struct{}) (map[string]any, bool) {
+	if source == nil {
+		return map[string]any{}, false
+	}
+	mapPtr := reflect.ValueOf(source).Pointer()
+	if mapPtr != 0 {
+		if _, exists := seenMaps[mapPtr]; exists {
+			return nil, true
+		}
+		seenMaps[mapPtr] = struct{}{}
+	}
+	out := make(map[string]any, len(source))
+	hasCycle := false
+	for key, value := range source {
+		switch typed := value.(type) {
+		case map[string]any:
+			cloned, cycle := cloneMapForRuntimeJSON(typed, seenMaps, seenSlices)
+			if cycle {
+				hasCycle = true
+				continue
+			}
+			out[key] = cloned
+		case []any:
+			cloned, cycle := cloneSliceForRuntimeJSON(typed, seenMaps, seenSlices)
+			if cycle {
+				hasCycle = true
+				continue
+			}
+			out[key] = cloned
+		default:
+			out[key] = typed
+		}
+	}
+	if mapPtr != 0 {
+		delete(seenMaps, mapPtr)
+	}
+	return out, hasCycle
+}
+
+func cloneSliceForRuntimeJSON(source []any, seenMaps map[uintptr]struct{}, seenSlices map[uintptr]struct{}) ([]any, bool) {
+	if source == nil {
+		return []any{}, false
+	}
+	slicePtr := reflect.ValueOf(source).Pointer()
+	if slicePtr != 0 {
+		if _, exists := seenSlices[slicePtr]; exists {
+			return nil, true
+		}
+		seenSlices[slicePtr] = struct{}{}
+	}
+	out := make([]any, 0, len(source))
+	hasCycle := false
+	for _, value := range source {
+		switch typed := value.(type) {
+		case map[string]any:
+			cloned, cycle := cloneMapForRuntimeJSON(typed, seenMaps, seenSlices)
+			if cycle {
+				hasCycle = true
+				continue
+			}
+			out = append(out, cloned)
+		case []any:
+			cloned, cycle := cloneSliceForRuntimeJSON(typed, seenMaps, seenSlices)
+			if cycle {
+				hasCycle = true
+				continue
+			}
+			out = append(out, cloned)
+		default:
+			out = append(out, typed)
+		}
+	}
+	if slicePtr != 0 {
+		delete(seenSlices, slicePtr)
+	}
+	return out, hasCycle
 }
 
 func toString(value any) string {

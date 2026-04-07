@@ -14,8 +14,6 @@ type CreateEnterpriseRequest struct {
 	RealEstateRevenueRatio            *float64                       `json:"realEstateRevenueRatio"`
 	MainBusinessType                  string                         `json:"mainBusinessType"`
 	EstablishedAt                     *time.Time                     `json:"establishedAt"`
-	LiabilityAssetRatio               *float64                       `json:"liabilityAssetRatio"`
-	LiabilityAssetRatioIndustryMedian *float64                       `json:"liabilityAssetRatioIndustryMedian"`
 	NonStandardFinancingRatio         *float64                       `json:"nonStandardFinancingRatio"`
 	MainBusiness                      string                         `json:"mainBusiness"`
 	RelatedPartyPublicOpinion         string                         `json:"relatedPartyPublicOpinion"`

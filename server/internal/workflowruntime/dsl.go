@@ -59,6 +59,14 @@ func ParseWorkflowDSL(input any) (WorkflowDSL, error) {
 		if err := json.Unmarshal([]byte(value), &raw); err != nil {
 			return WorkflowDSL{}, errors.New("DSL 不是合法 JSON")
 		}
+	case []byte:
+		if err := json.Unmarshal(value, &raw); err != nil {
+			return WorkflowDSL{}, errors.New("DSL 不是合法 JSON")
+		}
+	case json.RawMessage:
+		if err := json.Unmarshal(value, &raw); err != nil {
+			return WorkflowDSL{}, errors.New("DSL 不是合法 JSON")
+		}
 	default:
 		raw = input
 	}

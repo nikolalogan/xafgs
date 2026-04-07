@@ -41,8 +41,6 @@ type createEnterpriseRequest struct {
 	RealEstateRevenueRatio            *float64                        `json:"realEstateRevenueRatio"`
 	MainBusinessType                  string                          `json:"mainBusinessType"`
 	EstablishedAt                     *string                         `json:"establishedAt"`
-	LiabilityAssetRatio               *float64                        `json:"liabilityAssetRatio"`
-	LiabilityAssetRatioIndustryMedian *float64                        `json:"liabilityAssetRatioIndustryMedian"`
 	NonStandardFinancingRatio         *float64                        `json:"nonStandardFinancingRatio"`
 	MainBusiness                      string                          `json:"mainBusiness"`
 	RelatedPartyPublicOpinion         string                          `json:"relatedPartyPublicOpinion"`
@@ -85,8 +83,6 @@ type enterpriseValidateConflictRequest struct {
 	RealEstateRevenueRatio            *float64                        `json:"realEstateRevenueRatio"`
 	MainBusinessType                  string                          `json:"mainBusinessType"`
 	EstablishedAt                     *string                         `json:"establishedAt"`
-	LiabilityAssetRatio               *float64                        `json:"liabilityAssetRatio"`
-	LiabilityAssetRatioIndustryMedian *float64                        `json:"liabilityAssetRatioIndustryMedian"`
 	NonStandardFinancingRatio         *float64                        `json:"nonStandardFinancingRatio"`
 	MainBusiness                      string                          `json:"mainBusiness"`
 	RelatedPartyPublicOpinion         string                          `json:"relatedPartyPublicOpinion"`
@@ -129,8 +125,6 @@ type updateEnterpriseRequest struct {
 	RealEstateRevenueRatio            *float64                        `json:"realEstateRevenueRatio"`
 	MainBusinessType                  string                          `json:"mainBusinessType"`
 	EstablishedAt                     *string                         `json:"establishedAt"`
-	LiabilityAssetRatio               *float64                        `json:"liabilityAssetRatio"`
-	LiabilityAssetRatioIndustryMedian *float64                        `json:"liabilityAssetRatioIndustryMedian"`
 	NonStandardFinancingRatio         *float64                        `json:"nonStandardFinancingRatio"`
 	MainBusiness                      string                          `json:"mainBusiness"`
 	RelatedPartyPublicOpinion         string                          `json:"relatedPartyPublicOpinion"`
@@ -295,8 +289,6 @@ func (handler *EnterpriseHandler) Update(c *fiber.Ctx, request *updateEnterprise
 		RealEstateRevenueRatio:            request.RealEstateRevenueRatio,
 		MainBusinessType:                  request.MainBusinessType,
 		EstablishedAt:                     parseRFC3339(request.EstablishedAt),
-		LiabilityAssetRatio:               request.LiabilityAssetRatio,
-		LiabilityAssetRatioIndustryMedian: request.LiabilityAssetRatioIndustryMedian,
 		NonStandardFinancingRatio:         request.NonStandardFinancingRatio,
 		MainBusiness:                      request.MainBusiness,
 		RelatedPartyPublicOpinion:         request.RelatedPartyPublicOpinion,
@@ -344,8 +336,6 @@ func (handler *EnterpriseHandler) ValidateConflict(c *fiber.Ctx, request *enterp
 		RealEstateRevenueRatio:            request.RealEstateRevenueRatio,
 		MainBusinessType:                  request.MainBusinessType,
 		EstablishedAt:                     parseRFC3339(request.EstablishedAt),
-		LiabilityAssetRatio:               request.LiabilityAssetRatio,
-		LiabilityAssetRatioIndustryMedian: request.LiabilityAssetRatioIndustryMedian,
 		NonStandardFinancingRatio:         request.NonStandardFinancingRatio,
 		MainBusiness:                      request.MainBusiness,
 		RelatedPartyPublicOpinion:         request.RelatedPartyPublicOpinion,
@@ -393,8 +383,6 @@ func enterpriseRequestToModel(request *createEnterpriseRequest) model.CreateEnte
 		RealEstateRevenueRatio:            request.RealEstateRevenueRatio,
 		MainBusinessType:                  request.MainBusinessType,
 		EstablishedAt:                     parseRFC3339(request.EstablishedAt),
-		LiabilityAssetRatio:               request.LiabilityAssetRatio,
-		LiabilityAssetRatioIndustryMedian: request.LiabilityAssetRatioIndustryMedian,
 		NonStandardFinancingRatio:         request.NonStandardFinancingRatio,
 		MainBusiness:                      request.MainBusiness,
 		RelatedPartyPublicOpinion:         request.RelatedPartyPublicOpinion,

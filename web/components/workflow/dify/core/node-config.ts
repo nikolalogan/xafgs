@@ -11,6 +11,7 @@ import {
   type IterationNodeConfig,
   type LLMNodeConfig,
   type StartNodeConfig,
+  type WritebackMapping,
 } from './types'
 
 const isObject = (value: unknown): value is Record<string, unknown> => {
@@ -92,6 +93,51 @@ const normalizeStartVariableFileTypes = (value: unknown): string[] | undefined =
     return undefined
   const types = value.map(item => String(item || '').trim()).filter(Boolean)
   return types.length ? types : undefined
+}
+
+const normalizeWritebackMappings = (raw: unknown): WritebackMapping[] => {
+  if (!Array.isArray(raw))
+    return []
+  return raw.map((item) => {
+    const targetPathRaw = typeof item?.targetPath === 'string' ? item.targetPath : ''
+    const hasTargetPath = String(targetPathRaw || '').trim() !== ''
+    const mode = hasTargetPath
+      ? 'value'
+      : (item?.mode === 'value' ? 'value' : 'writebacks')
+    const expression = typeof item?.expression === 'string'
+      ? item.expression
+      : (typeof item?.sourcePath === 'string' ? item.sourcePath : '')
+    const rawArrayMapping = item?.arrayMapping
+    const arrayMapping = (rawArrayMapping && typeof rawArrayMapping === 'object')
+      ? {
+          mappingType: (rawArrayMapping as { mappingType?: unknown }).mappingType === 'object' ? 'object' as const : 'array' as const,
+          sourceArrayPath: typeof (rawArrayMapping as { sourceArrayPath?: unknown }).sourceArrayPath === 'string'
+            ? (rawArrayMapping as { sourceArrayPath: string }).sourceArrayPath
+            : '',
+          targetArrayPath: typeof (rawArrayMapping as { targetArrayPath?: unknown }).targetArrayPath === 'string'
+            ? (rawArrayMapping as { targetArrayPath: string }).targetArrayPath
+            : '',
+          pairs: Array.isArray((rawArrayMapping as { pairs?: unknown }).pairs)
+            ? (rawArrayMapping as { pairs: unknown[] }).pairs.map((pair) => {
+                const sourceField = typeof (pair as { sourceField?: unknown })?.sourceField === 'string'
+                  ? (pair as { sourceField: string }).sourceField
+                  : ''
+                const targetField = typeof (pair as { targetField?: unknown })?.targetField === 'string'
+                  ? (pair as { targetField: string }).targetField
+                  : ''
+                return { sourceField, targetField }
+              }).filter(pair => pair.sourceField || pair.targetField)
+            : [],
+        }
+      : undefined
+    return {
+      mode,
+      expression,
+      targetPath: mode === 'value' ? targetPathRaw : '',
+      sourcePath: typeof item?.sourcePath === 'string' ? item.sourcePath : '',
+      arrayMapping,
+    }
+  })
 }
 
 const defaultStartConfig = (): StartNodeConfig => ({
@@ -427,12 +473,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       joinMode: normalizeJoinMode(code.joinMode),
       fanOutMode: normalizeFanOutMode(code.fanOutMode),
       outputSchema: typeof code.outputSchema === 'string' ? code.outputSchema : fallback.outputSchema,
-      writebackMappings: Array.isArray(code.writebackMappings)
-        ? code.writebackMappings.map(item => ({
-            sourcePath: typeof item?.sourcePath === 'string' ? item.sourcePath : '',
-            targetPath: typeof item?.targetPath === 'string' ? item.targetPath : '',
-          }))
-        : fallback.writebackMappings,
+      writebackMappings: normalizeWritebackMappings(code.writebackMappings),
       outputs: Array.isArray(code.outputs) ? code.outputs : fallback.outputs,
     } as DifyNodeConfigMap[K]
   }
@@ -485,12 +526,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       headers: normalizeHttpKeyValueArray(http.headers),
       body: normalizeHttpBodyValue(http.body, bodyType),
       outputSchema: typeof http.outputSchema === 'string' ? http.outputSchema : fallback.outputSchema,
-      writebackMappings: Array.isArray(http.writebackMappings)
-        ? http.writebackMappings.map(item => ({
-            sourcePath: typeof item?.sourcePath === 'string' ? item.sourcePath : '',
-            targetPath: typeof item?.targetPath === 'string' ? item.targetPath : '',
-          }))
-        : fallback.writebackMappings,
+      writebackMappings: normalizeWritebackMappings(http.writebackMappings),
       authorization: {
         ...fallback.authorization,
         ...(isObject(http.authorization) ? http.authorization : {}),
@@ -549,12 +585,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
         : fallback.paramValues,
       timeout: typeof api.timeout === 'number' ? api.timeout : fallback.timeout,
       successStatusCode: typeof api.successStatusCode === 'number' ? api.successStatusCode : fallback.successStatusCode,
-      writebackMappings: Array.isArray(api.writebackMappings)
-        ? api.writebackMappings.map(item => ({
-            sourcePath: typeof item?.sourcePath === 'string' ? item.sourcePath : '',
-            targetPath: typeof item?.targetPath === 'string' ? item.targetPath : '',
-          }))
-        : fallback.writebackMappings,
+      writebackMappings: normalizeWritebackMappings(api.writebackMappings),
     } as DifyNodeConfigMap[K]
   }
 

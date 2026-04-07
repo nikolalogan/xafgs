@@ -11,6 +11,7 @@ import (
 
 type WorkflowRepository interface {
 	FindByID(workflowID int64) (model.Workflow, bool)
+	FindDraftDSLByWorkflowID(workflowID int64) (json.RawMessage, bool)
 	FindByWorkflowKey(workflowKey string) (model.Workflow, bool)
 	FindAll() []model.WorkflowDTO
 	FindVersions(workflowID int64) ([]model.WorkflowVersionDTO, bool)
@@ -71,6 +72,22 @@ func NewWorkflowRepository() WorkflowRepository {
 func (repository *workflowRepository) FindByID(workflowID int64) (model.Workflow, bool) {
 	workflow, ok := repository.workflows[workflowID]
 	return workflow, ok
+}
+
+func (repository *workflowRepository) FindDraftDSLByWorkflowID(workflowID int64) (json.RawMessage, bool) {
+	workflow, ok := repository.workflows[workflowID]
+	if !ok {
+		return nil, false
+	}
+	versionMap, ok := repository.versions[workflowID]
+	if !ok {
+		return workflow.DSL, true
+	}
+	snapshot, ok := versionMap[workflow.CurrentDraftVersionNo]
+	if !ok {
+		return workflow.DSL, true
+	}
+	return snapshot.DSL, true
 }
 
 func (repository *workflowRepository) FindByWorkflowKey(workflowKey string) (model.Workflow, bool) {

@@ -3,6 +3,7 @@ package middleware
 import (
 	"encoding/json"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -27,6 +28,18 @@ func RequestLogger() fiber.Handler {
 
 		if userID := c.Locals(LocalAuthUserID); userID != nil {
 			logData["userId"] = userID
+		}
+		if err != nil {
+			logData["error"] = err.Error()
+		}
+		if c.Response().StatusCode() >= fiber.StatusInternalServerError {
+			responseBody := strings.TrimSpace(string(c.Response().Body()))
+			if len(responseBody) > 500 {
+				responseBody = responseBody[:500] + "...(truncated)"
+			}
+			if responseBody != "" {
+				logData["responseBody"] = responseBody
+			}
 		}
 
 		logBytes, marshalError := json.Marshal(logData)

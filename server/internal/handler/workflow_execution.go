@@ -107,18 +107,6 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "workflowId 必须为正整数")
 	}
 
-	rawDsl := request.WorkflowDSL
-	if rawDsl == nil {
-		rawDsl = request.DSL
-	}
-	if rawDsl == nil {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "workflowDsl 不能为空")
-	}
-	dsl, err := workflowruntime.ParseWorkflowDSL(rawDsl)
-	if err != nil {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, err.Error())
-	}
-
 	input := request.Input
 	if input == nil {
 		input = map[string]any{}
@@ -131,6 +119,14 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 	workflow, apiError := handler.workflowService.GetByID(c.UserContext(), request.WorkflowID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	latestDraftDSL, apiError := handler.workflowService.GetDraftDSLByID(c.UserContext(), request.WorkflowID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	dsl, err := workflowruntime.ParseWorkflowDSL(latestDraftDSL)
+	if err != nil {
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "当前工作流草稿 DSL 非法："+err.Error())
 	}
 
 	startNode, ok := findStartNode(dsl.Nodes)
@@ -149,7 +145,7 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
-	if missing := detectMissingRequiredUserConfig(rawDsl, userConfig); len(missing) > 0 {
+	if missing := detectMissingRequiredUserConfig(latestDraftDSL, userConfig); len(missing) > 0 {
 		labels := make([]string, 0, len(missing))
 		for _, item := range missing {
 			labels = append(labels, item.label)

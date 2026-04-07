@@ -285,6 +285,56 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 		set[sourceID] = true
 	}
 
+	// resume 场景下，执行会分段进入 runUntilPauseOrEnd。为保证 joinMode=all 正确汇聚，
+	// 需要基于历史成功节点恢复“已到达上游”状态，否则会丢失暂停前的到达信息。
+	seedArrivedFromHistory := func() {
+		// 仅 if-else 需要根据历史分支事件挑选实际经过的出边；
+		// 普通节点成功后其所有出边都已尝试入队，视为已到达。
+		branchHandleByNode := map[string]string{}
+		for _, event := range next.Events {
+			if event.Type != "node.branch" || event.Payload == nil {
+				continue
+			}
+			nodeID, _ := event.Payload["nodeId"].(string)
+			handleID, _ := event.Payload["handleId"].(string)
+			nodeID = strings.TrimSpace(nodeID)
+			handleID = strings.TrimSpace(handleID)
+			if nodeID == "" || handleID == "" {
+				continue
+			}
+			branchHandleByNode[nodeID] = handleID
+		}
+
+		for nodeID, state := range next.NodeStates {
+			if state.Status != NodeRunStatusSucceeded {
+				continue
+			}
+			outgoing := outgoingEdgesMap[nodeID]
+			if len(outgoing) == 0 {
+				continue
+			}
+			node, ok := nodeMap[nodeID]
+			if !ok {
+				continue
+			}
+			if node.Data.Type == "if-else" {
+				handleID := branchHandleByNode[nodeID]
+				if strings.TrimSpace(handleID) == "" {
+					// 未记录分支事件时不做推断，避免误标记未命中分支为 arrived。
+					continue
+				}
+				for _, edge := range selectIfElseNextEdges(outgoing, handleID) {
+					markArrived(edge.Target, nodeID)
+				}
+				continue
+			}
+			for _, edge := range outgoing {
+				markArrived(edge.Target, nodeID)
+			}
+		}
+	}
+	seedArrivedFromHistory()
+
 	enqueue := func(nodeID string) {
 		if strings.TrimSpace(nodeID) == "" || pushed[nodeID] {
 			return

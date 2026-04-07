@@ -207,8 +207,6 @@ CREATE TABLE IF NOT EXISTS enterprise (
   real_estate_revenue_ratio NUMERIC(12, 6),
   main_business_type TEXT NOT NULL DEFAULT '',
   established_at TIMESTAMPTZ,
-  liability_asset_ratio NUMERIC(12, 6),
-  liability_asset_ratio_industry_median NUMERIC(12, 6),
   non_standard_financing_ratio NUMERIC(12, 6),
   main_business TEXT NOT NULL DEFAULT '',
   related_party_public_opinion TEXT NOT NULL DEFAULT '',
@@ -297,14 +295,26 @@ CREATE TABLE IF NOT EXISTS enterprise_bond_registration (
 CREATE TABLE IF NOT EXISTS enterprise_finance_snapshot (
   id BIGSERIAL PRIMARY KEY,
   enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE UNIQUE,
+  liability_asset_ratio NUMERIC(12, 6),
   roa NUMERIC(12, 6),
+  roa_industry_median NUMERIC(12, 6),
+  roa_industry_1_4 NUMERIC(12, 6),
+  roa_industry_3_4 NUMERIC(12, 6),
   roe NUMERIC(12, 6),
+  roe_industry_1_4 NUMERIC(12, 6),
+  roe_industry_3_4 NUMERIC(12, 6),
   interest_coverage NUMERIC(12, 6),
   ebit_coverage NUMERIC(12, 6),
   ebit_coverage_industry_median NUMERIC(12, 6),
+  ebit_coverage_industry_1_4 NUMERIC(12, 6),
+  ebit_coverage_industry_3_4 NUMERIC(12, 6),
   ebitda_coverage NUMERIC(12, 6),
   ebitda_coverage_industry_median NUMERIC(12, 6),
+  ebitda_coverage_industry_1_4 NUMERIC(12, 6),
+  ebitda_coverage_industry_3_4 NUMERIC(12, 6),
   liability_asset_ratio_industry_median NUMERIC(12, 6),
+  liability_asset_ratio_industry_1_4 NUMERIC(12, 6),
+  liability_asset_ratio_industry_3_4 NUMERIC(12, 6),
   roe_industry_median NUMERIC(12, 6),
   non_standard_financing_ratio_industry_median NUMERIC(12, 6),
   main_business_1 VARCHAR(256) NOT NULL DEFAULT '',
@@ -469,21 +479,45 @@ DROP INDEX IF EXISTS idx_enterprise_region;
 CREATE INDEX IF NOT EXISTS idx_enterprise_region_id ON enterprise(region_id);
 
 ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS liability_asset_ratio NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS liability_asset_ratio_industry_median NUMERIC(12, 6);
 ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS liability_asset_ratio_industry_1_4 NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS liability_asset_ratio_industry_3_4 NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS roe_industry_median NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS roe_industry_1_4 NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS roe_industry_3_4 NUMERIC(12, 6);
 ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS non_standard_financing_ratio_industry_median NUMERIC(12, 6);
 ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS roe NUMERIC(12, 6);
 ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS roa_industry_1_4 NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS roa_industry_3_4 NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS roa_industry_median NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS ebit_coverage NUMERIC(12, 6);
 ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS ebit_coverage_industry_median NUMERIC(12, 6);
 ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS ebit_coverage_industry_1_4 NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS ebit_coverage_industry_3_4 NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS ebitda_coverage NUMERIC(12, 6);
 ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS ebitda_coverage_industry_median NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS ebitda_coverage_industry_1_4 NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS ebitda_coverage_industry_3_4 NUMERIC(12, 6);
 ALTER TABLE enterprise_financial_report
 ADD COLUMN IF NOT EXISTS level INT NOT NULL DEFAULT 1;
 ALTER TABLE enterprise_bond_detail
@@ -496,6 +530,10 @@ ALTER TABLE enterprise_bond_detail
 ADD COLUMN IF NOT EXISTS maturity_date TIMESTAMPTZ;
 ALTER TABLE enterprise_bond_detail
 ADD COLUMN IF NOT EXISTS usefor TEXT NOT NULL DEFAULT '';
+ALTER TABLE enterprise
+DROP COLUMN IF EXISTS liability_asset_ratio;
+ALTER TABLE enterprise
+DROP COLUMN IF EXISTS liability_asset_ratio_industry_median;
 `); err != nil {
 		return fmt.Errorf("migrate enterprise region/finance extension: %w", err)
 	}

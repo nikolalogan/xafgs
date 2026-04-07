@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Checkbox, Collapse, Empty, Form, Input, InputNumber, Modal, Select, Tabs } from 'antd'
+import { Checkbox, Collapse, Empty, Form, Input, InputNumber, Modal, Select, Tabs, message } from 'antd'
 import ReactFlow, { Background, Controls, MiniMap } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { CUSTOM_EDGE, CUSTOM_NODE } from '../core/constants'
@@ -331,6 +331,34 @@ const renderHttpConfigForLog = (
   }
 }
 
+const buildEndConfiguredOutput = (node: DifyNode, variables: Record<string, unknown> | undefined, fallbackNodeOutput: unknown) => {
+  if (node.data.type !== BlockEnum.End)
+    return fallbackNodeOutput
+  const config = ensureNodeConfig(BlockEnum.End, node.data.config) as { outputs?: Array<{ name?: string; source?: string }> }
+  const outputs = Array.isArray(config.outputs) ? config.outputs : []
+  if (outputs.length === 0)
+    return {}
+  const context = variables ?? {}
+  const result: Record<string, unknown> = {}
+  outputs.forEach((item) => {
+    const name = String(item?.name || '').trim()
+    if (!name)
+      return
+    const source = String(item?.source || '').trim()
+    if (source) {
+      const resolved = getLogValueByPath(context, source)
+      result[name] = resolved === undefined ? null : resolved
+      return
+    }
+    if (isObject(fallbackNodeOutput) && name in fallbackNodeOutput) {
+      result[name] = (fallbackNodeOutput as Record<string, unknown>)[name]
+      return
+    }
+    result[name] = null
+  })
+  return result
+}
+
 const validateDynamicInput = (
   fields: DynamicField[],
   values: Record<string, unknown>,
@@ -433,6 +461,8 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const [endRenderedHeights, setEndRenderedHeights] = useState<Record<string, number>>({})
   const [nodeOutputExpandedById, setNodeOutputExpandedById] = useState<Record<string, boolean>>({})
   const iframeResizeObserversRef = useRef<Record<string, ResizeObserver>>({})
+  const executionPollingIdRef = useRef<string>('')
+  const executionHydratedRef = useRef(false)
 
   const injectNoScrollStyleForIframe = (rawHtml: string) => {
     const style = `
@@ -559,6 +589,21 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     return new Map(nodes.map(node => [node.id, node]))
   }, [nodes])
 
+  const orderedNodeIds = useMemo(() => nodes.map(node => node.id), [nodes])
+
+  const enteredNodeIds = useMemo(() => {
+    if (!execution)
+      return []
+    const entered = new Set<string>()
+    Object.entries(execution.nodeStates ?? {}).forEach(([nodeId, state]) => {
+      if (!state)
+        return
+      if (isNodeEntered(state.status))
+        entered.add(nodeId)
+    })
+    return orderedNodeIds.filter(nodeId => entered.has(nodeId))
+  }, [execution, orderedNodeIds])
+
   useEffect(() => {
     if (!execution)
       return
@@ -574,7 +619,8 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         return
       if (state.status !== 'succeeded' && execution.status !== 'completed')
         return
-      const output = execution.variables?.[nodeId]
+      const rawOutput = execution.variables?.[nodeId]
+      const output = buildEndConfiguredOutput(node, execution.variables, rawOutput)
       void renderEndTemplateIfNeeded(node, output)
     })
   }, [execution, nodeMap, visibleNodeIds])
@@ -608,8 +654,14 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       seen.add(nodeId)
       sequence.push(nodeId)
     })
+    enteredNodeIds.forEach((nodeId) => {
+      if (seen.has(nodeId))
+        return
+      seen.add(nodeId)
+      sequence.push(nodeId)
+    })
     return sequence
-  }, [execution])
+  }, [enteredNodeIds, execution])
 
   useEffect(() => {
     if (!execution) {
@@ -649,6 +701,100 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
 
     return () => window.clearInterval(timer)
   }, [executedNodeSequence, execution?.id, execution?.updatedAt])
+
+  useEffect(() => {
+    if (executionHydratedRef.current)
+      return
+    executionHydratedRef.current = true
+    if (typeof window === 'undefined')
+      return
+
+    const raw = window.localStorage.getItem('workflow_last_execution')
+    if (!raw)
+      return
+
+    let cachedId = ''
+    try {
+      const parsed = JSON.parse(raw) as { id?: unknown }
+      cachedId = typeof parsed?.id === 'string' ? parsed.id.trim() : ''
+    }
+    catch {
+      cachedId = ''
+    }
+    if (!cachedId)
+      return
+
+    const token = resolveAuthToken()
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    if (token)
+      headers.Authorization = `Bearer ${token}`
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/workflow/executions/${cachedId}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers,
+        })
+        if (response.status === 401)
+          return
+        const payload = await response.json() as { data?: WorkflowExecution }
+        if (!response.ok || !payload.data)
+          return
+        setExecution(payload.data)
+      }
+      catch {
+      }
+    })()
+  }, [authToken])
+
+  useEffect(() => {
+    if (!execution?.id || execution.status !== 'running') {
+      executionPollingIdRef.current = ''
+      return
+    }
+    executionPollingIdRef.current = execution.id
+    let cancelled = false
+    const currentExecutionId = execution.id
+    const token = resolveAuthToken()
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    if (token)
+      headers.Authorization = `Bearer ${token}`
+
+    const syncExecution = async () => {
+      if (cancelled)
+        return
+      try {
+        const response = await fetch(`/api/workflow/executions/${currentExecutionId}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers,
+        })
+        if (response.status === 401) {
+          router.push('/?redirect=/app/workflow')
+          return
+        }
+        const payload = await response.json() as { data?: WorkflowExecution }
+        if (!response.ok || !payload.data)
+          return
+        if (cancelled || executionPollingIdRef.current !== currentExecutionId)
+          return
+        setExecution(payload.data)
+      }
+      catch {
+      }
+    }
+
+    void syncExecution()
+    const timer = window.setInterval(() => {
+      void syncExecution()
+    }, 1000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [execution?.id, execution?.status, router])
 
   const runtimeDsl = useMemo(() => {
     return {
@@ -1034,7 +1180,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         headers,
         body: JSON.stringify({
           workflowId,
-          workflowDsl: runtimeDsl,
           input: startValidation.normalized,
         }),
       })
@@ -1074,6 +1219,23 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     setFocusedNodeId('')
     setOpenPanels({})
     setAutoRunTriggered(false)
+  }
+
+  const downloadExecutionSnapshot = () => {
+    if (!execution)
+      return
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const filename = `workflow-execution-${execution.id}-${timestamp}.json`
+    const payload = JSON.stringify(execution, null, 2)
+    const blob = new Blob([payload], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
   }
 
   const ensureExportFileName = (name: string) => {
@@ -1393,6 +1555,21 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     }
   }
 
+  const copyNodeOutputJson = async (value: unknown) => {
+    if (typeof window === 'undefined' || !window.navigator?.clipboard) {
+      message.error('当前环境不支持复制到剪贴板')
+      return
+    }
+    const payload = JSON.stringify(value === undefined ? null : value, null, 2)
+    try {
+      await window.navigator.clipboard.writeText(payload)
+      message.success('已复制节点输出 JSON')
+    }
+    catch {
+      message.error('复制失败，请检查浏览器剪贴板权限')
+    }
+  }
+
   return (
     <div className="flex h-full flex-col gap-3">
       <Modal
@@ -1428,9 +1605,18 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                 key: 'snapshot',
                 label: '执行快照',
                 children: (
-                  <pre className="max-h-[520px] overflow-auto rounded bg-gray-50 p-3 text-[11px] text-gray-700 whitespace-pre-wrap">
-                    {renderJson(execution)}
-                  </pre>
+                  <div className="space-y-3 rounded bg-gray-50 p-3">
+                    <div className="text-xs text-gray-600">
+                      执行快照体积较大时，直接渲染会导致页面卡顿。请下载后本地查看。
+                    </div>
+                    <button
+                      type="button"
+                      onClick={downloadExecutionSnapshot}
+                      className="rounded bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700"
+                    >
+                      下载执行快照（JSON）
+                    </button>
+                  </div>
                 ),
               },
             ]}
@@ -1529,7 +1715,10 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                 return null
               const panelOpen = openPanels[node.id] ?? false
               const status = state.status
-              const nodeOutput = execution.variables[node.id]
+              const rawNodeOutput = execution.variables[node.id]
+              const nodeOutput = node.data.type === BlockEnum.End
+                ? buildEndConfiguredOutput(node, execution.variables, rawNodeOutput)
+                : rawNodeOutput
               const isWaitingCurrent = execution.waitingInput?.nodeId === node.id && status === 'waiting_input'
               const nodeConfig: Record<string, unknown> = isObject(node.data.config) ? node.data.config : {}
               const waitingPrompt = (() => {
@@ -1729,7 +1918,22 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
 	                        items={[
 	                          {
 	                            key: 'output',
-	                            label: <span className="text-xs text-gray-600">节点输出（JSON）</span>,
+	                            label: (
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs text-gray-600">节点输出（JSON）</span>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.preventDefault()
+                                      event.stopPropagation()
+                                      void copyNodeOutputJson(nodeOutput)
+                                    }}
+                                    className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
+                                  >
+                                    复制
+                                  </button>
+                                </div>
+                              ),
 	                            children: (
 	                              <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">
 	                                {renderJson(nodeOutput)}

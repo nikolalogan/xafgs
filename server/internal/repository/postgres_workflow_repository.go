@@ -56,6 +56,38 @@ WHERE id = $1
 	return workflow, true
 }
 
+func (repository *PostgresWorkflowRepository) FindDraftDSLByWorkflowID(workflowID int64) (json.RawMessage, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	var dslBytes []byte
+	err := repository.db.QueryRowContext(ctx, `
+SELECT v.dsl_json
+FROM workflow w
+JOIN workflow_version v
+  ON v.workflow_id = w.id
+ AND v.version_no = w.current_draft_version_no
+WHERE w.id = $1
+LIMIT 1
+`, workflowID).Scan(&dslBytes)
+	if err == nil {
+		return json.RawMessage(dslBytes), true
+	}
+	if err != sql.ErrNoRows {
+		return nil, false
+	}
+
+	err = repository.db.QueryRowContext(ctx, `
+SELECT dsl_json
+FROM workflow
+WHERE id = $1
+`, workflowID).Scan(&dslBytes)
+	if err != nil {
+		return nil, false
+	}
+	return json.RawMessage(dslBytes), true
+}
+
 func (repository *PostgresWorkflowRepository) FindByWorkflowKey(workflowKey string) (model.Workflow, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()

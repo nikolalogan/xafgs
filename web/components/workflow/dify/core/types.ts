@@ -21,6 +21,25 @@ export enum NodeRunningStatus {
 }
 
 export type FanOutMode = 'parallel' | 'sequential'
+export type WritebackMappingMode = 'value' | 'writebacks'
+
+export type WritebackMapping = {
+  mode?: WritebackMappingMode
+  expression: string
+  targetPath?: string
+  // 兼容历史配置字段：旧版 sourcePath/targetPath。
+  sourcePath?: string
+  // UI 元信息：数组字段配对（无需手写 JSONata）
+  arrayMapping?: {
+    mappingType?: 'array' | 'object'
+    sourceArrayPath: string
+    targetArrayPath: string
+    pairs: Array<{
+      sourceField: string
+      targetField: string
+    }>
+  }
+}
 
 export type StartNodeConfig = {
   fanOutMode?: FanOutMode
@@ -86,10 +105,7 @@ export type CodeNodeConfig = {
   language: 'javascript' | 'python3'
   code: string
   outputSchema?: string
-  writebackMappings: Array<{
-    sourcePath: string
-    targetPath: string
-  }>
+  writebackMappings: WritebackMapping[]
   outputs: string[]
 }
 
@@ -145,10 +161,7 @@ export type HttpNodeConfig = {
     header: string
   }
   outputSchema?: string
-  writebackMappings: Array<{
-    sourcePath: string
-    targetPath: string
-  }>
+  writebackMappings: WritebackMapping[]
 }
 
 export type ApiRequestParamLocation = 'path' | 'query' | 'body'
@@ -184,10 +197,7 @@ export type ApiRequestNodeConfig = {
   paramValues: ApiRequestParamValue[]
   timeout: number
   successStatusCode: number
-  writebackMappings: Array<{
-    sourcePath: string
-    targetPath: string
-  }>
+  writebackMappings: WritebackMapping[]
 }
 
 export type InputNodeConfig = {

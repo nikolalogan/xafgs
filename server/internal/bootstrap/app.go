@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -52,15 +53,24 @@ func NewApp() (*fiber.App, Config) {
 			var fiberError *fiber.Error
 			if errors.As(err, &fiberError) {
 				responseCode := response.CodeBadRequest
+				message := fiberError.Message
 				if fiberError.Code == fiber.StatusNotFound {
 					responseCode = response.CodeNotFound
 				}
 				if fiberError.Code >= fiber.StatusInternalServerError {
 					responseCode = response.CodeInternal
+					if strings.TrimSpace(message) == "" {
+						message = "服务器内部错误"
+					} else {
+						message = "服务器内部错误：" + message
+					}
 				}
-				return response.Error(c, fiberError.Code, responseCode, fiberError.Message)
+				return response.Error(c, fiberError.Code, responseCode, message)
 			}
-			return response.Error(c, fiber.StatusInternalServerError, response.CodeInternal, "服务器内部错误")
+			if strings.TrimSpace(err.Error()) == "" {
+				return response.Error(c, fiber.StatusInternalServerError, response.CodeInternal, "服务器内部错误")
+			}
+			return response.Error(c, fiber.StatusInternalServerError, response.CodeInternal, "服务器内部错误："+err.Error())
 		},
 	})
 

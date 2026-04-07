@@ -18,8 +18,6 @@
 | `real_estate_revenue_ratio` | `NUMERIC(12,6)` | 可空 | 地产收入占比 |
 | `main_business_type` | `TEXT` | `NOT NULL DEFAULT ''` | 主营业务类型 |
 | `established_at` | `TIMESTAMPTZ` | 可空 | 成立时间 |
-| `liability_asset_ratio` | `NUMERIC(12,6)` | 可空 | 资产负债率 |
-| `liability_asset_ratio_industry_median` | `NUMERIC(12,6)` | 可空 | 资产负债率行业中位数 |
 | `non_standard_financing_ratio` | `NUMERIC(12,6)` | 可空 | 非标融资占比 |
 | `main_business` | `TEXT` | `NOT NULL DEFAULT ''` | 主营业务描述 |
 | `related_party_public_opinion` | `TEXT` | `NOT NULL DEFAULT ''` | 关联方舆情说明 |
@@ -120,14 +118,26 @@
 | --- | --- | --- | --- |
 | `id` | `BIGSERIAL` | 主键 | 财务快照记录 ID |
 | `enterprise_id` | `BIGINT` | `NOT NULL`，外键，`UNIQUE`，`ON DELETE CASCADE` | 所属企业 ID（每企业一条快照） |
+| `liability_asset_ratio` | `NUMERIC(12,6)` | 可空 | 资产负债率 |
 | `roa` | `NUMERIC(12,6)` | 可空 | 总资产收益率 |
+| `roa_industry_median` | `NUMERIC(12,6)` | 可空 | 行业总资产收益率中位数 |
+| `roa_industry_1_4` | `NUMERIC(12,6)` | 可空 | 行业总资产收益率 1/4 分位 |
+| `roa_industry_3_4` | `NUMERIC(12,6)` | 可空 | 行业总资产收益率 3/4 分位 |
 | `roe` | `NUMERIC(12,6)` | 可空 | 净资产收益率 |
+| `roe_industry_1_4` | `NUMERIC(12,6)` | 可空 | 行业净资产收益率 1/4 分位 |
+| `roe_industry_3_4` | `NUMERIC(12,6)` | 可空 | 行业净资产收益率 3/4 分位 |
 | `interest_coverage` | `NUMERIC(12,6)` | 可空 | 利息保障倍数 |
 | `ebit_coverage` | `NUMERIC(12,6)` | 可空 | EBIT 保障倍数 |
 | `ebit_coverage_industry_median` | `NUMERIC(12,6)` | 可空 | EBIT 保障倍数中位数 |
+| `ebit_coverage_industry_1_4` | `NUMERIC(12,6)` | 可空 | EBIT 保障倍数 1/4 分位 |
+| `ebit_coverage_industry_3_4` | `NUMERIC(12,6)` | 可空 | EBIT 保障倍数 3/4 分位 |
 | `ebitda_coverage` | `NUMERIC(12,6)` | 可空 | EBITDA 保障倍数 |
 | `ebitda_coverage_industry_median` | `NUMERIC(12,6)` | 可空 | EBITDA 保障倍数中位数 |
+| `ebitda_coverage_industry_1_4` | `NUMERIC(12,6)` | 可空 | EBITDA 保障倍数 1/4 分位 |
+| `ebitda_coverage_industry_3_4` | `NUMERIC(12,6)` | 可空 | EBITDA 保障倍数 3/4 分位 |
 | `liability_asset_ratio_industry_median` | `NUMERIC(12,6)` | 可空 | 行业资产负债率中位数 |
+| `liability_asset_ratio_industry_1_4` | `NUMERIC(12,6)` | 可空 | 行业资产负债率 1/4 分位 |
+| `liability_asset_ratio_industry_3_4` | `NUMERIC(12,6)` | 可空 | 行业资产负债率 3/4 分位 |
 | `roe_industry_median` | `NUMERIC(12,6)` | 可空 | 行业净资产收益率中位数 |
 | `non_standard_financing_ratio_industry_median` | `NUMERIC(12,6)` | 可空 | 行业非标融资占比中位数 |
 | `main_business_1` | `VARCHAR(256)` | `NOT NULL DEFAULT ''` | 主营业务 1 |

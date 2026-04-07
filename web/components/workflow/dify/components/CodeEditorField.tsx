@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState } from 'react'
 import AICodeGenerateModal from './AICodeGenerateModal'
+import CodeTestModal from './CodeTestModal'
 import type { AICodeGenerateNodeType } from '../core/ai-code-generate'
+import { checkCodeSyntax } from '../core/code-test-engine'
 import type { VariableScope, WorkflowVariableOption } from '../core/variables'
 
 type CodeEditorAIGenerateConfig = {
@@ -48,12 +50,19 @@ export default function CodeEditorField({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const [selectedKey, setSelectedKey] = useState('')
   const [aiModalOpen, setAIModalOpen] = useState(false)
+  const [testModalOpen, setTestModalOpen] = useState(false)
 
   const filteredOptions = useMemo(() => {
     if (scope === 'all')
       return options
     return options.filter(option => option.valueType === scope)
   }, [options, scope])
+  const testLanguage = aiGenerateConfig?.language ?? 'javascript'
+  const syntaxResult = useMemo(() => {
+    if (aiGenerateConfig?.nodeType !== 'code')
+      return null
+    return checkCodeSyntax(value, testLanguage)
+  }, [aiGenerateConfig?.nodeType, testLanguage, value])
 
   const insertVariable = () => {
     const selected = filteredOptions.find(option => option.key === selectedKey)
@@ -112,7 +121,16 @@ export default function CodeEditorField({
         </div>
       )}
       {aiGenerateConfig && (
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between">
+          {aiGenerateConfig.nodeType === 'code' ? (
+            <button
+              type="button"
+              className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"
+              onClick={() => setTestModalOpen(true)}
+            >
+              测试
+            </button>
+          ) : <span />}
           <button
             type="button"
             className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700 hover:bg-blue-100"
@@ -130,6 +148,15 @@ export default function CodeEditorField({
         onChange={event => onChange(event.target.value)}
       />
       {aiGenerateConfig && (
+        <>
+          {syntaxResult && (
+            <div className={`text-xs ${syntaxResult.valid ? 'text-green-600' : 'text-red-600'}`}>
+              {syntaxResult.valid ? '语法校验通过' : `语法错误：${syntaxResult.error}`}
+            </div>
+          )}
+        </>
+      )}
+      {aiGenerateConfig && (
         <AICodeGenerateModal
           open={aiModalOpen}
           context={{
@@ -146,6 +173,15 @@ export default function CodeEditorField({
           defaultModel={aiGenerateConfig.defaultModel}
           onClose={() => setAIModalOpen(false)}
           onConfirm={generatedCode => onChange(generatedCode)}
+        />
+      )}
+      {aiGenerateConfig?.nodeType === 'code' && (
+        <CodeTestModal
+          open={testModalOpen}
+          title="代码测试"
+          code={value}
+          language={testLanguage}
+          onClose={() => setTestModalOpen(false)}
         />
       )}
     </div>

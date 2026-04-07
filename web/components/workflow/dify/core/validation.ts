@@ -18,6 +18,74 @@ const hasDuplicate = (values: string[]) => {
   return normalized.length !== new Set(normalized).size
 }
 
+const normalizeHandleId = (value?: string | null) => {
+  const normalized = trim(value || '')
+  return normalized || '__default__'
+}
+
+const buildIfElseHandleLabels = (node: DifyNode) => {
+  const labels = new Map<string, string>()
+  const config = ensureNodeConfig(BlockEnum.IfElse, node.data.config)
+  config.conditions.forEach((condition, index) => {
+    labels.set(buildIfElseBranchHandleId(index), trim(condition.name) || `条件分支${index + 1}`)
+  })
+  labels.set(IF_ELSE_FALLBACK_HANDLE, trim(config.elseBranchName) || 'Else 分支')
+  labels.set('__default__', '默认分支')
+  return labels
+}
+
+const buildIfElseReachability = (nodes: DifyNode[], edges: DifyEdge[]) => {
+  const outgoingBySource = new Map<string, DifyEdge[]>()
+  nodes.forEach((node) => {
+    outgoingBySource.set(node.id, [])
+  })
+  edges.forEach((edge) => {
+    if (!outgoingBySource.has(edge.source))
+      outgoingBySource.set(edge.source, [])
+    outgoingBySource.get(edge.source)!.push(edge)
+  })
+
+  const nodeConstraints = new Map<string, Map<string, Set<string>>>()
+  const markConstraint = (nodeId: string, ifElseId: string, handleId: string) => {
+    if (!nodeConstraints.has(nodeId))
+      nodeConstraints.set(nodeId, new Map<string, Set<string>>())
+    const byIfElse = nodeConstraints.get(nodeId)!
+    if (!byIfElse.has(ifElseId))
+      byIfElse.set(ifElseId, new Set<string>())
+    byIfElse.get(ifElseId)!.add(handleId)
+  }
+
+  const ifElseNodes = nodes.filter(node => node.data.type === BlockEnum.IfElse)
+  ifElseNodes.forEach((ifElseNode) => {
+    const outgoing = outgoingBySource.get(ifElseNode.id) ?? []
+    const grouped = new Map<string, string[]>()
+    outgoing.forEach((edge) => {
+      const handleId = normalizeHandleId(edge.sourceHandle)
+      if (!grouped.has(handleId))
+        grouped.set(handleId, [])
+      grouped.get(handleId)!.push(edge.target)
+    })
+
+    grouped.forEach((targets, handleId) => {
+      const queue = [...targets]
+      const visited = new Set<string>()
+      while (queue.length > 0) {
+        const current = queue.shift()
+        if (!current || visited.has(current))
+          continue
+        visited.add(current)
+        markConstraint(current, ifElseNode.id, handleId)
+        const nextEdges = outgoingBySource.get(current) ?? []
+        nextEdges.forEach((edge) => {
+          queue.push(edge.target)
+        })
+      }
+    })
+  })
+
+  return nodeConstraints
+}
+
 const extractWritebackTargets = (node: DifyNode) => {
   const config = node.data.config
   if (!config || typeof config !== 'object')
@@ -29,7 +97,10 @@ const extractWritebackTargets = (node: DifyNode) => {
     .map((item) => {
       if (!item || typeof item !== 'object')
         return ''
-      const targetPath = (item as { targetPath?: unknown }).targetPath
+      const mapping = item as { targetPath?: unknown; mode?: unknown }
+      if (mapping.mode === 'writebacks')
+        return ''
+      const targetPath = mapping.targetPath
       return typeof targetPath === 'string' ? trim(targetPath) : ''
     })
     .filter(Boolean)
@@ -50,41 +121,35 @@ const findParallelWritebackConflicts = (targetNodes: DifyNode[]) => {
     .sort()
 }
 
-const countArrayToken = (value: string) => (value.match(/\[\]/g) || []).length
-
-const validateArrayWritebackMappings = (
+const validateJsonataWritebackMappings = (
   prefix: string,
   nodeId: string,
   nodeTitle: string,
-  mappings: Array<{ sourcePath: string; targetPath: string }>,
+  mappings: Array<{ mode?: string; expression?: string; sourcePath?: string; targetPath?: string }>,
 ): WorkflowIssue[] => {
   const issues: WorkflowIssue[] = []
   mappings.forEach((item, index) => {
-    const sourcePath = trim(item.sourcePath || '')
+    const mode = item.mode === 'writebacks' || (item.mode !== 'value' && !trim(item.targetPath || '')) ? 'writebacks' : 'value'
+    const expression = trim(item.expression || item.sourcePath || '')
     const targetPath = trim(item.targetPath || '')
-    if (!sourcePath || !targetPath)
-      return
-    const sourceCount = countArrayToken(sourcePath)
-    const targetCount = countArrayToken(targetPath)
-
-    if (sourceCount > 1 || targetCount > 1) {
+    if (!expression) {
       issues.push({
-        id: `${prefix}-writeback-array-nested-${index}`,
+        id: `${prefix}-writeback-expression-empty-${index}`,
         nodeId,
         level: 'error',
-        title: `${nodeTitle} 数组映射层级不支持`,
-        message: 'writeback 映射暂不支持多层 []，请拆分为单层数组映射。',
+        title: `${nodeTitle} JSONata 映射为空`,
+        message: '写回映射 expression 不能为空。',
       })
       return
     }
 
-    if (targetCount === 1 && sourceCount === 0) {
+    if (mode === 'value' && !targetPath) {
       issues.push({
-        id: `${prefix}-writeback-array-source-missing-${index}`,
+        id: `${prefix}-writeback-target-empty-${index}`,
         nodeId,
-        level: 'warning',
-        title: `${nodeTitle} 数组映射来源可能不正确`,
-        message: 'targetPath 使用了 [] 但 sourcePath 未使用 []，该映射不会逐项索引对应。',
+        level: 'error',
+        title: `${nodeTitle} JSONata 目标为空`,
+        message: 'mode=value 时 targetPath 不能为空。',
       })
     }
   })
@@ -98,6 +163,7 @@ export const validateWorkflow = (
 ): WorkflowIssue[] => {
   const issues: WorkflowIssue[] = []
   const nodeIdSet = new Set(nodes.map(node => node.id))
+  const nodeById = new Map(nodes.map(node => [node.id, node]))
 
   const workflowParamNames = workflowParameters.map(item => item.name)
   if (workflowParameters.some(item => !trim(item.name) || !trim(item.label))) {
@@ -172,10 +238,12 @@ export const validateWorkflow = (
   const inDegree = new Map<string, number>()
   const outDegree = new Map<string, number>()
   const outgoingBySource = new Map<string, DifyEdge[]>()
+  const incomingByTarget = new Map<string, DifyEdge[]>()
   nodes.forEach((node) => {
     inDegree.set(node.id, 0)
     outDegree.set(node.id, 0)
     outgoingBySource.set(node.id, [])
+    incomingByTarget.set(node.id, [])
   })
   edges.forEach((edge) => {
     inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1)
@@ -183,7 +251,11 @@ export const validateWorkflow = (
     const list = outgoingBySource.get(edge.source)
     if (list)
       list.push(edge)
+    const incoming = incomingByTarget.get(edge.target)
+    if (incoming)
+      incoming.push(edge)
   })
+  const ifElseReachability = buildIfElseReachability(nodes, edges)
 
   nodes.forEach((node) => {
     const inCount = inDegree.get(node.id) ?? 0
@@ -224,6 +296,68 @@ export const validateWorkflow = (
           message: '当前节点存在多条输入连线，建议显式设置 joinMode（all/any）以避免执行歧义。',
         })
       }
+    }
+    const rawConfig = node.data.config
+    const joinMode = rawConfig && typeof rawConfig === 'object' && (rawConfig as { joinMode?: unknown }).joinMode === 'any'
+      ? 'any'
+      : 'all'
+    if (node.data.type !== BlockEnum.Start && inCount > 1 && joinMode === 'all') {
+      const incomingEdges = incomingByTarget.get(node.id) ?? []
+      const sourceIds = [...new Set(incomingEdges.map(edge => edge.source).filter(Boolean))]
+      const constrainedIfElseIds = new Set<string>()
+      sourceIds.forEach((sourceId) => {
+        const sourceConstraints = ifElseReachability.get(sourceId)
+        sourceConstraints?.forEach((_, ifElseId) => constrainedIfElseIds.add(ifElseId))
+      })
+
+      constrainedIfElseIds.forEach((ifElseId) => {
+        const ifElseNode = nodeById.get(ifElseId)
+        if (!ifElseNode || ifElseNode.data.type !== BlockEnum.IfElse)
+          return
+        const handleLabels = buildIfElseHandleLabels(ifElseNode)
+        const constrainedSources: Array<{ sourceTitle: string; handles: string[] }> = []
+        let commonHandles: Set<string> | null = null
+
+        sourceIds.forEach((sourceId) => {
+          const handles = ifElseReachability.get(sourceId)?.get(ifElseId)
+          if (!handles || handles.size === 0)
+            return
+          const sortedHandles = [...handles].sort()
+          constrainedSources.push({
+            sourceTitle: trim(nodeById.get(sourceId)?.data.title || sourceId),
+            handles: sortedHandles,
+          })
+          if (!commonHandles) {
+            commonHandles = new Set(sortedHandles)
+            return
+          }
+          const nextIntersection = new Set<string>()
+          sortedHandles.forEach((handle) => {
+            if (commonHandles?.has(handle))
+              nextIntersection.add(handle)
+          })
+          commonHandles = nextIntersection
+        })
+
+        if (constrainedSources.length < 2)
+          return
+        if (commonHandles && commonHandles.size > 0)
+          return
+
+        const sourceSummary = constrainedSources
+          .map((item) => {
+            const branchNames = item.handles.map(handle => handleLabels.get(handle) || handle).join('/')
+            return `${item.sourceTitle}（${branchNames}）`
+          })
+          .join('，')
+        issues.push({
+          id: `${prefix}-join-all-exclusive-${ifElseId}`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 无法满足全部汇聚`,
+          message: `当前节点使用 joinMode=all，但其上游 ${sourceSummary} 来自「${ifElseNode.data.title}」互斥分支，无法在一次执行中同时到达。建议改为 joinMode=any 或拆分汇总节点。`,
+        })
+      })
     }
 
     if (node.data.type !== BlockEnum.Start && node.data.type !== BlockEnum.End) {
@@ -599,18 +733,7 @@ export const validateWorkflow = (
           })
         }
       }
-      if (config.writebackMappings.some(item => !trim(item.sourcePath) || !trim(item.targetPath))) {
-        issues.push({
-          id: `${prefix}-code-writeback-invalid`,
-          nodeId: node.id,
-          level: 'error',
-          title: `${node.data.title} 写入参数映射不完整`,
-          message: '代码节点写入参数映射的 sourcePath/targetPath 不能为空。',
-        })
-      }
-      issues.push(
-        ...validateArrayWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings),
-      )
+      issues.push(...validateJsonataWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings as any))
     }
 
     if (node.data.type === BlockEnum.HttpRequest) {
@@ -654,18 +777,7 @@ export const validateWorkflow = (
           })
         }
       }
-      if (config.writebackMappings.some(item => !trim(item.sourcePath) || !trim(item.targetPath))) {
-        issues.push({
-          id: `${prefix}-http-writeback-invalid`,
-          nodeId: node.id,
-          level: 'error',
-          title: `${node.data.title} 写入参数映射不完整`,
-          message: 'HTTP 节点写入参数映射的 sourcePath/targetPath 不能为空。',
-        })
-      }
-      issues.push(
-        ...validateArrayWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings),
-      )
+      issues.push(...validateJsonataWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings as any))
     }
 
     if (node.data.type === BlockEnum.ApiRequest) {
@@ -695,18 +807,7 @@ export const validateWorkflow = (
         })
       }
 
-      if (config.writebackMappings.some(item => !trim(item.sourcePath) || !trim(item.targetPath))) {
-        issues.push({
-          id: `${prefix}-api-writeback-invalid`,
-          nodeId: node.id,
-          level: 'error',
-          title: `${node.data.title} 写入参数映射不完整`,
-          message: 'API 请求节点写入参数映射的 sourcePath/targetPath 不能为空。',
-        })
-      }
-      issues.push(
-        ...validateArrayWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings),
-      )
+      issues.push(...validateJsonataWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings as any))
     }
 
     if (node.data.type === BlockEnum.End) {

@@ -9,6 +9,7 @@ require github.com/jackc/pgx/v5 v5.7.6
 require github.com/nikolalohinski/gonja/v2 v2.7.0
 
 require (
+	github.com/blues/jsonata-go v1.5.4
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/google/uuid v1.6.0
 )

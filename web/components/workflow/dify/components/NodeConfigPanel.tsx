@@ -24,6 +24,7 @@ import {
   type WorkflowGlobalVariable,
   type WorkflowParameter,
   type WorkflowVariableScope,
+  type WritebackMapping,
 } from '../core/types'
 
 type NodeConfigPanelProps = {
@@ -74,6 +75,34 @@ type MappingCascaderOption = {
 }
 
 type MappingModalType = 'code' | 'http' | 'api'
+type MappingOwner = 'code' | 'http' | 'api'
+
+type ArrayMappingPair = {
+  sourceField: string
+  targetField: string
+}
+
+type StructuredMappingType = 'array' | 'object'
+
+type StructuredMappingDraft = {
+  mappingType: StructuredMappingType
+  sourcePath: string
+  targetPath: string
+  pairs: ArrayMappingPair[]
+}
+
+type MappingTestResult = {
+  writebacks: Array<{ targetPath: string; value: unknown }>
+  mergedOutput: Record<string, unknown>
+  unsupportedExpressions: string[]
+}
+
+const defaultArrayMappingDraft = (): StructuredMappingDraft => ({
+  mappingType: 'array',
+  sourcePath: '',
+  targetPath: '',
+  pairs: [{ sourceField: '', targetField: '' }],
+})
 
 const parseJsonAny = (rawText: string): { ok: true; value: unknown } | { ok: false; error: string } => {
   const trimmed = String(rawText || '').trim()
@@ -361,10 +390,32 @@ const buildMappingCascaderOptions = (options: Array<{ key: string; param: string
     .map(toOption)
 }
 
-const buildMappingCascaderValue = (targetPath: string): string[] => {
+const findCascaderPathByValue = (options: MappingCascaderOption[], targetValue: string): string[] => {
+  if (!targetValue)
+    return []
+  const visit = (items: MappingCascaderOption[], trail: string[]): string[] | null => {
+    for (const item of items) {
+      const nextTrail = [...trail, String(item.value)]
+      if (String(item.value) === targetValue)
+        return nextTrail
+      if (Array.isArray(item.children) && item.children.length > 0) {
+        const matched = visit(item.children, nextTrail)
+        if (matched)
+          return matched
+      }
+    }
+    return null
+  }
+  return visit(options, []) ?? []
+}
+
+const buildMappingCascaderValue = (targetPath: string, options: MappingCascaderOption[]): string[] => {
   const trimmed = String(targetPath || '').trim()
   if (!trimmed)
     return []
+  const matched = findCascaderPathByValue(options, trimmed)
+  if (matched.length > 0)
+    return matched
   const parts = trimmed.split('.').filter(Boolean)
   if (parts.length <= 1)
     return [trimmed]
@@ -461,6 +512,186 @@ const buildSourcePathCascaderValue = (sourcePath: string): string[] => {
   return chain
 }
 
+const listArrayPaths = (paths: string[]): string[] => {
+  const set = new Set<string>()
+  paths.forEach((path) => {
+    const trimmed = String(path || '').trim()
+    if (!trimmed)
+      return
+    let from = 0
+    while (from < trimmed.length) {
+      const pos = trimmed.indexOf('[]', from)
+      if (pos < 0)
+        break
+      set.add(trimmed.slice(0, pos + 2))
+      from = pos + 2
+    }
+  })
+  return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+}
+
+const listFieldsUnderArrayPath = (paths: string[], arrayPath: string): string[] => {
+  const prefix = `${String(arrayPath || '').trim()}.`
+  if (!prefix || prefix === '.')
+    return []
+  const set = new Set<string>()
+  paths.forEach((path) => {
+    const trimmed = String(path || '').trim()
+    if (!trimmed.startsWith(prefix))
+      return
+    const remainder = trimmed.slice(prefix.length).trim()
+    if (!remainder)
+      return
+    set.add(remainder)
+  })
+  return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+}
+
+const listObjectPaths = (paths: string[]): string[] => {
+  const set = new Set<string>()
+  paths.forEach((path) => {
+    const trimmed = String(path || '').trim()
+    if (!trimmed || trimmed.includes('[]'))
+      return
+    const prefix = `${trimmed}.`
+    const hasChild = paths.some(candidate => String(candidate || '').trim().startsWith(prefix))
+    if (hasChild)
+      set.add(trimmed)
+  })
+  return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+}
+
+const toJsonataAccessor = (base: string, rawFieldPath: string): string => {
+  const fieldPath = String(rawFieldPath || '').trim()
+  if (!fieldPath)
+    return base
+  return fieldPath
+    .split('.')
+    .filter(Boolean)
+    .reduce((acc, segment) => {
+      const isArraySegment = segment.endsWith('[]')
+      const key = isArraySegment ? segment.slice(0, -2) : segment
+      const accessor = /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
+        ? `${acc}.${key}`
+        : `${acc}["${key.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
+      if (isArraySegment)
+        return `${accessor}[0]`
+      return accessor
+    }, base)
+}
+
+const buildArrayMappingJsonata = (sourceArrayPath: string, pairs: ArrayMappingPair[]): string => {
+  const objectFields = pairs
+    .map((pair) => {
+      const sourceField = String(pair.sourceField || '').trim()
+      const targetField = String(pair.targetField || '').trim()
+      if (!sourceField || !targetField)
+        return ''
+      const escapedTarget = targetField.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      const accessor = toJsonataAccessor('$v', sourceField)
+      return `"${escapedTarget}": ${accessor}`
+    })
+    .filter(Boolean)
+  return `$map(${sourceArrayPath}, function($v){ { ${objectFields.join(', ')} } })`
+}
+
+const buildObjectMappingJsonata = (sourcePath: string, pairs: ArrayMappingPair[]): string => {
+  const base = String(sourcePath || '').trim() || '$'
+  const objectFields = pairs
+    .map((pair) => {
+      const sourceField = String(pair.sourceField || '').trim()
+      const targetField = String(pair.targetField || '').trim()
+      if (!sourceField || !targetField)
+        return ''
+      const escapedTarget = targetField.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      const accessor = toJsonataAccessor(base, sourceField)
+      return `"${escapedTarget}": ${accessor}`
+    })
+    .filter(Boolean)
+  return `{ ${objectFields.join(', ')} }`
+}
+
+const normalizePathForLookup = (rawPath: string): string => {
+  return String(rawPath || '')
+    .trim()
+    .replace(/^\$\./, '')
+    .replace(/^\$/, '')
+    .replace(/\[\]/g, '.0')
+    .replace(/\[(\d+)\]/g, '.$1')
+}
+
+const getValueByPathFromUnknown = (source: unknown, rawPath: string): unknown => {
+  const normalized = normalizePathForLookup(rawPath)
+  if (!normalized)
+    return source
+  const segments = normalized.split('.').map(item => item.trim()).filter(Boolean)
+  let current: unknown = source
+  for (const segment of segments) {
+    if (current === null || current === undefined)
+      return undefined
+    if (Array.isArray(current)) {
+      const index = Number(segment)
+      if (!Number.isInteger(index))
+        return undefined
+      current = current[index]
+      continue
+    }
+    if (typeof current !== 'object')
+      return undefined
+    current = (current as Record<string, unknown>)[segment]
+  }
+  return current
+}
+
+const evaluateSimpleExpression = (expression: string, context: unknown): { ok: true; value: unknown } | { ok: false } => {
+  const trimmed = String(expression || '').trim()
+  if (!trimmed)
+    return { ok: false }
+  const arrayMatches = trimmed.match(/\[\]/g) ?? []
+  if (arrayMatches.length > 1)
+    return { ok: false }
+  if (arrayMatches.length === 0) {
+    return { ok: true, value: getValueByPathFromUnknown(context, trimmed) }
+  }
+  const index = trimmed.indexOf('[]')
+  if (index < 0)
+    return { ok: false }
+  const arrayPath = trimmed.slice(0, index + 2)
+  const fieldPath = trimmed.slice(index + 2).replace(/^\./, '')
+  const sourceArray = getValueByPathFromUnknown(context, arrayPath.slice(0, -2))
+  if (!Array.isArray(sourceArray))
+    return { ok: true, value: [] }
+  if (!fieldPath)
+    return { ok: true, value: sourceArray }
+  return {
+    ok: true,
+    value: sourceArray.map((item) => {
+      const v = getValueByPathFromUnknown(item, fieldPath)
+      return v === undefined ? '' : v
+    }),
+  }
+}
+
+const setValueByTargetPath = (target: Record<string, unknown>, rawPath: string, value: unknown) => {
+  const trimmed = String(rawPath || '').trim()
+  if (!trimmed)
+    return
+  const normalized = normalizePathForLookup(trimmed.endsWith('[]') ? trimmed.slice(0, -2) : trimmed)
+  const segments = normalized.split('.').map(item => item.trim()).filter(Boolean)
+  if (segments.length === 0)
+    return
+
+  let current: Record<string, unknown> = target
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    const key = segments[i]
+    const existing = current[key]
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing))
+      current[key] = {}
+    current = current[key] as Record<string, unknown>
+  }
+  current[segments[segments.length - 1]] = value
+}
+
 export default function NodeConfigPanel({
   nodes,
   workflowParameters,
@@ -478,12 +709,19 @@ export default function NodeConfigPanel({
   const [templateOptions, setTemplateOptions] = useState<TemplateOption[]>([])
   const [apiRoutes, setApiRoutes] = useState<APIRouteDoc[]>([])
   const [apiRoutesError, setApiRoutesError] = useState('')
+  const [codeResponseJsonByNode, setCodeResponseJsonByNode] = useState<Record<string, string>>({})
+  const [codeResponseJsonErrorByNode, setCodeResponseJsonErrorByNode] = useState<Record<string, string>>({})
   const [httpResponseJsonByNode, setHttpResponseJsonByNode] = useState<Record<string, string>>({})
   const [httpResponseJsonErrorByNode, setHttpResponseJsonErrorByNode] = useState<Record<string, string>>({})
   const [apiJsonDraftByNode, setApiJsonDraftByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
   const [apiJsonErrorByNode, setApiJsonErrorByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
   const [apiJsonInsertKeyByNode, setApiJsonInsertKeyByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
   const [mappingModalType, setMappingModalType] = useState<MappingModalType | null>(null)
+  const [arrayMappingDraftByOwner, setArrayMappingDraftByOwner] = useState<Record<string, StructuredMappingDraft>>({})
+  const [arrayMappingErrorByOwner, setArrayMappingErrorByOwner] = useState<Record<string, string>>({})
+  const [mappingTestInputByOwner, setMappingTestInputByOwner] = useState<Record<string, string>>({})
+  const [mappingTestResultByOwner, setMappingTestResultByOwner] = useState<Record<string, MappingTestResult | null>>({})
+  const [mappingTestErrorByOwner, setMappingTestErrorByOwner] = useState<Record<string, string>>({})
   const apiJsonTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
   const variableOptions = useMemo(
     () => buildWorkflowVariableOptions(nodes, workflowParameters, globalVariables, activeNode),
@@ -497,6 +735,27 @@ export default function NodeConfigPanel({
     () => buildMappingCascaderOptions(mappingTargetOptions),
     [mappingTargetOptions],
   )
+
+  const buildMappingOwnerKey = (owner: MappingOwner) => `${activeNode?.id || 'none'}:${owner}`
+
+  const getArrayDraft = (owner: MappingOwner): StructuredMappingDraft => {
+    const key = buildMappingOwnerKey(owner)
+    return arrayMappingDraftByOwner[key] ?? defaultArrayMappingDraft()
+  }
+
+  const setArrayDraft = (owner: MappingOwner, updater: (prev: StructuredMappingDraft) => StructuredMappingDraft) => {
+    const key = buildMappingOwnerKey(owner)
+    setArrayMappingDraftByOwner((prev) => {
+      const current = prev[key] ?? defaultArrayMappingDraft()
+      const next = updater(current)
+      return { ...prev, [key]: next }
+    })
+  }
+
+  const setArrayDraftError = (owner: MappingOwner, message: string) => {
+    const key = buildMappingOwnerKey(owner)
+    setArrayMappingErrorByOwner(prev => ({ ...prev, [key]: message }))
+  }
 
   useEffect(() => {
     const token = typeof window !== 'undefined'
@@ -671,6 +930,42 @@ export default function NodeConfigPanel({
     setMappingModalType(null)
   }, [activeNode?.id, activeNode?.data.type])
 
+  useEffect(() => {
+    if (!activeNode)
+      return
+    const owner: MappingOwner | null = activeNode.data.type === BlockEnum.HttpRequest
+      ? 'http'
+      : activeNode.data.type === BlockEnum.ApiRequest
+        ? 'api'
+        : null
+    if (!owner)
+      return
+
+    const config = activeNode.data.type === BlockEnum.HttpRequest
+      ? ensureNodeConfig(BlockEnum.HttpRequest, activeNode.data.config) as HttpNodeConfig
+      : ensureNodeConfig(BlockEnum.ApiRequest, activeNode.data.config) as ApiRequestNodeConfig
+    const matched = [...(config.writebackMappings ?? [])]
+      .reverse()
+      .find(item => item?.arrayMapping && item.arrayMapping.sourceArrayPath && item.arrayMapping.targetArrayPath)
+    if (!matched?.arrayMapping)
+      return
+    const key = `${activeNode.id}:${owner}`
+    setArrayMappingDraftByOwner(prev => ({
+      ...prev,
+      [key]: {
+        mappingType: matched.arrayMapping?.mappingType === 'object' ? 'object' : 'array',
+        sourcePath: matched.arrayMapping?.sourceArrayPath || '',
+        targetPath: matched.arrayMapping?.targetArrayPath || '',
+        pairs: matched.arrayMapping?.pairs?.length
+          ? matched.arrayMapping.pairs.map(pair => ({
+              sourceField: pair.sourceField || '',
+              targetField: pair.targetField || '',
+            }))
+          : [{ sourceField: '', targetField: '' }],
+      },
+    }))
+  }, [activeNode])
+
   if (!activeNode) {
     return (
       <div className="col-span-3 rounded-xl border border-gray-200 bg-white p-3">
@@ -690,6 +985,365 @@ export default function NodeConfigPanel({
         ...patch,
       },
     })
+  }
+
+  const getWritebackExpression = (mapping: { expression?: string; sourcePath?: string }) => String(mapping.expression || mapping.sourcePath || '')
+
+  const renderArrayMappingBuilder = (
+    owner: MappingOwner,
+    mappings: WritebackMapping[],
+    onChangeMappings: (next: WritebackMapping[]) => void,
+    sourcePaths: string[],
+  ) => {
+    const draft = getArrayDraft(owner)
+    const ownerKey = buildMappingOwnerKey(owner)
+    const sourceContainerPaths = draft.mappingType === 'array' ? listArrayPaths(sourcePaths) : listObjectPaths(sourcePaths)
+    const sourceFieldPaths = listFieldsUnderArrayPath(sourcePaths, draft.sourcePath)
+    const targetSourcePaths = mappingTargetOptions.map(item => item.key)
+    const targetContainerPaths = draft.mappingType === 'array' ? listArrayPaths(targetSourcePaths) : listObjectPaths(targetSourcePaths)
+    const targetFieldPaths = listFieldsUnderArrayPath(targetSourcePaths, draft.targetPath)
+    const errorText = arrayMappingErrorByOwner[ownerKey] ?? ''
+
+    const addArrayMapping = () => {
+      const sourcePath = String(draft.sourcePath || '').trim()
+      const targetPath = String(draft.targetPath || '').trim()
+      const pairs = draft.pairs
+        .map(item => ({
+          sourceField: String(item.sourceField || '').trim(),
+          targetField: String(item.targetField || '').trim(),
+        }))
+        .filter(item => item.sourceField || item.targetField)
+      if (!sourcePath || !targetPath) {
+        setArrayDraftError(owner, draft.mappingType === 'array' ? '请先选择源数组与目标数组。' : '请先选择源对象与目标对象。')
+        return
+      }
+      if (draft.mappingType === 'array' && (!sourcePath.endsWith('[]') || !targetPath.endsWith('[]'))) {
+        setArrayDraftError(owner, '数组模式仅支持单层数组路径（需以 [] 结尾）。')
+        return
+      }
+      if (draft.mappingType === 'object' && (sourcePath.endsWith('[]') || targetPath.endsWith('[]'))) {
+        setArrayDraftError(owner, '对象模式不支持数组路径（不能以 [] 结尾）。')
+        return
+      }
+      if (pairs.length === 0) {
+        setArrayDraftError(owner, '请至少添加一条字段配对。')
+        return
+      }
+      if (pairs.some(item => !item.sourceField || !item.targetField)) {
+        setArrayDraftError(owner, '字段配对不能为空。')
+        return
+      }
+      const hasInvalidTargetArray = pairs.some(item => item.targetField.includes('[]'))
+      if (hasInvalidTargetArray) {
+        setArrayDraftError(owner, '目标字段不支持数组路径（请映射到同层字段）。')
+        return
+      }
+      const hasTooDeepSourceArray = pairs.some((item) => {
+        const matches = item.sourceField.match(/\[\]/g) ?? []
+        return matches.length > 1
+      })
+      if (hasTooDeepSourceArray) {
+        setArrayDraftError(owner, '源字段最多支持一层子数组（如 guarantor[].itName）。')
+        return
+      }
+      const duplicatedTargets = pairs
+        .map(item => item.targetField)
+        .filter((value, index, list) => list.indexOf(value) !== index)
+      if (duplicatedTargets.length > 0) {
+        setArrayDraftError(owner, `目标字段重复：${[...new Set(duplicatedTargets)].join('、')}`)
+        return
+      }
+
+      const expression = draft.mappingType === 'array'
+        ? buildArrayMappingJsonata(sourcePath, pairs)
+        : buildObjectMappingJsonata(sourcePath, pairs)
+      const nextMapping: WritebackMapping = {
+        mode: 'value',
+        expression,
+        targetPath,
+        sourcePath: '',
+        arrayMapping: {
+          mappingType: draft.mappingType,
+          sourceArrayPath: sourcePath,
+          targetArrayPath: targetPath,
+          pairs,
+        },
+      }
+      onChangeMappings([...mappings, nextMapping])
+      setArrayDraftError(owner, '')
+    }
+
+    return (
+      <div className="space-y-2 rounded border border-emerald-200 bg-emerald-50/40 p-2">
+        <div className="text-xs font-semibold text-emerald-800">结构字段配对（无需手写表达式）</div>
+        <div className="grid grid-cols-12 gap-2">
+          <div className="col-span-12 md:col-span-4">
+            <div className="mb-1 text-[11px] text-gray-600">配对模式</div>
+            <select
+              className={inputClass}
+              value={draft.mappingType}
+              onChange={(event) => {
+                const mappingType = event.target.value === 'object' ? 'object' as const : 'array' as const
+                setArrayDraft(owner, prev => ({
+                  ...prev,
+                  mappingType,
+                  sourcePath: '',
+                  targetPath: '',
+                  pairs: prev.pairs.length ? prev.pairs : [{ sourceField: '', targetField: '' }],
+                }))
+                setArrayDraftError(owner, '')
+              }}
+            >
+              <option value="array">数组对象映射（a[] → b[]）</option>
+              <option value="object">对象映射（a → b）</option>
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-12 gap-2">
+          <div className="col-span-12 md:col-span-6">
+            <div className="mb-1 text-[11px] text-gray-600">{draft.mappingType === 'array' ? '源数组' : '源对象'}</div>
+            <Cascader
+              className={mappingCascaderClass}
+              options={buildSourcePathCascaderOptions(sourceContainerPaths)}
+              placeholder={draft.mappingType === 'array' ? '选择源数组（如 data.list[]）' : '选择源对象（如 data.baseInfo）'}
+              value={buildSourcePathCascaderValue(draft.sourcePath)}
+              allowClear
+              changeOnSelect
+              showSearch
+              onChange={(value) => {
+                const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                setArrayDraft(owner, prev => ({
+                  ...prev,
+                  sourcePath: selected,
+                  pairs: prev.pairs.length ? prev.pairs : [{ sourceField: '', targetField: '' }],
+                }))
+              }}
+            />
+          </div>
+          <div className="col-span-12 md:col-span-6">
+            <div className="mb-1 text-[11px] text-gray-600">{draft.mappingType === 'array' ? '目标数组' : '目标对象'}</div>
+            <Cascader
+              className={mappingCascaderClass}
+              options={buildSourcePathCascaderOptions(targetContainerPaths)}
+              placeholder={draft.mappingType === 'array' ? '选择目标数组（如 workflow.entp.tags[]）' : '选择目标对象（如 workflow.entp.financeSnapshot）'}
+              value={buildSourcePathCascaderValue(draft.targetPath)}
+              allowClear
+              changeOnSelect
+              showSearch
+              onChange={(value) => {
+                const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                setArrayDraft(owner, prev => ({ ...prev, targetPath: selected }))
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          {draft.pairs.map((pair, index) => (
+            <div key={`${ownerKey}-pair-${index}`} className="grid grid-cols-12 gap-2">
+              <div className="col-span-12 md:col-span-5">
+                <select
+                  className={inputClass}
+                  value={pair.sourceField}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    setArrayDraft(owner, (prev) => {
+                      const nextPairs = prev.pairs.slice()
+                      nextPairs[index] = { ...nextPairs[index], sourceField: value }
+                      return { ...prev, pairs: nextPairs }
+                    })
+                  }}
+                >
+                  <option value="">源字段</option>
+                  {sourceFieldPaths.map(field => (
+                    <option key={`${ownerKey}-source-${field}`} value={field}>{field}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-12 md:col-span-1 text-center text-xs text-gray-400 md:py-2">→</div>
+              <div className="col-span-12 md:col-span-5">
+                <select
+                  className={inputClass}
+                  value={pair.targetField}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    setArrayDraft(owner, (prev) => {
+                      const nextPairs = prev.pairs.slice()
+                      nextPairs[index] = { ...nextPairs[index], targetField: value }
+                      return { ...prev, pairs: nextPairs }
+                    })
+                  }}
+                >
+                  <option value="">目标字段</option>
+                  {targetFieldPaths.map(field => (
+                    <option key={`${ownerKey}-target-${field}`} value={field}>{field}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="button"
+                className="col-span-12 md:col-span-1 rounded bg-red-50 px-2 py-1 text-xs text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={draft.pairs.length <= 1}
+                onClick={() => {
+                  setArrayDraft(owner, (prev) => ({
+                    ...prev,
+                    pairs: prev.pairs.filter((_, itemIndex) => itemIndex !== index),
+                  }))
+                }}
+              >
+                删
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
+            onClick={() => {
+              setArrayDraft(owner, (prev) => ({
+                ...prev,
+                pairs: [...prev.pairs, { sourceField: '', targetField: '' }],
+              }))
+            }}
+          >
+            新增字段配对
+          </button>
+          <button
+            type="button"
+            className="rounded bg-emerald-600 px-2 py-1 text-xs text-white hover:bg-emerald-700"
+            onClick={addArrayMapping}
+          >
+            生成映射
+          </button>
+        </div>
+        {!!errorText && <div className="text-xs text-rose-600">{errorText}</div>}
+        <div className="text-[11px] text-gray-500">
+          会自动生成 JSONata 表达式并写回，适合“a[].x 到 b[].y”或“a.x 到 b.y”的可视化配置。
+        </div>
+        <div className="text-[11px] text-gray-400">
+          若源字段包含子数组（如 <code>guarantor[].itName</code>），默认取首项并映射到同层目标字段。
+        </div>
+      </div>
+    )
+  }
+
+  const renderMappingTester = (owner: MappingOwner, mappings: WritebackMapping[]) => {
+    const ownerKey = buildMappingOwnerKey(owner)
+    const draft = mappingTestInputByOwner[ownerKey] ?? ''
+    const result = mappingTestResultByOwner[ownerKey] ?? null
+    const error = mappingTestErrorByOwner[ownerKey] ?? ''
+
+    const runTest = () => {
+      const parsed = parseJsonAny(draft)
+      if (!parsed.ok) {
+        setMappingTestErrorByOwner(prev => ({ ...prev, [ownerKey]: `响应 JSON 解析失败：${parsed.error}` }))
+        setMappingTestResultByOwner(prev => ({ ...prev, [ownerKey]: null }))
+        return
+      }
+      const writebacks: Array<{ targetPath: string; value: unknown }> = []
+      const mergedOutput: Record<string, unknown> = {}
+      const unsupportedExpressions: string[] = []
+      for (const mapping of mappings) {
+        const targetPath = String(mapping.targetPath || '').trim()
+        if (!targetPath)
+          continue
+        if (mapping.arrayMapping && mapping.arrayMapping.sourceArrayPath && mapping.arrayMapping.targetArrayPath) {
+          const sourcePath = String(mapping.arrayMapping.sourceArrayPath || '').trim()
+          const mappingType = mapping.arrayMapping.mappingType === 'object' ? 'object' : 'array'
+          const pairs = Array.isArray(mapping.arrayMapping.pairs) ? mapping.arrayMapping.pairs : []
+          if (mappingType === 'object') {
+            const sourceObject = getValueByPathFromUnknown(parsed.value, sourcePath)
+            const root = (sourceObject && typeof sourceObject === 'object') ? sourceObject : {}
+            const item: Record<string, unknown> = {}
+            pairs.forEach((pair) => {
+              const sourceField = String(pair.sourceField || '').trim()
+              const targetField = String(pair.targetField || '').trim()
+              if (!sourceField || !targetField)
+                return
+              const val = getValueByPathFromUnknown(root, sourceField)
+              item[targetField] = val === undefined ? '' : val
+            })
+            writebacks.push({ targetPath, value: item })
+            setValueByTargetPath(mergedOutput, targetPath, item)
+          }
+          else {
+            const sourceArray = getValueByPathFromUnknown(parsed.value, sourcePath.slice(0, -2))
+            const rows = Array.isArray(sourceArray)
+              ? sourceArray.map((row) => {
+                  const item: Record<string, unknown> = {}
+                  pairs.forEach((pair) => {
+                    const sourceField = String(pair.sourceField || '').trim()
+                    const targetField = String(pair.targetField || '').trim()
+                    if (!sourceField || !targetField)
+                      return
+                    const val = getValueByPathFromUnknown(row, sourceField)
+                    item[targetField] = val === undefined ? '' : val
+                  })
+                  return item
+                })
+              : []
+            writebacks.push({ targetPath, value: rows })
+            setValueByTargetPath(mergedOutput, targetPath, rows)
+          }
+          continue
+        }
+
+        const evaluated = evaluateSimpleExpression(String(mapping.expression || ''), parsed.value)
+        if (!evaluated.ok) {
+          unsupportedExpressions.push(String(mapping.expression || ''))
+          continue
+        }
+        writebacks.push({ targetPath, value: evaluated.value })
+        setValueByTargetPath(mergedOutput, targetPath, evaluated.value)
+      }
+      setMappingTestErrorByOwner(prev => ({ ...prev, [ownerKey]: '' }))
+      setMappingTestResultByOwner(prev => ({
+        ...prev,
+        [ownerKey]: {
+          writebacks,
+          mergedOutput,
+          unsupportedExpressions,
+        },
+      }))
+    }
+
+    return (
+      <div className="space-y-2 rounded border border-blue-200 bg-blue-50/30 p-2">
+        <div className="text-xs font-semibold text-blue-800">映射测试</div>
+        <textarea
+          className="h-28 w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
+          placeholder="粘贴响应 JSON 后点击“测试映射”"
+          value={draft}
+          onChange={(event) => {
+            const value = event.target.value
+            setMappingTestInputByOwner(prev => ({ ...prev, [ownerKey]: value }))
+          }}
+        />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
+            onClick={runTest}
+          >
+            测试映射
+          </button>
+        </div>
+        {!!error && <div className="text-xs text-rose-600">{error}</div>}
+        {result && (
+          <div className="space-y-2">
+            {result.unsupportedExpressions.length > 0 && (
+              <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
+                以下表达式暂不支持本地测试（可正常保存运行）：{result.unsupportedExpressions.join('；')}
+              </div>
+            )}
+            <div className="text-[11px] text-gray-600">写回结果预览</div>
+            <pre className="overflow-auto rounded bg-white p-2 text-[11px] text-gray-700">{stringifyPretty(result.mergedOutput)}</pre>
+          </div>
+        )}
+      </div>
+    )
   }
 
   const renderMappingZoomButton = (type: MappingModalType) => (
@@ -904,42 +1558,125 @@ export default function NodeConfigPanel({
     const config = ensureNodeConfig(BlockEnum.Code, activeNode.data.config) as CodeNodeConfig
     const updateConfig = (nextConfig: CodeNodeConfig) => updateBase({ config: nextConfig })
     const codeScopeKey = `${activeNode.id}.code.content`
+    const responseJsonDraft = codeResponseJsonByNode[activeNode.id] ?? ''
+    const responseJsonError = codeResponseJsonErrorByNode[activeNode.id] ?? ''
+    const applyResponseJson = (mode: 'schema' | 'mappings') => {
+      const parsed = parseJsonAny(responseJsonDraft)
+      if (!parsed.ok) {
+        setCodeResponseJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: parsed.error }))
+        return
+      }
+      setCodeResponseJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: '' }))
+
+      if (mode === 'schema') {
+        const schema = inferSchemaFromJson(parsed.value)
+        updateConfig({ ...config, outputSchema: stringifyPretty(schema) })
+        return
+      }
+
+      const paths = extractPathsFromJson(parsed.value)
+      const normalized = paths.map(path => ({
+        expression: path,
+        targetPath: '',
+      }))
+      updateConfig({ ...config, writebackMappings: normalized })
+    }
+
+    const schemaPaths = (() => {
+      const parsed = extractSchemaLeafPaths(config.outputSchema ?? '')
+      if (!parsed.ok)
+        return [] as string[]
+      return parsed.paths
+    })()
+    const responseJsonPaths = (() => {
+      const parsed = parseJsonAny(responseJsonDraft)
+      if (!parsed.ok)
+        return [] as string[]
+      return extractPathsFromJson(parsed.value)
+    })()
+    const suggestedSourcePaths = [...new Set([
+      '$',
+      ...schemaPaths,
+      ...responseJsonPaths,
+    ])]
+    const sourcePathCascaderOptions = buildSourcePathCascaderOptions(suggestedSourcePaths)
     const renderWritebackMappings = (showZoomButton: boolean) => (
       <div className="space-y-2">
+        {renderArrayMappingBuilder('code', config.writebackMappings, next => updateConfig({ ...config, writebackMappings: next }), suggestedSourcePaths)}
         {config.writebackMappings.length === 0 && (
           <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
-            请先配置输出 Schema 并点击“按 Schema 生成映射”。
+            请先配置输出 Schema/JSON 并点击“生成映射”。
           </div>
         )}
         <div className="flex items-center justify-between gap-2">
           <div className="text-[11px] text-gray-400">
-            支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
+            支持 JSONata 表达式；targetPath 为空时会按“整包写回”模式解析表达式结果。
           </div>
           {showZoomButton && renderMappingZoomButton('code')}
         </div>
         {config.writebackMappings.map((mapping, index) => (
           <div key={`code-writeback-${index}`} className="grid grid-cols-12 gap-2">
-            <div
-              className="col-span-12 md:col-span-5 truncate rounded border border-gray-300 bg-gray-50 px-2 py-1.5 text-xs text-gray-700"
-              style={{ paddingLeft: `${8 + Math.max(0, mapping.sourcePath.split('.').length - 1) * 10}px` }}
-              title={mapping.sourcePath}
-            >
-              {mapping.sourcePath}
+            <div className="col-span-12 md:col-span-5 min-w-0 space-y-1">
+              <Cascader
+                className={mappingCascaderClass}
+                options={sourcePathCascaderOptions}
+                placeholder="选择 JSONata 表达式"
+                value={buildSourcePathCascaderValue(getWritebackExpression(mapping))}
+                allowClear
+                changeOnSelect
+                showSearch
+                onChange={(value) => {
+                  const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                  if (selected === getWritebackExpression(mapping))
+                    return
+                  const next = [...config.writebackMappings]
+                  next[index] = { ...mapping, expression: selected }
+                  updateConfig({ ...config, writebackMappings: next })
+                  if (selected) {
+                    setArrayDraft('code', prev => ({
+                      ...prev,
+                      mappingType: selected.endsWith('[]') ? 'array' : 'object',
+                      sourcePath: selected,
+                      pairs: prev.pairs.length ? prev.pairs : [{ sourceField: '', targetField: '' }],
+                    }))
+                  }
+                }}
+              />
+              <input
+                className={`${inputClass} font-mono text-xs`}
+                placeholder="手动输入 JSONata 表达式"
+                value={getWritebackExpression(mapping)}
+                onChange={(event) => {
+                  const expression = event.target.value
+                  const next = [...config.writebackMappings]
+                  next[index] = { ...mapping, expression }
+                  updateConfig({ ...config, writebackMappings: next })
+                  if (String(expression || '').trim()) {
+                    const selected = String(expression || '').trim()
+                    setArrayDraft('code', prev => ({
+                      ...prev,
+                      mappingType: selected.endsWith('[]') ? 'array' : 'object',
+                      sourcePath: selected,
+                      pairs: prev.pairs.length ? prev.pairs : [{ sourceField: '', targetField: '' }],
+                    }))
+                  }
+                }}
+              />
             </div>
             <Cascader
               className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
               options={mappingTargetCascaderOptions}
               placeholder="选择全局/流程参数"
-              value={buildMappingCascaderValue(mapping.targetPath)}
+              value={buildMappingCascaderValue(mapping.targetPath || '', mappingTargetCascaderOptions)}
               allowClear
               changeOnSelect
               showSearch
               onChange={(value) => {
                 const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
-                if (selected === mapping.targetPath)
+                if (selected === (mapping.targetPath || ''))
                   return
                 const next = [...config.writebackMappings]
-                next[index] = { ...mapping, targetPath: selected }
+                next[index] = { ...mapping, mode: selected ? 'value' : mapping.mode, targetPath: selected }
                 updateConfig({ ...config, writebackMappings: next })
               }}
             />
@@ -959,6 +1696,7 @@ export default function NodeConfigPanel({
             </button>
           </div>
         ))}
+        {!showZoomButton && renderMappingTester('code', config.writebackMappings)}
       </div>
     )
 
@@ -1008,7 +1746,7 @@ export default function NodeConfigPanel({
                 if (!parsed.ok)
                   return
                 const generated = parsed.paths.map(path => ({
-                  sourcePath: path,
+                  expression: path,
                   targetPath: '',
                 }))
                 updateConfig({
@@ -1018,6 +1756,32 @@ export default function NodeConfigPanel({
               }}
             >
               按 Schema 生成映射
+            </button>
+          </div>
+          <label className={labelClass}>输出 JSON（导入，可选）</label>
+          <textarea
+            className="h-28 w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
+            placeholder='{"result":{"id":1,"name":"xx"}}'
+            value={responseJsonDraft}
+            onChange={(event) => {
+              setCodeResponseJsonByNode(prev => ({ ...prev, [activeNode.id]: event.target.value }))
+            }}
+          />
+          {!!responseJsonError && <div className="text-xs text-rose-600">JSON 错误：{responseJsonError}</div>}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
+              onClick={() => applyResponseJson('schema')}
+            >
+              从 JSON 生成 Schema
+            </button>
+            <button
+              type="button"
+              className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
+              onClick={() => applyResponseJson('mappings')}
+            >
+              按 JSON 生成映射
             </button>
           </div>
           {renderWritebackMappings(true)}
@@ -1244,7 +2008,7 @@ export default function NodeConfigPanel({
 
       const paths = extractPathsFromJson(parsed.value)
       const normalized = paths.map(path => ({
-        sourcePath: path,
+        expression: path,
         targetPath: '',
       }))
       updateConfig({ ...config, writebackMappings: normalized })
@@ -1274,6 +2038,7 @@ export default function NodeConfigPanel({
     const sourcePathCascaderOptions = buildSourcePathCascaderOptions(suggestedSourcePaths)
     const renderWritebackMappings = (showZoomButton: boolean) => (
       <div className="space-y-2">
+        {renderArrayMappingBuilder('http', config.writebackMappings, next => updateConfig({ ...config, writebackMappings: next }), suggestedSourcePaths)}
         {config.writebackMappings.length === 0 && (
           <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
             请先配置响应 Schema 并点击“按 Schema 生成映射”。
@@ -1281,7 +2046,7 @@ export default function NodeConfigPanel({
         )}
         <div className="flex items-center justify-between gap-2">
           <div className="text-[11px] text-gray-400">
-            支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
+            支持 JSONata 表达式；targetPath 为空时会按“整包写回”模式解析表达式结果。
           </div>
           {showZoomButton && renderMappingZoomButton('http')}
         </div>
@@ -1291,45 +2056,63 @@ export default function NodeConfigPanel({
               <Cascader
                 className={mappingCascaderClass}
                 options={sourcePathCascaderOptions}
-                placeholder="选择 sourcePath"
-                value={buildSourcePathCascaderValue(mapping.sourcePath)}
+                    placeholder="选择 JSONata 表达式"
+                    value={buildSourcePathCascaderValue(getWritebackExpression(mapping))}
                 allowClear
                 changeOnSelect
                 showSearch
                 onChange={(value) => {
                   const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
-                  if (selected === mapping.sourcePath)
+                  if (selected === getWritebackExpression(mapping))
                     return
                   const next = [...config.writebackMappings]
-                  next[index] = { ...mapping, sourcePath: selected }
+                  next[index] = { ...mapping, expression: selected }
                   updateConfig({ ...config, writebackMappings: next })
+                  if (selected) {
+                    setArrayDraft('http', prev => ({
+                      ...prev,
+                      mappingType: selected.endsWith('[]') ? 'array' : 'object',
+                      sourcePath: selected,
+                      pairs: prev.pairs.length ? prev.pairs : [{ sourceField: '', targetField: '' }],
+                    }))
+                  }
                 }}
-              />
-              <input
-                className={`${inputClass} font-mono text-xs`}
-                placeholder="手动输入 sourcePath"
-                value={mapping.sourcePath}
-                onChange={(event) => {
-                  const next = [...config.writebackMappings]
-                  next[index] = { ...mapping, sourcePath: event.target.value }
-                  updateConfig({ ...config, writebackMappings: next })
-                }}
-              />
+                  />
+                  <input
+                    className={`${inputClass} font-mono text-xs`}
+                    placeholder="手动输入 JSONata 表达式"
+                    value={getWritebackExpression(mapping)}
+                    onChange={(event) => {
+                      const expression = event.target.value
+                      const next = [...config.writebackMappings]
+                      next[index] = { ...mapping, expression }
+                      updateConfig({ ...config, writebackMappings: next })
+                      if (String(expression || '').trim()) {
+                        const selected = String(expression || '').trim()
+                        setArrayDraft('http', prev => ({
+                          ...prev,
+                          mappingType: selected.endsWith('[]') ? 'array' : 'object',
+                          sourcePath: selected,
+                          pairs: prev.pairs.length ? prev.pairs : [{ sourceField: '', targetField: '' }],
+                        }))
+                      }
+                    }}
+                  />
             </div>
             <Cascader
               className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
               options={mappingTargetCascaderOptions}
               placeholder="选择全局/流程参数"
-              value={buildMappingCascaderValue(mapping.targetPath)}
+              value={buildMappingCascaderValue(mapping.targetPath || '', mappingTargetCascaderOptions)}
               allowClear
               changeOnSelect
               showSearch
               onChange={(value) => {
                 const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
-                if (selected === mapping.targetPath)
+                if (selected === (mapping.targetPath || ''))
                   return
                 const next = [...config.writebackMappings]
-                next[index] = { ...mapping, targetPath: selected }
+                next[index] = { ...mapping, mode: selected ? 'value' : mapping.mode, targetPath: selected }
                 updateConfig({ ...config, writebackMappings: next })
               }}
             />
@@ -1349,6 +2132,7 @@ export default function NodeConfigPanel({
             </button>
           </div>
         ))}
+        {!showZoomButton && renderMappingTester('http', config.writebackMappings)}
       </div>
     )
 
@@ -1532,7 +2316,7 @@ export default function NodeConfigPanel({
                 if (!parsed.ok)
                   return
                 const generated = parsed.paths.map(path => ({
-                  sourcePath: path,
+                  expression: path,
                   targetPath: '',
                 }))
                 updateConfig({
@@ -1879,7 +2663,7 @@ export default function NodeConfigPanel({
       const paths = successExampleDataPaths
       if (paths.length === 0)
         return
-      const generated = paths.map(path => ({ sourcePath: `data.${path}`, targetPath: '' }))
+      const generated = paths.map(path => ({ expression: `data.${path}`, targetPath: '' }))
       updateConfig({ ...config, writebackMappings: [...config.writebackMappings, ...generated] })
     }
 
@@ -1898,14 +2682,15 @@ export default function NodeConfigPanel({
     const sourcePathCascaderOptions = buildSourcePathCascaderOptions(suggestedSourcePaths)
     const renderWritebackMappings = (showZoomButton: boolean) => (
       <>
+        {renderArrayMappingBuilder('api', config.writebackMappings, next => updateConfig({ ...config, writebackMappings: next }), suggestedSourcePaths)}
         {config.writebackMappings.length === 0 && (
           <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
-            sourcePath 从节点输出读取（示例：data.id / response.data.id）。
+            使用 JSONata expression 从节点输出读取（示例：data.id / body.data.id）。
           </div>
         )}
         <div className="flex items-center justify-between gap-2">
           <div className="text-[11px] text-gray-400">
-            支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
+            支持 JSONata 表达式；targetPath 为空时会按“整包写回”模式解析表达式结果。
           </div>
           {showZoomButton && renderMappingZoomButton('api')}
         </div>
@@ -1915,28 +2700,46 @@ export default function NodeConfigPanel({
               <Cascader
                 className={mappingCascaderClass}
                 options={sourcePathCascaderOptions}
-                placeholder="选择 sourcePath"
-                value={buildSourcePathCascaderValue(mapping.sourcePath)}
+                placeholder="选择 JSONata 表达式"
+                value={buildSourcePathCascaderValue(getWritebackExpression(mapping))}
                 allowClear
                 changeOnSelect
                 showSearch
                 onChange={(value) => {
                   const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
-                  if (selected === mapping.sourcePath)
+                  if (selected === getWritebackExpression(mapping))
                     return
                   const next = [...config.writebackMappings]
-                  next[index] = { ...mapping, sourcePath: selected }
+                  next[index] = { ...mapping, expression: selected }
                   updateConfig({ ...config, writebackMappings: next })
+                  if (selected) {
+                    setArrayDraft('api', prev => ({
+                      ...prev,
+                      mappingType: selected.endsWith('[]') ? 'array' : 'object',
+                      sourcePath: selected,
+                      pairs: prev.pairs.length ? prev.pairs : [{ sourceField: '', targetField: '' }],
+                    }))
+                  }
                 }}
               />
               <input
                 className={`${inputClass} font-mono text-xs`}
-                placeholder="手动输入 sourcePath"
-                value={mapping.sourcePath}
+                placeholder="手动输入 JSONata 表达式"
+                value={getWritebackExpression(mapping)}
                 onChange={(event) => {
+                  const expression = event.target.value
                   const next = [...config.writebackMappings]
-                  next[index] = { ...mapping, sourcePath: event.target.value }
+                  next[index] = { ...mapping, expression }
                   updateConfig({ ...config, writebackMappings: next })
+                  if (String(expression || '').trim()) {
+                    const selected = String(expression || '').trim()
+                    setArrayDraft('api', prev => ({
+                      ...prev,
+                      mappingType: selected.endsWith('[]') ? 'array' : 'object',
+                      sourcePath: selected,
+                      pairs: prev.pairs.length ? prev.pairs : [{ sourceField: '', targetField: '' }],
+                    }))
+                  }
                 }}
               />
             </div>
@@ -1944,16 +2747,16 @@ export default function NodeConfigPanel({
               className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
               options={mappingTargetCascaderOptions}
               placeholder="选择全局/流程参数"
-              value={buildMappingCascaderValue(mapping.targetPath)}
+              value={buildMappingCascaderValue(mapping.targetPath || '', mappingTargetCascaderOptions)}
               allowClear
               changeOnSelect
               showSearch
               onChange={(value) => {
                 const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
-                if (selected === mapping.targetPath)
+                if (selected === (mapping.targetPath || ''))
                   return
                 const next = [...config.writebackMappings]
-                next[index] = { ...mapping, targetPath: selected }
+                next[index] = { ...mapping, mode: selected ? 'value' : mapping.mode, targetPath: selected }
                 updateConfig({ ...config, writebackMappings: next })
               }}
             />
@@ -1973,6 +2776,7 @@ export default function NodeConfigPanel({
             </button>
           </div>
         ))}
+        {!showZoomButton && renderMappingTester('api', config.writebackMappings)}
       </>
     )
 
@@ -2075,11 +2879,11 @@ export default function NodeConfigPanel({
                     return
                   updateConfig({
                     ...config,
-                    writebackMappings: [...config.writebackMappings, { sourcePath: value, targetPath: '' }],
+                    writebackMappings: [...config.writebackMappings, { expression: value, targetPath: '' }],
                   })
                 }}
               >
-                <option value="">快捷添加 sourcePath</option>
+                <option value="">快捷添加表达式</option>
                 {suggestedSourcePaths.map(item => (
                   <option key={`api-source-${item}`} value={item}>{item}</option>
                 ))}
@@ -2089,7 +2893,7 @@ export default function NodeConfigPanel({
                 className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
                 onClick={() => updateConfig({
                   ...config,
-                  writebackMappings: [...config.writebackMappings, { sourcePath: '', targetPath: '' }],
+                  writebackMappings: [...config.writebackMappings, { expression: '', targetPath: '' }],
                 })}
               >
                 新增映射
