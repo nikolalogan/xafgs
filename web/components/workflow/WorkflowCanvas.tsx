@@ -47,6 +47,10 @@ const ITERATION_CONTAINER_PADDING_X = 24
 const ITERATION_CONTAINER_PADDING_Y = 56
 const ITERATION_CHILD_NODE_ESTIMATED_WIDTH = 240
 const ITERATION_CHILD_NODE_ESTIMATED_HEIGHT = 130
+const NODE_INSERT_X_GAP = 320
+const NODE_INSERT_Y_GAP = 140
+const NODE_COLLISION_X_THRESHOLD = 260
+const NODE_COLLISION_Y_THRESHOLD = 110
 
 const buildChildNodeId = (parentId: string, childId: string) => `${ITERATION_CHILD_NODE_PREFIX}${parentId}::${childId}`
 const buildChildEdgeId = (parentId: string, childEdgeId: string) => `${ITERATION_CHILD_EDGE_PREFIX}${parentId}::${childEdgeId}`
@@ -195,6 +199,39 @@ const parseChildEdgeId = (id: string): { parentId: string; childEdgeId: string }
   if (!parentId || !childEdgeId)
     return null
   return { parentId, childEdgeId }
+}
+
+const resolveNonOverlappingNodePosition = (nodes: DifyNode[], baseX: number, baseY: number) => {
+  const isOccupied = (x: number, y: number) => nodes.some((item) => {
+    return Math.abs(item.position.x - x) < NODE_COLLISION_X_THRESHOLD
+      && Math.abs(item.position.y - y) < NODE_COLLISION_Y_THRESHOLD
+  })
+  if (!isOccupied(baseX, baseY))
+    return { x: baseX, y: baseY }
+  for (let i = 1; i <= 120; i += 1) {
+    const nextY = baseY + i * NODE_INSERT_Y_GAP
+    if (!isOccupied(baseX, nextY))
+      return { x: baseX, y: nextY }
+  }
+  return { x: baseX, y: baseY + NODE_INSERT_Y_GAP }
+}
+
+const resolveInsertPosition = (nodes: DifyNode[], activeNode: DifyNode | null) => {
+  const fallbackX = 220 + (nodes.length % 5) * 180
+  const fallbackY = 90 + (nodes.length % 4) * 120
+  if (!activeNode)
+    return resolveNonOverlappingNodePosition(nodes, fallbackX, fallbackY)
+  const isChildNode = activeNode.data?._iterationRole === 'child' || parseChildNodeId(activeNode.id)
+  if (isChildNode)
+    return resolveNonOverlappingNodePosition(nodes, fallbackX, fallbackY)
+  const source = nodes.find(item => item.id === activeNode.id)
+  if (!source)
+    return resolveNonOverlappingNodePosition(nodes, fallbackX, fallbackY)
+  return resolveNonOverlappingNodePosition(
+    nodes,
+    source.position.x + NODE_INSERT_X_GAP,
+    source.position.y,
+  )
 }
 
 const buildIterationContainerLayout = (children: IterationNodeConfig['children']['nodes']) => {
@@ -981,7 +1018,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       return
     }
 
-    const createdNode = addNode(type)
+    const createdNode = addNode(type, resolveInsertPosition(nodes, activeNode))
     if (!createdNode)
       return
 
@@ -1096,7 +1133,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     const nextNode: DifyNode = {
       id,
       type: CUSTOM_NODE,
-      position: { x: 220 + (nodes.length % 5) * 180, y: 90 + (nodes.length % 4) * 120 },
+      position: resolveInsertPosition(nodes, activeNode),
       data: {
         title: payload.suggestedTitle || `${nodeTypeLabel[type]}-${idRef.current}`,
         desc: payload.suggestedDesc || '',

@@ -21,6 +21,11 @@ type economyIDPathRequest struct {
 	EconomyID int64 `path:"economyId" validate:"required,min=1"`
 }
 
+type rankIDPathRequest struct {
+	RegionID int64 `path:"regionId" validate:"required,min=1"`
+	RankID   int64 `path:"rankId" validate:"required,min=1"`
+}
+
 type listRegionsRequest struct {
 	Page     *int64 `query:"page" validate:"min=1"`
 	PageSize *int64 `query:"pageSize" validate:"min=1,max=100"`
@@ -35,13 +40,15 @@ type createRegionRequest struct {
 	AdminCode string                `json:"adminCode" validate:"required"`
 	Overview  string                `json:"overview"`
 	Economies []model.RegionEconomy `json:"economies"`
+	Ranks     []model.RegionRank    `json:"ranks"`
 }
 
 type regionValidateConflictRequest struct {
-	ExcludeRegionID *int64               `json:"excludeRegionId" validate:"omitempty,min=1"`
-	AdminCode       string               `json:"adminCode" validate:"required"`
-	Overview        string               `json:"overview"`
+	ExcludeRegionID *int64                `json:"excludeRegionId" validate:"omitempty,min=1"`
+	AdminCode       string                `json:"adminCode" validate:"required"`
+	Overview        string                `json:"overview"`
 	Economies       []model.RegionEconomy `json:"economies"`
+	Ranks           []model.RegionRank    `json:"ranks"`
 }
 
 type updateRegionRequest struct {
@@ -49,6 +56,7 @@ type updateRegionRequest struct {
 	AdminCode string                `json:"adminCode" validate:"required"`
 	Overview  string                `json:"overview"`
 	Economies []model.RegionEconomy `json:"economies"`
+	Ranks     []model.RegionRank    `json:"ranks"`
 }
 
 type RegionHandler struct {
@@ -139,6 +147,34 @@ func (handler *RegionHandler) Register(router fiber.Router) {
 		Auth:               "auth",
 		SuccessDataExample: apimeta.ExampleFromType[bool](),
 	}, handler.DeleteEconomy)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[regionIDPathRequest]{
+		Method:             fiber.MethodGet,
+		Path:               "/regions/:regionId/ranks",
+		Summary:            "查询区域排名列表",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[[]model.RegionRank](),
+	}, handler.ListRanks)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[regionIDPathRequest]{
+		Method:             fiber.MethodPost,
+		Path:               "/regions/:regionId/ranks",
+		Summary:            "新增区域排名",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.RegionRank](),
+	}, handler.CreateRank)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[rankIDPathRequest]{
+		Method:             fiber.MethodPut,
+		Path:               "/regions/:regionId/ranks/:rankId",
+		Summary:            "更新区域排名",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.RegionRank](),
+	}, handler.UpdateRank)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[rankIDPathRequest]{
+		Method:             fiber.MethodDelete,
+		Path:               "/regions/:regionId/ranks/:rankId",
+		Summary:            "删除区域排名",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[bool](),
+	}, handler.DeleteRank)
 }
 
 func (handler *RegionHandler) GetByAdminCode(c *fiber.Ctx, request *regionAdminCodeRequest) error {
@@ -187,6 +223,7 @@ func (handler *RegionHandler) Create(c *fiber.Ctx, request *createRegionRequest)
 		AdminCode: request.AdminCode,
 		Overview:  request.Overview,
 		Economies: request.Economies,
+		Ranks:     request.Ranks,
 	}, operatorID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
@@ -203,6 +240,7 @@ func (handler *RegionHandler) Update(c *fiber.Ctx, request *updateRegionRequest)
 		AdminCode: request.AdminCode,
 		Overview:  request.Overview,
 		Economies: request.Economies,
+		Ranks:     request.Ranks,
 	}, operatorID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
@@ -271,9 +309,58 @@ func (handler *RegionHandler) ValidateConflict(c *fiber.Ctx, request *regionVali
 		AdminCode: request.AdminCode,
 		Overview:  request.Overview,
 		Economies: request.Economies,
+		Ranks:     request.Ranks,
 	}, request.ExcludeRegionID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, result, "区域冲突校验完成")
+}
+
+func (handler *RegionHandler) ListRanks(c *fiber.Ctx, request *regionIDPathRequest) error {
+	result, apiError := handler.service.ListRanks(c.UserContext(), request.RegionID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, result, "获取区域排名成功")
+}
+
+func (handler *RegionHandler) CreateRank(c *fiber.Ctx, request *regionIDPathRequest) error {
+	operatorID, ok := c.Locals(middleware.LocalAuthUserID).(int64)
+	if !ok || operatorID <= 0 {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+	var payload model.RegionRank
+	if err := c.BodyParser(&payload); err != nil {
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "请求参数错误")
+	}
+	result, apiError := handler.service.CreateRank(c.UserContext(), request.RegionID, payload, operatorID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusCreated, result, "创建区域排名成功")
+}
+
+func (handler *RegionHandler) UpdateRank(c *fiber.Ctx, request *rankIDPathRequest) error {
+	operatorID, ok := c.Locals(middleware.LocalAuthUserID).(int64)
+	if !ok || operatorID <= 0 {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+	var payload model.RegionRank
+	if err := c.BodyParser(&payload); err != nil {
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "请求参数错误")
+	}
+	result, apiError := handler.service.UpdateRank(c.UserContext(), request.RegionID, request.RankID, payload, operatorID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, result, "更新区域排名成功")
+}
+
+func (handler *RegionHandler) DeleteRank(c *fiber.Ctx, request *rankIDPathRequest) error {
+	apiError := handler.service.DeleteRank(c.UserContext(), request.RegionID, request.RankID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, true, "删除区域排名成功")
 }

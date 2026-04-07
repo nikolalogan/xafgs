@@ -155,8 +155,6 @@ CREATE TABLE IF NOT EXISTS region (
 CREATE TABLE IF NOT EXISTS region_economy (
   id BIGSERIAL PRIMARY KEY,
   region_id BIGINT NOT NULL REFERENCES region(id) ON DELETE CASCADE,
-  gdp_rank_province INT,
-  gdp_rank_province_total INT,
   is_top100_county BOOLEAN NOT NULL DEFAULT false,
   is_top100_city BOOLEAN NOT NULL DEFAULT false,
   gdp NUMERIC(20, 4),
@@ -179,6 +177,21 @@ CREATE TABLE IF NOT EXISTS region_economy (
   created_by BIGINT NOT NULL DEFAULT 0,
   updated_by BIGINT NOT NULL DEFAULT 0,
   UNIQUE (region_id, year)
+);
+
+CREATE TABLE IF NOT EXISTS region_rank (
+  id BIGSERIAL PRIMARY KEY,
+  region_id BIGINT NOT NULL REFERENCES region(id) ON DELETE CASCADE,
+  subject VARCHAR(128) NOT NULL DEFAULT '',
+  rank INT,
+  total INT,
+  year INT NOT NULL CHECK (year >= 1900),
+  growth_rate NUMERIC(12, 6),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0,
+  UNIQUE (region_id, year, subject)
 );
 
 CREATE TABLE IF NOT EXISTS enterprise (
@@ -285,7 +298,12 @@ CREATE TABLE IF NOT EXISTS enterprise_finance_snapshot (
   id BIGSERIAL PRIMARY KEY,
   enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE UNIQUE,
   roa NUMERIC(12, 6),
+  roe NUMERIC(12, 6),
   interest_coverage NUMERIC(12, 6),
+  ebit_coverage NUMERIC(12, 6),
+  ebit_coverage_industry_median NUMERIC(12, 6),
+  ebitda_coverage NUMERIC(12, 6),
+  ebitda_coverage_industry_median NUMERIC(12, 6),
   liability_asset_ratio_industry_median NUMERIC(12, 6),
   roe_industry_median NUMERIC(12, 6),
   non_standard_financing_ratio_industry_median NUMERIC(12, 6),
@@ -321,6 +339,7 @@ CREATE TABLE IF NOT EXISTS enterprise_financial_report (
   enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
   year INT NOT NULL CHECK (year >= 1900),
   month INT NOT NULL CHECK (month >= 1 AND month <= 12),
+  level INT NOT NULL DEFAULT 1 CHECK (level >= 1),
   accounting_firm VARCHAR(256) NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -358,6 +377,8 @@ CREATE INDEX IF NOT EXISTS idx_enterprise_financial_report_enterprise_year_month
 CREATE INDEX IF NOT EXISTS idx_enterprise_financial_report_item_report_id ON enterprise_financial_report_item(financial_report_id);
 CREATE INDEX IF NOT EXISTS idx_region_admin_code ON region(admin_code);
 CREATE INDEX IF NOT EXISTS idx_region_economy_region_year ON region_economy(region_id, year DESC);
+CREATE INDEX IF NOT EXISTS idx_region_rank_region_year ON region_rank(region_id, year DESC);
+CREATE INDEX IF NOT EXISTS idx_region_rank_region_subject_year ON region_rank(region_id, subject, year DESC);
 
 CREATE TABLE IF NOT EXISTS chat_conversation (
   id BIGSERIAL PRIMARY KEY,
@@ -392,6 +413,28 @@ func Migrate(ctx context.Context, conn *sql.DB) error {
 INSERT INTO region (admin_code, overview, created_at, updated_at, created_by, updated_by)
 VALUES ('000000', '默认区域', NOW(), NOW(), 1, 1)
 ON CONFLICT (admin_code) DO NOTHING;
+
+ALTER TABLE region_economy
+DROP COLUMN IF EXISTS gdp_rank_province;
+ALTER TABLE region_economy
+DROP COLUMN IF EXISTS gdp_rank_province_total;
+
+CREATE TABLE IF NOT EXISTS region_rank (
+  id BIGSERIAL PRIMARY KEY,
+  region_id BIGINT NOT NULL REFERENCES region(id) ON DELETE CASCADE,
+  subject VARCHAR(128) NOT NULL DEFAULT '',
+  rank INT,
+  total INT,
+  year INT NOT NULL CHECK (year >= 1900),
+  growth_rate NUMERIC(12, 6),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0,
+  UNIQUE (region_id, year, subject)
+);
+CREATE INDEX IF NOT EXISTS idx_region_rank_region_year ON region_rank(region_id, year DESC);
+CREATE INDEX IF NOT EXISTS idx_region_rank_region_subject_year ON region_rank(region_id, subject, year DESC);
 
 ALTER TABLE enterprise
 ADD COLUMN IF NOT EXISTS region_id BIGINT;
@@ -431,6 +474,18 @@ ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS roe_industry_median NUMERIC(12, 6);
 ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS non_standard_financing_ratio_industry_median NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS roe NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS ebit_coverage NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS ebit_coverage_industry_median NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS ebitda_coverage NUMERIC(12, 6);
+ALTER TABLE enterprise_finance_snapshot
+ADD COLUMN IF NOT EXISTS ebitda_coverage_industry_median NUMERIC(12, 6);
+ALTER TABLE enterprise_financial_report
+ADD COLUMN IF NOT EXISTS level INT NOT NULL DEFAULT 1;
 ALTER TABLE enterprise_bond_detail
 ADD COLUMN IF NOT EXISTS guarantor_type VARCHAR(128) NOT NULL DEFAULT '';
 ALTER TABLE enterprise_bond_detail

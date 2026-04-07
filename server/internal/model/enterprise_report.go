@@ -5,6 +5,7 @@ type EnterpriseFinancialReport struct {
 	EnterpriseID    int64  `json:"enterpriseId"`
 	Year            int    `json:"year"`
 	Month           int    `json:"month"`
+	Level           int    `json:"level"`
 	AccountingFirm  string `json:"accountingFirm"`
 }
 

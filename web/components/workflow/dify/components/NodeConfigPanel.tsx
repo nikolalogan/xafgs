@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Cascader } from 'antd'
+import { Cascader, Modal } from 'antd'
 import StartNodeFormConfig from './StartNodeFormConfig'
 import VariableValueInput from './VariableValueInput'
 import CodeEditorField from './CodeEditorField'
@@ -72,6 +72,8 @@ type MappingCascaderOption = {
   label: string
   children?: MappingCascaderOption[]
 }
+
+type MappingModalType = 'code' | 'http' | 'api'
 
 const parseJsonAny = (rawText: string): { ok: true; value: unknown } | { ok: false; error: string } => {
   const trimmed = String(rawText || '').trim()
@@ -481,6 +483,7 @@ export default function NodeConfigPanel({
   const [apiJsonDraftByNode, setApiJsonDraftByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
   const [apiJsonErrorByNode, setApiJsonErrorByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
   const [apiJsonInsertKeyByNode, setApiJsonInsertKeyByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
+  const [mappingModalType, setMappingModalType] = useState<MappingModalType | null>(null)
   const apiJsonTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
   const variableOptions = useMemo(
     () => buildWorkflowVariableOptions(nodes, workflowParameters, globalVariables, activeNode),
@@ -664,6 +667,10 @@ export default function NodeConfigPanel({
     setApiJsonErrorByNode(prev => ({ ...prev, [nodeId]: {} }))
   }, [activeNode?.id, activeNode?.data.type])
 
+  useEffect(() => {
+    setMappingModalType(null)
+  }, [activeNode?.id, activeNode?.data.type])
+
   if (!activeNode) {
     return (
       <div className="col-span-3 rounded-xl border border-gray-200 bg-white p-3">
@@ -684,6 +691,21 @@ export default function NodeConfigPanel({
       },
     })
   }
+
+  const renderMappingZoomButton = (type: MappingModalType) => (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50"
+      onClick={() => setMappingModalType(type)}
+      title="放大编辑映射关系"
+      aria-label="放大编辑映射关系"
+    >
+      <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
+        <path d="M3.5 2.75A.75.75 0 0 1 4.25 2h4a.75.75 0 0 1 0 1.5H6.06l3.22 3.22a.75.75 0 0 1-1.06 1.06L5 4.56v2.19a.75.75 0 0 1-1.5 0v-4Zm13 0A.75.75 0 0 0 15.75 2h-4a.75.75 0 0 0 0 1.5h2.19l-3.22 3.22a.75.75 0 0 0 1.06 1.06L15 4.56v2.19a.75.75 0 0 0 1.5 0v-4Zm-13 14.5A.75.75 0 0 0 4.25 18h4a.75.75 0 0 0 0-1.5H6.06l3.22-3.22a.75.75 0 0 0-1.06-1.06L5 15.44v-2.19a.75.75 0 0 0-1.5 0v4Zm13 0a.75.75 0 0 1-.75.75h-4a.75.75 0 0 1 0-1.5h2.19l-3.22-3.22a.75.75 0 0 1 1.06-1.06L15 15.44v-2.19a.75.75 0 0 1 1.5 0v4Z" />
+      </svg>
+      放大
+    </button>
+  )
 
   const renderStartConfig = () => {
     const config = ensureNodeConfig(BlockEnum.Start, activeNode.data.config) as StartNodeConfig
@@ -882,6 +904,64 @@ export default function NodeConfigPanel({
     const config = ensureNodeConfig(BlockEnum.Code, activeNode.data.config) as CodeNodeConfig
     const updateConfig = (nextConfig: CodeNodeConfig) => updateBase({ config: nextConfig })
     const codeScopeKey = `${activeNode.id}.code.content`
+    const renderWritebackMappings = (showZoomButton: boolean) => (
+      <div className="space-y-2">
+        {config.writebackMappings.length === 0 && (
+          <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
+            请先配置输出 Schema 并点击“按 Schema 生成映射”。
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[11px] text-gray-400">
+            支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
+          </div>
+          {showZoomButton && renderMappingZoomButton('code')}
+        </div>
+        {config.writebackMappings.map((mapping, index) => (
+          <div key={`code-writeback-${index}`} className="grid grid-cols-12 gap-2">
+            <div
+              className="col-span-12 md:col-span-5 truncate rounded border border-gray-300 bg-gray-50 px-2 py-1.5 text-xs text-gray-700"
+              style={{ paddingLeft: `${8 + Math.max(0, mapping.sourcePath.split('.').length - 1) * 10}px` }}
+              title={mapping.sourcePath}
+            >
+              {mapping.sourcePath}
+            </div>
+            <Cascader
+              className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
+              options={mappingTargetCascaderOptions}
+              placeholder="选择全局/流程参数"
+              value={buildMappingCascaderValue(mapping.targetPath)}
+              allowClear
+              changeOnSelect
+              showSearch
+              onChange={(value) => {
+                const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                if (selected === mapping.targetPath)
+                  return
+                const next = [...config.writebackMappings]
+                next[index] = { ...mapping, targetPath: selected }
+                updateConfig({ ...config, writebackMappings: next })
+              }}
+            />
+            <button
+              type="button"
+              aria-label="删除映射"
+              title="删除映射"
+              className="col-span-12 md:col-span-2 md:min-w-[44px] md:shrink-0 inline-flex items-center justify-center rounded bg-red-50 px-2 py-1 text-red-600"
+              onClick={() => updateConfig({
+                ...config,
+                writebackMappings: config.writebackMappings.filter((_, idx) => idx !== index),
+              })}
+            >
+              <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                <path fillRule="evenodd" d="M8.75 2.5a1.25 1.25 0 0 0-1.25 1.25V5H5a.75.75 0 0 0 0 1.5h.5v8.25A2.25 2.25 0 0 0 7.75 17h4.5a2.25 2.25 0 0 0 2.25-2.25V6.5H15a.75.75 0 0 0 0-1.5h-2.5V3.75A1.25 1.25 0 0 0 11.25 2.5h-2.5ZM11 5V4h-2v1h2Zm-3 1.5a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6A.75.75 0 0 1 8 6.5Zm4 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0v-6Z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        ))}
+      </div>
+    )
+
     return (
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">代码节点</div>
@@ -940,58 +1020,7 @@ export default function NodeConfigPanel({
               按 Schema 生成映射
             </button>
           </div>
-          <div className="space-y-2">
-            {config.writebackMappings.length === 0 && (
-              <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
-                请先配置输出 Schema 并点击“按 Schema 生成映射”。
-              </div>
-            )}
-            <div className="text-[11px] text-gray-400">
-              支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
-            </div>
-            {config.writebackMappings.map((mapping, index) => (
-              <div key={`code-writeback-${index}`} className="grid grid-cols-12 gap-2">
-                <div
-                  className="col-span-12 md:col-span-5 truncate rounded border border-gray-300 bg-gray-50 px-2 py-1.5 text-xs text-gray-700"
-                  style={{ paddingLeft: `${8 + Math.max(0, mapping.sourcePath.split('.').length - 1) * 10}px` }}
-                  title={mapping.sourcePath}
-                >
-                  {mapping.sourcePath}
-                </div>
-                <Cascader
-                  className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
-                  options={mappingTargetCascaderOptions}
-                  placeholder="选择全局/流程参数"
-                  value={buildMappingCascaderValue(mapping.targetPath)}
-                  allowClear
-                  changeOnSelect
-                  showSearch
-                  onChange={(value) => {
-                    const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
-                    if (selected === mapping.targetPath)
-                      return
-                    const next = [...config.writebackMappings]
-                    next[index] = { ...mapping, targetPath: selected }
-                    updateConfig({ ...config, writebackMappings: next })
-                  }}
-                />
-                <button
-                  type="button"
-                  aria-label="删除映射"
-                  title="删除映射"
-                  className="col-span-12 md:col-span-2 md:min-w-[44px] md:shrink-0 inline-flex items-center justify-center rounded bg-red-50 px-2 py-1 text-red-600"
-                  onClick={() => updateConfig({
-                    ...config,
-                    writebackMappings: config.writebackMappings.filter((_, idx) => idx !== index),
-                  })}
-                >
-                  <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
-                    <path fillRule="evenodd" d="M8.75 2.5a1.25 1.25 0 0 0-1.25 1.25V5H5a.75.75 0 0 0 0 1.5h.5v8.25A2.25 2.25 0 0 0 7.75 17h4.5a2.25 2.25 0 0 0 2.25-2.25V6.5H15a.75.75 0 0 0 0-1.5h-2.5V3.75A1.25 1.25 0 0 0 11.25 2.5h-2.5ZM11 5V4h-2v1h2Zm-3 1.5a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6A.75.75 0 0 1 8 6.5Zm4 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0v-6Z" clipRule="evenodd" />
-                  </svg>
-                </button>
-              </div>
-            ))}
-          </div>
+          {renderWritebackMappings(true)}
         </div>
         <label className={labelClass}>输出变量（逗号分隔）</label>
         <input
@@ -1002,6 +1031,18 @@ export default function NodeConfigPanel({
             outputs: event.target.value.split(',').map(item => item.trim()).filter(Boolean),
           })}
         />
+        <Modal
+          open={mappingModalType === 'code'}
+          onCancel={() => setMappingModalType(null)}
+          footer={null}
+          title="映射关系（代码节点）"
+          width="80vw"
+          style={{ maxWidth: 1400 }}
+        >
+          <div className="max-h-[70vh] overflow-y-auto pr-1">
+            {renderWritebackMappings(false)}
+          </div>
+        </Modal>
       </div>
     )
   }
@@ -1231,6 +1272,85 @@ export default function NodeConfigPanel({
       ...responseJsonPaths,
     ])]
     const sourcePathCascaderOptions = buildSourcePathCascaderOptions(suggestedSourcePaths)
+    const renderWritebackMappings = (showZoomButton: boolean) => (
+      <div className="space-y-2">
+        {config.writebackMappings.length === 0 && (
+          <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
+            请先配置响应 Schema 并点击“按 Schema 生成映射”。
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[11px] text-gray-400">
+            支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
+          </div>
+          {showZoomButton && renderMappingZoomButton('http')}
+        </div>
+        {config.writebackMappings.map((mapping, index) => (
+          <div key={`http-writeback-${index}`} className="grid grid-cols-12 gap-2">
+            <div className="col-span-12 md:col-span-5 min-w-0 space-y-1">
+              <Cascader
+                className={mappingCascaderClass}
+                options={sourcePathCascaderOptions}
+                placeholder="选择 sourcePath"
+                value={buildSourcePathCascaderValue(mapping.sourcePath)}
+                allowClear
+                changeOnSelect
+                showSearch
+                onChange={(value) => {
+                  const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                  if (selected === mapping.sourcePath)
+                    return
+                  const next = [...config.writebackMappings]
+                  next[index] = { ...mapping, sourcePath: selected }
+                  updateConfig({ ...config, writebackMappings: next })
+                }}
+              />
+              <input
+                className={`${inputClass} font-mono text-xs`}
+                placeholder="手动输入 sourcePath"
+                value={mapping.sourcePath}
+                onChange={(event) => {
+                  const next = [...config.writebackMappings]
+                  next[index] = { ...mapping, sourcePath: event.target.value }
+                  updateConfig({ ...config, writebackMappings: next })
+                }}
+              />
+            </div>
+            <Cascader
+              className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
+              options={mappingTargetCascaderOptions}
+              placeholder="选择全局/流程参数"
+              value={buildMappingCascaderValue(mapping.targetPath)}
+              allowClear
+              changeOnSelect
+              showSearch
+              onChange={(value) => {
+                const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                if (selected === mapping.targetPath)
+                  return
+                const next = [...config.writebackMappings]
+                next[index] = { ...mapping, targetPath: selected }
+                updateConfig({ ...config, writebackMappings: next })
+              }}
+            />
+            <button
+              type="button"
+              aria-label="删除映射"
+              title="删除映射"
+              className="col-span-12 md:col-span-2 md:min-w-[44px] md:shrink-0 inline-flex items-center justify-center rounded bg-red-50 px-2 py-1 text-red-600"
+              onClick={() => updateConfig({
+                ...config,
+                writebackMappings: config.writebackMappings.filter((_, idx) => idx !== index),
+              })}
+            >
+              <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                <path fillRule="evenodd" d="M8.75 2.5a1.25 1.25 0 0 0-1.25 1.25V5H5a.75.75 0 0 0 0 1.5h.5v8.25A2.25 2.25 0 0 0 7.75 17h4.5a2.25 2.25 0 0 0 2.25-2.25V6.5H15a.75.75 0 0 0 0-1.5h-2.5V3.75A1.25 1.25 0 0 0 11.25 2.5h-2.5ZM11 5V4h-2v1h2Zm-3 1.5a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6A.75.75 0 0 1 8 6.5Zm4 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0v-6Z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        ))}
+      </div>
+    )
 
     return (
       <div className={sectionClass}>
@@ -1452,81 +1572,20 @@ export default function NodeConfigPanel({
             </button>
           </div>
 
-          <div className="space-y-2">
-            {config.writebackMappings.length === 0 && (
-              <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
-                请先配置响应 Schema 并点击“按 Schema 生成映射”。
-              </div>
-            )}
-            <div className="text-[11px] text-gray-400">
-              支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
-            </div>
-            {config.writebackMappings.map((mapping, index) => (
-              <div key={`http-writeback-${index}`} className="grid grid-cols-12 gap-2">
-                <div className="col-span-12 md:col-span-5 min-w-0 space-y-1">
-                  <Cascader
-                    className={mappingCascaderClass}
-                    options={sourcePathCascaderOptions}
-                    placeholder="选择 sourcePath"
-                    value={buildSourcePathCascaderValue(mapping.sourcePath)}
-                    allowClear
-                    changeOnSelect
-                    showSearch
-                    onChange={(value) => {
-                      const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
-                      if (selected === mapping.sourcePath)
-                        return
-                      const next = [...config.writebackMappings]
-                      next[index] = { ...mapping, sourcePath: selected }
-                      updateConfig({ ...config, writebackMappings: next })
-                    }}
-                  />
-                  <input
-                    className={`${inputClass} font-mono text-xs`}
-                    placeholder="手动输入 sourcePath"
-                    value={mapping.sourcePath}
-                    onChange={(event) => {
-                      const next = [...config.writebackMappings]
-                      next[index] = { ...mapping, sourcePath: event.target.value }
-                      updateConfig({ ...config, writebackMappings: next })
-                    }}
-                  />
-                </div>
-                <Cascader
-                  className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
-                  options={mappingTargetCascaderOptions}
-                  placeholder="选择全局/流程参数"
-                  value={buildMappingCascaderValue(mapping.targetPath)}
-                  allowClear
-                  changeOnSelect
-                  showSearch
-                  onChange={(value) => {
-                    const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
-                    if (selected === mapping.targetPath)
-                      return
-                    const next = [...config.writebackMappings]
-                    next[index] = { ...mapping, targetPath: selected }
-                    updateConfig({ ...config, writebackMappings: next })
-                  }}
-                />
-                <button
-                  type="button"
-                  aria-label="删除映射"
-                  title="删除映射"
-                  className="col-span-12 md:col-span-2 md:min-w-[44px] md:shrink-0 inline-flex items-center justify-center rounded bg-red-50 px-2 py-1 text-red-600"
-                  onClick={() => updateConfig({
-                    ...config,
-                    writebackMappings: config.writebackMappings.filter((_, idx) => idx !== index),
-                  })}
-                >
-                  <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
-                    <path fillRule="evenodd" d="M8.75 2.5a1.25 1.25 0 0 0-1.25 1.25V5H5a.75.75 0 0 0 0 1.5h.5v8.25A2.25 2.25 0 0 0 7.75 17h4.5a2.25 2.25 0 0 0 2.25-2.25V6.5H15a.75.75 0 0 0 0-1.5h-2.5V3.75A1.25 1.25 0 0 0 11.25 2.5h-2.5ZM11 5V4h-2v1h2Zm-3 1.5a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6A.75.75 0 0 1 8 6.5Zm4 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0v-6Z" clipRule="evenodd" />
-                  </svg>
-                </button>
-              </div>
-            ))}
-          </div>
+          {renderWritebackMappings(true)}
         </div>
+        <Modal
+          open={mappingModalType === 'http'}
+          onCancel={() => setMappingModalType(null)}
+          footer={null}
+          title="映射关系（HTTP 节点）"
+          width="80vw"
+          style={{ maxWidth: 1400 }}
+        >
+          <div className="max-h-[70vh] overflow-y-auto pr-1">
+            {renderWritebackMappings(false)}
+          </div>
+        </Modal>
       </div>
     )
   }
@@ -1837,6 +1896,85 @@ export default function NodeConfigPanel({
       ...successExampleDataPaths.map(path => `data.${path}`),
     ])]
     const sourcePathCascaderOptions = buildSourcePathCascaderOptions(suggestedSourcePaths)
+    const renderWritebackMappings = (showZoomButton: boolean) => (
+      <>
+        {config.writebackMappings.length === 0 && (
+          <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
+            sourcePath 从节点输出读取（示例：data.id / response.data.id）。
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[11px] text-gray-400">
+            支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
+          </div>
+          {showZoomButton && renderMappingZoomButton('api')}
+        </div>
+        {config.writebackMappings.map((mapping, index) => (
+          <div key={`api-writeback-${index}`} className="grid grid-cols-12 gap-2">
+            <div className="col-span-12 md:col-span-5 min-w-0 space-y-1">
+              <Cascader
+                className={mappingCascaderClass}
+                options={sourcePathCascaderOptions}
+                placeholder="选择 sourcePath"
+                value={buildSourcePathCascaderValue(mapping.sourcePath)}
+                allowClear
+                changeOnSelect
+                showSearch
+                onChange={(value) => {
+                  const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                  if (selected === mapping.sourcePath)
+                    return
+                  const next = [...config.writebackMappings]
+                  next[index] = { ...mapping, sourcePath: selected }
+                  updateConfig({ ...config, writebackMappings: next })
+                }}
+              />
+              <input
+                className={`${inputClass} font-mono text-xs`}
+                placeholder="手动输入 sourcePath"
+                value={mapping.sourcePath}
+                onChange={(event) => {
+                  const next = [...config.writebackMappings]
+                  next[index] = { ...mapping, sourcePath: event.target.value }
+                  updateConfig({ ...config, writebackMappings: next })
+                }}
+              />
+            </div>
+            <Cascader
+              className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
+              options={mappingTargetCascaderOptions}
+              placeholder="选择全局/流程参数"
+              value={buildMappingCascaderValue(mapping.targetPath)}
+              allowClear
+              changeOnSelect
+              showSearch
+              onChange={(value) => {
+                const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                if (selected === mapping.targetPath)
+                  return
+                const next = [...config.writebackMappings]
+                next[index] = { ...mapping, targetPath: selected }
+                updateConfig({ ...config, writebackMappings: next })
+              }}
+            />
+            <button
+              type="button"
+              aria-label="删除映射"
+              title="删除映射"
+              className="col-span-12 md:col-span-2 md:min-w-[44px] md:shrink-0 inline-flex items-center justify-center rounded bg-red-50 px-2 py-1 text-red-600"
+              onClick={() => updateConfig({
+                ...config,
+                writebackMappings: config.writebackMappings.filter((_, idx) => idx !== index),
+              })}
+            >
+              <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                <path fillRule="evenodd" d="M8.75 2.5a1.25 1.25 0 0 0-1.25 1.25V5H5a.75.75 0 0 0 0 1.5h.5v8.25A2.25 2.25 0 0 0 7.75 17h4.5a2.25 2.25 0 0 0 2.25-2.25V6.5H15a.75.75 0 0 0 0-1.5h-2.5V3.75A1.25 1.25 0 0 0 11.25 2.5h-2.5ZM11 5V4h-2v1h2Zm-3 1.5a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6A.75.75 0 0 1 8 6.5Zm4 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0v-6Z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        ))}
+      </>
+    )
 
     return (
       <div className={sectionClass}>
@@ -1966,79 +2104,22 @@ export default function NodeConfigPanel({
               </button>
             </div>
           </div>
-          {config.writebackMappings.length === 0 && (
-            <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
-              sourcePath 从节点输出读取（示例：data.id / response.data.id）。
-            </div>
-          )}
-          <div className="text-[11px] text-gray-400">
-            支持数组逐项映射：a[].x 到 b[].y。同一 b[] 下多条映射会按索引聚合到同一对象。
-          </div>
-          {config.writebackMappings.map((mapping, index) => (
-            <div key={`api-writeback-${index}`} className="grid grid-cols-12 gap-2">
-              <div className="col-span-12 md:col-span-5 min-w-0 space-y-1">
-                <Cascader
-                  className={mappingCascaderClass}
-                  options={sourcePathCascaderOptions}
-                  placeholder="选择 sourcePath"
-                  value={buildSourcePathCascaderValue(mapping.sourcePath)}
-                  allowClear
-                  changeOnSelect
-                  showSearch
-                  onChange={(value) => {
-                    const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
-                    if (selected === mapping.sourcePath)
-                      return
-                    const next = [...config.writebackMappings]
-                    next[index] = { ...mapping, sourcePath: selected }
-                    updateConfig({ ...config, writebackMappings: next })
-                  }}
-                />
-                <input
-                  className={`${inputClass} font-mono text-xs`}
-                  placeholder="手动输入 sourcePath"
-                  value={mapping.sourcePath}
-                  onChange={(event) => {
-                    const next = [...config.writebackMappings]
-                    next[index] = { ...mapping, sourcePath: event.target.value }
-                    updateConfig({ ...config, writebackMappings: next })
-                  }}
-                />
-              </div>
-              <Cascader
-                className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
-                options={mappingTargetCascaderOptions}
-                placeholder="选择全局/流程参数"
-                value={buildMappingCascaderValue(mapping.targetPath)}
-                allowClear
-                changeOnSelect
-                showSearch
-                onChange={(value) => {
-                  const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
-                  if (selected === mapping.targetPath)
-                    return
-                  const next = [...config.writebackMappings]
-                  next[index] = { ...mapping, targetPath: selected }
-                  updateConfig({ ...config, writebackMappings: next })
-                }}
-              />
-              <button
-                type="button"
-                aria-label="删除映射"
-                title="删除映射"
-                className="col-span-12 md:col-span-2 md:min-w-[44px] md:shrink-0 inline-flex items-center justify-center rounded bg-red-50 px-2 py-1 text-red-600"
-                onClick={() => updateConfig({
-                  ...config,
-                  writebackMappings: config.writebackMappings.filter((_, idx) => idx !== index),
-                })}
-              >
-                <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
-                  <path fillRule="evenodd" d="M8.75 2.5a1.25 1.25 0 0 0-1.25 1.25V5H5a.75.75 0 0 0 0 1.5h.5v8.25A2.25 2.25 0 0 0 7.75 17h4.5a2.25 2.25 0 0 0 2.25-2.25V6.5H15a.75.75 0 0 0 0-1.5h-2.5V3.75A1.25 1.25 0 0 0 11.25 2.5h-2.5ZM11 5V4h-2v1h2Zm-3 1.5a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6A.75.75 0 0 1 8 6.5Zm4 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0v-6Z" clipRule="evenodd" />
-                </svg>
-              </button>
-            </div>
-          ))}
+          {renderWritebackMappings(true)}
         </div>
+        <Modal
+          open={mappingModalType === 'api'}
+          onCancel={() => setMappingModalType(null)}
+          footer={null}
+          title="映射关系（API 请求节点）"
+          width="80vw"
+          style={{ maxWidth: 1400 }}
+        >
+          <div className="max-h-[70vh] overflow-y-auto pr-1">
+            <div className="space-y-2">
+              {renderWritebackMappings(false)}
+            </div>
+          </div>
+        </Modal>
       </div>
     )
   }

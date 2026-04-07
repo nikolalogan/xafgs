@@ -44,9 +44,14 @@ WHERE id = $1
 	if !ok {
 		return model.RegionDetailDTO{}, false
 	}
+	ranks, ok := repository.ListRanks(regionID)
+	if !ok {
+		return model.RegionDetailDTO{}, false
+	}
 	return model.RegionDetailDTO{
 		RegionDTO: region.ToDTO(),
 		Economies: economies,
+		Ranks:     ranks,
 	}, true
 }
 
@@ -119,7 +124,7 @@ LIMIT $`+strconv.Itoa(argIndex)+` OFFSET $`+strconv.Itoa(argIndex+1), listArgs..
 	}
 }
 
-func (repository *PostgresRegionRepository) Create(region model.Region, economies []model.RegionEconomy) model.RegionDetailDTO {
+func (repository *PostgresRegionRepository) Create(region model.Region, economies []model.RegionEconomy, ranks []model.RegionRank) model.RegionDetailDTO {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 
@@ -146,6 +151,11 @@ RETURNING id
 			return model.RegionDetailDTO{}
 		}
 	}
+	for _, item := range ranks {
+		if _, ok := repository.createRankTx(ctx, tx, region.ID, item); !ok {
+			return model.RegionDetailDTO{}
+		}
+	}
 
 	if err := tx.Commit(); err != nil {
 		return model.RegionDetailDTO{}
@@ -157,7 +167,7 @@ RETURNING id
 	return created
 }
 
-func (repository *PostgresRegionRepository) Update(regionID int64, region model.Region, economies []model.RegionEconomy) (model.RegionDetailDTO, bool) {
+func (repository *PostgresRegionRepository) Update(regionID int64, region model.Region, economies []model.RegionEconomy, ranks []model.RegionRank) (model.RegionDetailDTO, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 
@@ -191,6 +201,16 @@ WHERE id = $1
 			}
 		}
 	}
+	if ranks != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM region_rank WHERE region_id = $1`, regionID); err != nil {
+			return model.RegionDetailDTO{}, false
+		}
+		for _, item := range ranks {
+			if _, ok := repository.createRankTx(ctx, tx, regionID, item); !ok {
+				return model.RegionDetailDTO{}, false
+			}
+		}
+	}
 
 	if err := tx.Commit(); err != nil {
 		return model.RegionDetailDTO{}, false
@@ -215,9 +235,9 @@ func (repository *PostgresRegionRepository) ListEconomies(regionID int64) ([]mod
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	rows, err := repository.db.QueryContext(ctx, `
+rows, err := repository.db.QueryContext(ctx, `
 SELECT
-  id, region_id, year, gdp_rank_province, gdp_rank_province_total, is_top100_county, is_top100_city,
+  id, region_id, year, is_top100_county, is_top100_city,
   gdp, gdp_growth, population, fiscal_self_sufficiency_ratio, general_budget_revenue,
   general_budget_revenue_growth, general_budget_revenue_total, general_budget_revenue_tax,
   general_budget_revenue_non_tax, general_budget_revenue_superior_subsidy,
@@ -239,8 +259,6 @@ ORDER BY year DESC, id DESC
 			&row.ID,
 			&row.RegionID,
 			&row.Year,
-			intPtrScanner{dst: &row.GDPRankProvince},
-			intPtrScanner{dst: &row.GDPRankProvinceTotal},
 			&row.IsTop100County,
 			&row.IsTop100City,
 			floatPtrScanner{dst: &row.GDP},
@@ -284,32 +302,30 @@ func (repository *PostgresRegionRepository) UpdateEconomy(regionID int64, econom
 	defer cancel()
 
 	now := time.Now().UTC()
-	result, err := repository.db.ExecContext(ctx, `
+result, err := repository.db.ExecContext(ctx, `
 UPDATE region_economy
 SET
   year = $3,
-  gdp_rank_province = $4,
-  gdp_rank_province_total = $5,
-  is_top100_county = $6,
-  is_top100_city = $7,
-  gdp = $8,
-  gdp_growth = $9,
-  population = $10,
-  fiscal_self_sufficiency_ratio = $11,
-  general_budget_revenue = $12,
-  general_budget_revenue_growth = $13,
-  general_budget_revenue_total = $14,
-  general_budget_revenue_tax = $15,
-  general_budget_revenue_non_tax = $16,
-  general_budget_revenue_superior_subsidy = $17,
-  liability_ratio = $18,
-  liability_ratio_broad = $19,
-  debt_ratio = $20,
-  debt_ratio_broad = $21,
-  updated_at = $22,
-  updated_by = $23
+  is_top100_county = $4,
+  is_top100_city = $5,
+  gdp = $6,
+  gdp_growth = $7,
+  population = $8,
+  fiscal_self_sufficiency_ratio = $9,
+  general_budget_revenue = $10,
+  general_budget_revenue_growth = $11,
+  general_budget_revenue_total = $12,
+  general_budget_revenue_tax = $13,
+  general_budget_revenue_non_tax = $14,
+  general_budget_revenue_superior_subsidy = $15,
+  liability_ratio = $16,
+  liability_ratio_broad = $17,
+  debt_ratio = $18,
+  debt_ratio_broad = $19,
+  updated_at = $20,
+  updated_by = $21
 WHERE id = $1 AND region_id = $2
-`, economyID, regionID, economy.Year, economy.GDPRankProvince, economy.GDPRankProvinceTotal, economy.IsTop100County, economy.IsTop100City,
+`, economyID, regionID, economy.Year, economy.IsTop100County, economy.IsTop100City,
 		economy.GDP, economy.GDPGrowth, economy.Population, economy.FiscalSelfSufficiencyRatio,
 		economy.GeneralBudgetRevenue, economy.GeneralBudgetRevenueGrowth, economy.GeneralBudgetRevenueTotal,
 		economy.GeneralBudgetRevenueTax, economy.GeneralBudgetRevenueNonTax, economy.GeneralBudgetRevenueSuperiorSubsidy,
@@ -351,18 +367,18 @@ func (repository *PostgresRegionRepository) createEconomyTx(ctx context.Context,
 	now := time.Now().UTC()
 	query := `
 INSERT INTO region_economy (
-  region_id, year, gdp_rank_province, gdp_rank_province_total, is_top100_county, is_top100_city,
+  region_id, year, is_top100_county, is_top100_city,
   gdp, gdp_growth, population, fiscal_self_sufficiency_ratio, general_budget_revenue,
   general_budget_revenue_growth, general_budget_revenue_total, general_budget_revenue_tax,
   general_budget_revenue_non_tax, general_budget_revenue_superior_subsidy,
   liability_ratio, liability_ratio_broad, debt_ratio, debt_ratio_broad,
   created_at, updated_at, created_by, updated_by
 ) VALUES (
-  $1, $2, $3, $4, $5, $6,
-  $7, $8, $9, $10, $11,
-  $12, $13, $14, $15, $16,
-  $17, $18, $19, $20,
-  $21, $21, $22, $22
+  $1, $2, $3, $4,
+  $5, $6, $7, $8, $9,
+  $10, $11, $12, $13, $14,
+  $15, $16, $17, $18,
+  $19, $19, $20, $20
 )
 RETURNING id
 `
@@ -373,7 +389,7 @@ RETURNING id
 	var err error
 	if tx != nil {
 		err = tx.QueryRowContext(ctx, query,
-			regionID, economy.Year, economy.GDPRankProvince, economy.GDPRankProvinceTotal, economy.IsTop100County, economy.IsTop100City,
+			regionID, economy.Year, economy.IsTop100County, economy.IsTop100City,
 			economy.GDP, economy.GDPGrowth, economy.Population, economy.FiscalSelfSufficiencyRatio, economy.GeneralBudgetRevenue,
 			economy.GeneralBudgetRevenueGrowth, economy.GeneralBudgetRevenueTotal, economy.GeneralBudgetRevenueTax,
 			economy.GeneralBudgetRevenueNonTax, economy.GeneralBudgetRevenueSuperiorSubsidy,
@@ -382,7 +398,7 @@ RETURNING id
 		).Scan(&economy.ID)
 	} else {
 		err = repository.db.QueryRowContext(ctx, query,
-			regionID, economy.Year, economy.GDPRankProvince, economy.GDPRankProvinceTotal, economy.IsTop100County, economy.IsTop100City,
+			regionID, economy.Year, economy.IsTop100County, economy.IsTop100City,
 			economy.GDP, economy.GDPGrowth, economy.Population, economy.FiscalSelfSufficiencyRatio, economy.GeneralBudgetRevenue,
 			economy.GeneralBudgetRevenueGrowth, economy.GeneralBudgetRevenueTotal, economy.GeneralBudgetRevenueTax,
 			economy.GeneralBudgetRevenueNonTax, economy.GeneralBudgetRevenueSuperiorSubsidy,
@@ -394,6 +410,137 @@ RETURNING id
 		return model.RegionEconomy{}, false
 	}
 	return economy, true
+}
+
+func (repository *PostgresRegionRepository) ListRanks(regionID int64) ([]model.RegionRank, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	rows, err := repository.db.QueryContext(ctx, `
+SELECT
+  id, region_id, subject, rank, total, year, growth_rate,
+  created_at, updated_at, created_by, updated_by
+FROM region_rank
+WHERE region_id = $1
+ORDER BY year DESC, id DESC
+`, regionID)
+	if err != nil {
+		return nil, false
+	}
+	defer rows.Close()
+
+	out := make([]model.RegionRank, 0)
+	for rows.Next() {
+		var row model.RegionRank
+		if err := rows.Scan(
+			&row.ID,
+			&row.RegionID,
+			&row.Subject,
+			intPtrScanner{dst: &row.Rank},
+			intPtrScanner{dst: &row.Total},
+			&row.Year,
+			floatPtrScanner{dst: &row.GrowthRate},
+			&row.CreatedAt,
+			&row.UpdatedAt,
+			&row.CreatedBy,
+			&row.UpdatedBy,
+		); err == nil {
+			out = append(out, row)
+		}
+	}
+	return out, true
+}
+
+func (repository *PostgresRegionRepository) CreateRank(regionID int64, rank model.RegionRank) (model.RegionRank, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	created, ok := repository.createRankTx(ctx, nil, regionID, rank)
+	if !ok {
+		return model.RegionRank{}, false
+	}
+	return created, true
+}
+
+func (repository *PostgresRegionRepository) UpdateRank(regionID int64, rankID int64, rank model.RegionRank) (model.RegionRank, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	now := time.Now().UTC()
+	result, err := repository.db.ExecContext(ctx, `
+UPDATE region_rank
+SET
+  subject = $3,
+  rank = $4,
+  total = $5,
+  year = $6,
+  growth_rate = $7,
+  updated_at = $8,
+  updated_by = $9
+WHERE id = $1 AND region_id = $2
+`, rankID, regionID, strings.TrimSpace(rank.Subject), rank.Rank, rank.Total, rank.Year, rank.GrowthRate, now, rank.UpdatedBy)
+	if err != nil {
+		return model.RegionRank{}, false
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected == 0 {
+		return model.RegionRank{}, false
+	}
+	rows, ok := repository.ListRanks(regionID)
+	if !ok {
+		return model.RegionRank{}, false
+	}
+	for _, row := range rows {
+		if row.ID == rankID {
+			return row, true
+		}
+	}
+	return model.RegionRank{}, false
+}
+
+func (repository *PostgresRegionRepository) DeleteRank(regionID int64, rankID int64) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result, err := repository.db.ExecContext(ctx, `DELETE FROM region_rank WHERE id = $1 AND region_id = $2`, rankID, regionID)
+	if err != nil {
+		return false
+	}
+	affected, err := result.RowsAffected()
+	return err == nil && affected > 0
+}
+
+func (repository *PostgresRegionRepository) createRankTx(ctx context.Context, tx *sql.Tx, regionID int64, rank model.RegionRank) (model.RegionRank, bool) {
+	now := time.Now().UTC()
+	query := `
+INSERT INTO region_rank (
+  region_id, subject, rank, total, year, growth_rate,
+  created_at, updated_at, created_by, updated_by
+) VALUES (
+  $1, $2, $3, $4, $5, $6,
+  $7, $7, $8, $8
+)
+RETURNING id
+`
+	rank.RegionID = regionID
+	rank.Subject = strings.TrimSpace(rank.Subject)
+	rank.CreatedAt = now
+	rank.UpdatedAt = now
+
+	var err error
+	if tx != nil {
+		err = tx.QueryRowContext(ctx, query,
+			regionID, rank.Subject, rank.Rank, rank.Total, rank.Year, rank.GrowthRate,
+			now, rank.CreatedBy,
+		).Scan(&rank.ID)
+	} else {
+		err = repository.db.QueryRowContext(ctx, query,
+			regionID, rank.Subject, rank.Rank, rank.Total, rank.Year, rank.GrowthRate,
+			now, rank.CreatedBy,
+		).Scan(&rank.ID)
+	}
+	if err != nil {
+		return model.RegionRank{}, false
+	}
+	return rank, true
 }
 
 type intPtrScanner struct {

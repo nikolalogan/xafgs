@@ -470,20 +470,27 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 		item := aggregate.FinanceSnapshot
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO enterprise_finance_snapshot (
-  enterprise_id, roa, interest_coverage,
+  enterprise_id, roa, roe, interest_coverage,
+  ebit_coverage, ebit_coverage_industry_median, ebitda_coverage, ebitda_coverage_industry_median,
   liability_asset_ratio_industry_median, roe_industry_median, non_standard_financing_ratio_industry_median,
   main_business_1, main_business_2, main_business_3, main_business_4, main_business_5,
   main_business_ratio_1, main_business_ratio_2, main_business_ratio_3, main_business_ratio_4, main_business_ratio_5
 ) VALUES (
-  $1, $2, $3,
-  $4, $5, $6,
-  $7, $8, $9, $10, $11,
-  $12, $13, $14, $15, $16
+  $1, $2, $3, $4,
+  $5, $6, $7, $8,
+  $9, $10, $11,
+  $12, $13, $14, $15, $16,
+  $17, $18, $19, $20, $21
 )
 `,
 			aggregate.Enterprise.ID,
 			item.ROA,
+			item.ROE,
 			item.InterestCoverage,
+			item.EBITCoverage,
+			item.EBITCoverageIndustryMedian,
+			item.EBITDACoverage,
+			item.EBITDACoverageIndustryMedian,
 			item.LiabilityAssetRatioIndustryMedian,
 			item.ROEIndustryMedian,
 			item.NonStandardFinancingRatioIndustryMedian,
@@ -690,6 +697,7 @@ ORDER BY order_no ASC, id ASC
 	var snapshot model.EnterpriseFinanceSnapshot
 	err = queryRow(`
 SELECT id, roa, interest_coverage,
+  roe, ebit_coverage, ebit_coverage_industry_median, ebitda_coverage, ebitda_coverage_industry_median,
   liability_asset_ratio_industry_median, roe_industry_median, non_standard_financing_ratio_industry_median,
   main_business_1, main_business_2, main_business_3, main_business_4, main_business_5,
   main_business_ratio_1, main_business_ratio_2, main_business_ratio_3, main_business_ratio_4, main_business_ratio_5
@@ -698,7 +706,12 @@ WHERE enterprise_id = $1
 `, enterpriseID).Scan(
 		&snapshot.ID,
 		floatPtrScanner{dst: &snapshot.ROA},
+		floatPtrScanner{dst: &snapshot.ROE},
 		floatPtrScanner{dst: &snapshot.InterestCoverage},
+		floatPtrScanner{dst: &snapshot.EBITCoverage},
+		floatPtrScanner{dst: &snapshot.EBITCoverageIndustryMedian},
+		floatPtrScanner{dst: &snapshot.EBITDACoverage},
+		floatPtrScanner{dst: &snapshot.EBITDACoverageIndustryMedian},
 		floatPtrScanner{dst: &snapshot.LiabilityAssetRatioIndustryMedian},
 		floatPtrScanner{dst: &snapshot.ROEIndustryMedian},
 		floatPtrScanner{dst: &snapshot.NonStandardFinancingRatioIndustryMedian},

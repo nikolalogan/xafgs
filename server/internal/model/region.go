@@ -10,8 +10,6 @@ type RegionEconomy struct {
 	BaseEntity
 	RegionID                            int64    `json:"regionId"`
 	Year                                int      `json:"year"`
-	GDPRankProvince                     *int     `json:"gdpRankProvince,omitempty"`
-	GDPRankProvinceTotal                *int     `json:"gdpRankProvinceTotal,omitempty"`
 	IsTop100County                      bool     `json:"isTop100County"`
 	IsTop100City                        bool     `json:"isTop100City"`
 	GDP                                 *float64 `json:"gdp,omitempty"`
@@ -30,6 +28,16 @@ type RegionEconomy struct {
 	DebtRatioBroad                      *float64 `json:"debtRatioBroad,omitempty"`
 }
 
+type RegionRank struct {
+	BaseEntity
+	RegionID    int64    `json:"regionId"`
+	Subject     string   `json:"subject"`
+	Rank        *int     `json:"rank,omitempty"`
+	Total       *int     `json:"total,omitempty"`
+	Year        int      `json:"year"`
+	GrowthRate  *float64 `json:"growthRate,omitempty"`
+}
+
 type RegionDTO struct {
 	ID        int64  `json:"id"`
 	AdminCode string `json:"adminCode"`
@@ -39,6 +47,7 @@ type RegionDTO struct {
 type RegionDetailDTO struct {
 	RegionDTO
 	Economies []RegionEconomy `json:"economies"`
+	Ranks     []RegionRank    `json:"ranks"`
 }
 
 type RegionListQuery struct {
@@ -58,6 +67,7 @@ type CreateRegionRequest struct {
 	AdminCode string          `json:"adminCode"`
 	Overview  string          `json:"overview"`
 	Economies []RegionEconomy `json:"economies"`
+	Ranks     []RegionRank    `json:"ranks"`
 }
 
 type UpdateRegionRequest = CreateRegionRequest

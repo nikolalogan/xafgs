@@ -22,6 +22,10 @@ type RegionService interface {
 	CreateEconomy(ctx context.Context, regionID int64, economy model.RegionEconomy, operatorID int64) (model.RegionEconomy, *model.APIError)
 	UpdateEconomy(ctx context.Context, regionID int64, economyID int64, economy model.RegionEconomy, operatorID int64) (model.RegionEconomy, *model.APIError)
 	DeleteEconomy(ctx context.Context, regionID int64, economyID int64) *model.APIError
+	ListRanks(ctx context.Context, regionID int64) ([]model.RegionRank, *model.APIError)
+	CreateRank(ctx context.Context, regionID int64, rank model.RegionRank, operatorID int64) (model.RegionRank, *model.APIError)
+	UpdateRank(ctx context.Context, regionID int64, rankID int64, rank model.RegionRank, operatorID int64) (model.RegionRank, *model.APIError)
+	DeleteRank(ctx context.Context, regionID int64, rankID int64) *model.APIError
 }
 
 type regionService struct {
@@ -74,7 +78,7 @@ func (service *regionService) Create(_ context.Context, request model.CreateRegi
 			},
 			AdminCode: request.AdminCode,
 			Overview:  request.Overview,
-		}, request.Economies)
+		}, request.Economies, request.Ranks)
 		if !ok {
 			return model.RegionDetailDTO{}, model.NewAPIError(500, response.CodeInternal, "更新区域失败")
 		}
@@ -87,7 +91,7 @@ func (service *regionService) Create(_ context.Context, request model.CreateRegi
 		},
 		AdminCode: request.AdminCode,
 		Overview:  request.Overview,
-	}, request.Economies)
+	}, request.Economies, request.Ranks)
 	if created.ID <= 0 {
 		return model.RegionDetailDTO{}, model.NewAPIError(500, response.CodeInternal, "创建区域失败")
 	}
@@ -108,7 +112,7 @@ func (service *regionService) Update(_ context.Context, regionID int64, request 
 		},
 		AdminCode: request.AdminCode,
 		Overview:  request.Overview,
-	}, request.Economies)
+	}, request.Economies, request.Ranks)
 	if !ok {
 		return model.RegionDetailDTO{}, model.NewAPIError(404, response.CodeNotFound, "区域不存在")
 	}
@@ -194,11 +198,62 @@ func (service *regionService) DeleteEconomy(_ context.Context, regionID int64, e
 	return nil
 }
 
+func (service *regionService) ListRanks(_ context.Context, regionID int64) ([]model.RegionRank, *model.APIError) {
+	ranks, ok := service.repository.ListRanks(regionID)
+	if !ok {
+		return nil, model.NewAPIError(404, response.CodeNotFound, "区域不存在")
+	}
+	return ranks, nil
+}
+
+func (service *regionService) CreateRank(_ context.Context, regionID int64, rank model.RegionRank, operatorID int64) (model.RegionRank, *model.APIError) {
+	normalized, apiErr := normalizeRankRequest(rank)
+	if apiErr != nil {
+		return model.RegionRank{}, apiErr
+	}
+	normalized.CreatedBy = operatorID
+	normalized.UpdatedBy = operatorID
+	created, ok := service.repository.CreateRank(regionID, normalized)
+	if !ok {
+		return model.RegionRank{}, model.NewAPIError(400, response.CodeBadRequest, "区域不存在或科目年份重复")
+	}
+	return created, nil
+}
+
+func (service *regionService) UpdateRank(_ context.Context, regionID int64, rankID int64, rank model.RegionRank, operatorID int64) (model.RegionRank, *model.APIError) {
+	normalized, apiErr := normalizeRankRequest(rank)
+	if apiErr != nil {
+		return model.RegionRank{}, apiErr
+	}
+	normalized.UpdatedBy = operatorID
+	updated, ok := service.repository.UpdateRank(regionID, rankID, normalized)
+	if !ok {
+		return model.RegionRank{}, model.NewAPIError(400, response.CodeBadRequest, "区域排名不存在或科目年份重复")
+	}
+	return updated, nil
+}
+
+func (service *regionService) DeleteRank(_ context.Context, regionID int64, rankID int64) *model.APIError {
+	if !service.repository.DeleteRank(regionID, rankID) {
+		return model.NewAPIError(404, response.CodeNotFound, "区域排名不存在")
+	}
+	return nil
+}
+
 func normalizeRegionRequest(request model.CreateRegionRequest) model.CreateRegionRequest {
 	request.AdminCode = strings.TrimSpace(request.AdminCode)
 	request.Overview = strings.TrimSpace(request.Overview)
 	sort.Slice(request.Economies, func(i, j int) bool {
 		return request.Economies[i].Year < request.Economies[j].Year
+	})
+	for index := range request.Ranks {
+		request.Ranks[index].Subject = strings.TrimSpace(request.Ranks[index].Subject)
+	}
+	sort.Slice(request.Ranks, func(i, j int) bool {
+		if request.Ranks[i].Year == request.Ranks[j].Year {
+			return request.Ranks[i].Subject < request.Ranks[j].Subject
+		}
+		return request.Ranks[i].Year < request.Ranks[j].Year
 	})
 	return request
 }
@@ -210,11 +265,23 @@ func normalizeEconomyRequest(request model.RegionEconomy) (model.RegionEconomy, 
 	return request, nil
 }
 
+func normalizeRankRequest(request model.RegionRank) (model.RegionRank, *model.APIError) {
+	request.Subject = strings.TrimSpace(request.Subject)
+	if request.Subject == "" {
+		return model.RegionRank{}, model.NewAPIError(400, response.CodeBadRequest, "科目不能为空")
+	}
+	if request.Year < 1900 {
+		return model.RegionRank{}, model.NewAPIError(400, response.CodeBadRequest, "年份不合法")
+	}
+	return request, nil
+}
+
 func regionDetailToCreateRequest(detail model.RegionDetailDTO) model.CreateRegionRequest {
 	return model.CreateRegionRequest{
 		AdminCode: detail.AdminCode,
 		Overview:  detail.Overview,
 		Economies: detail.Economies,
+		Ranks:     detail.Ranks,
 	}
 }
 
@@ -222,6 +289,12 @@ func toComparableRegionRequest(request model.CreateRegionRequest) model.CreateRe
 	comparable := normalizeRegionRequest(request)
 	sort.Slice(comparable.Economies, func(i, j int) bool {
 		return comparable.Economies[i].Year < comparable.Economies[j].Year
+	})
+	sort.Slice(comparable.Ranks, func(i, j int) bool {
+		if comparable.Ranks[i].Year == comparable.Ranks[j].Year {
+			return comparable.Ranks[i].Subject < comparable.Ranks[j].Subject
+		}
+		return comparable.Ranks[i].Year < comparable.Ranks[j].Year
 	})
 	return comparable
 }

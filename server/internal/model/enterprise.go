@@ -100,7 +100,12 @@ type EnterpriseBondRegistration struct {
 type EnterpriseFinanceSnapshot struct {
 	ID                 int64    `json:"id"`
 	ROA                *float64 `json:"roa,omitempty"`
+	ROE                *float64 `json:"roe,omitempty"`
 	InterestCoverage   *float64 `json:"interestCoverage,omitempty"`
+	EBITCoverage       *float64 `json:"ebitCoverage,omitempty"`
+	EBITCoverageIndustryMedian *float64 `json:"ebitCoverageIndustryMedian,omitempty"`
+	EBITDACoverage             *float64 `json:"ebitdaCoverage,omitempty"`
+	EBITDACoverageIndustryMedian *float64 `json:"ebitdaCoverageIndustryMedian,omitempty"`
 	LiabilityAssetRatioIndustryMedian *float64 `json:"liabilityAssetRatioIndustryMedian,omitempty"`
 	ROEIndustryMedian                 *float64 `json:"roeIndustryMedian,omitempty"`
 	NonStandardFinancingRatioIndustryMedian *float64 `json:"nonStandardFinancingRatioIndustryMedian,omitempty"`
