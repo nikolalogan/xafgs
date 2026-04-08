@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -91,6 +92,7 @@ func (handler *WorkflowExecutionHandler) Register(router fiber.Router, adminMidd
 		Auth:               "admin",
 		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowExecution](),
 	}, handler.Get)
+	group.Get("/workflow/executions/:id/stream", handler.Stream)
 	apimeta.Register(group, handler.registry, apimeta.RouteSpec[resumeWorkflowExecutionRequest]{
 		Method:             fiber.MethodPost,
 		Path:               "/workflow/executions/:id/resume",
@@ -195,6 +197,93 @@ func (handler *WorkflowExecutionHandler) Get(c *fiber.Ctx, request *executionIDP
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, data, "获取执行详情成功")
+}
+
+func (handler *WorkflowExecutionHandler) Stream(c *fiber.Ctx) error {
+	request := &executionIDPathRequest{ID: strings.TrimSpace(c.Params("id"))}
+	if request.ID == "" {
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "id 不能为空")
+	}
+
+	ctx := workflowruntime.WithRequestID(c.UserContext(), requestID(c))
+	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
+	current, updates, unsubscribe, apiError := handler.service.Subscribe(ctx, request.ID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	if unsubscribe == nil {
+		unsubscribe = func() {}
+	}
+
+	c.Set(fiber.HeaderContentType, "text/event-stream")
+	c.Set(fiber.HeaderCacheControl, "no-cache, no-transform")
+	c.Set(fiber.HeaderConnection, "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
+	c.Status(fiber.StatusOK)
+
+	writeEvent := func(writer *bufio.Writer, event string, payload any) error {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		if _, err = writer.WriteString("event: " + event + "\n"); err != nil {
+			return err
+		}
+		if _, err = writer.WriteString("data: " + string(raw) + "\n\n"); err != nil {
+			return err
+		}
+		return writer.Flush()
+	}
+
+	c.Context().SetBodyStreamWriter(func(writer *bufio.Writer) {
+		defer unsubscribe()
+
+		if err := writeEvent(writer, "execution.snapshot", current); err != nil {
+			return
+		}
+		if current != nil && current.Status != workflowruntime.ExecutionStatusRunning {
+			_ = writeEvent(writer, "execution.closed", map[string]any{
+				"executionId": current.ID,
+				"status":      current.Status,
+			})
+			return
+		}
+
+		heartbeatTicker := time.NewTicker(12 * time.Second)
+		defer heartbeatTicker.Stop()
+
+		for {
+			select {
+			case execution, ok := <-updates:
+				if !ok {
+					_ = writeEvent(writer, "execution.closed", map[string]any{
+						"executionId": request.ID,
+						"status":      "disconnected",
+					})
+					return
+				}
+				if err := writeEvent(writer, "execution.snapshot", execution); err != nil {
+					return
+				}
+				if execution.Status != workflowruntime.ExecutionStatusRunning {
+					_ = writeEvent(writer, "execution.closed", map[string]any{
+						"executionId": execution.ID,
+						"status":      execution.Status,
+					})
+					return
+				}
+			case <-heartbeatTicker.C:
+				if err := writeEvent(writer, "execution.keepalive", map[string]any{
+					"executionId": request.ID,
+					"at":          time.Now().UTC().Format(time.RFC3339),
+				}); err != nil {
+					return
+				}
+			}
+		}
+	})
+
+	return nil
 }
 
 func (handler *WorkflowExecutionHandler) Resume(c *fiber.Ctx, request *resumeWorkflowExecutionRequest) error {

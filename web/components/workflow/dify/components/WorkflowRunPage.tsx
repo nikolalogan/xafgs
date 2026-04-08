@@ -477,9 +477,10 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const [endRenderedHeights, setEndRenderedHeights] = useState<Record<string, number>>({})
   const [nodeOutputExpandedById, setNodeOutputExpandedById] = useState<Record<string, boolean>>({})
   const iframeResizeObserversRef = useRef<Record<string, ResizeObserver>>({})
-  const executionPollingIdRef = useRef<string>('')
-  const executionPollTimerRef = useRef<number | null>(null)
-  const executionPollInFlightRef = useRef(false)
+  const executionStreamIdRef = useRef<string>('')
+  const executionStreamAbortRef = useRef<AbortController | null>(null)
+  const executionStreamReconnectTimerRef = useRef<number | null>(null)
+  const executionStreamRetryRef = useRef(0)
   const waitingResumeNodeIdRef = useRef('')
   const startNodeId = useMemo(() => {
     return nodes.find(node => String(node.data.type).toLowerCase() === BlockEnum.Start)?.id || ''
@@ -520,11 +521,16 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     setOpenPanels({})
   }
 
-  const stopExecutionPolling = () => {
-    executionPollInFlightRef.current = false
-    if (executionPollTimerRef.current !== null) {
-      window.clearTimeout(executionPollTimerRef.current)
-      executionPollTimerRef.current = null
+  const stopExecutionStream = () => {
+    executionStreamIdRef.current = ''
+    executionStreamRetryRef.current = 0
+    if (executionStreamReconnectTimerRef.current !== null) {
+      window.clearTimeout(executionStreamReconnectTimerRef.current)
+      executionStreamReconnectTimerRef.current = null
+    }
+    if (executionStreamAbortRef.current) {
+      executionStreamAbortRef.current.abort()
+      executionStreamAbortRef.current = null
     }
   }
 
@@ -731,7 +737,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
 
   useEffect(() => {
     return () => {
-      stopExecutionPolling()
+      stopExecutionStream()
       if (playbackTimerRef.current !== null) {
         window.clearTimeout(playbackTimerRef.current)
         playbackTimerRef.current = null
@@ -903,76 +909,162 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
 
   useEffect(() => {
     if (!execution?.id || execution.status !== 'running') {
-      stopExecutionPolling()
-      executionPollingIdRef.current = ''
+      stopExecutionStream()
       return
     }
-    executionPollingIdRef.current = execution.id
+    executionStreamIdRef.current = execution.id
     let cancelled = false
     const currentExecutionId = execution.id
     const token = resolveAuthToken()
-    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    const headers: Record<string, string> = {}
     if (token)
       headers.Authorization = `Bearer ${token}`
 
-    const scheduleNextPoll = (delay: number) => {
-      if (cancelled || executionPollingIdRef.current !== currentExecutionId)
-        return
-      if (executionPollTimerRef.current !== null)
-        window.clearTimeout(executionPollTimerRef.current)
-      executionPollTimerRef.current = window.setTimeout(() => {
-        executionPollTimerRef.current = null
-        void syncExecution()
-      }, delay)
+    const applyExecutionSnapshot = (nextExecution: WorkflowExecution) => {
+      const currentExecution = executionRef.current
+      const hasExecutionChanged = currentExecution?.updatedAt !== nextExecution.updatedAt
+        || currentExecution?.status !== nextExecution.status
+        || (currentExecution?.events?.length ?? 0) !== (nextExecution.events?.length ?? 0)
+      if (hasExecutionChanged)
+        setExecution(nextExecution)
     }
 
-    const syncExecution = async () => {
-      if (cancelled || executionPollInFlightRef.current)
-        return
-      executionPollInFlightRef.current = true
+    const syncExecutionSnapshot = async () => {
       try {
         const response = await fetch(`/api/workflow/executions/${currentExecutionId}`, {
           method: 'GET',
           credentials: 'include',
-          headers,
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         })
         if (response.status === 401) {
-          stopExecutionPolling()
           router.push('/?redirect=/app/workflow')
-          return
+          return false
         }
         const payload = await readWorkflowExecutionPayload(response)
-        if (!response.ok || !payload.data) {
-          scheduleNextPoll(1500)
-          return
-        }
-        if (cancelled || executionPollingIdRef.current !== currentExecutionId)
-          return
-        const nextExecution = payload.data
-        const currentExecution = executionRef.current
-        const hasExecutionChanged = currentExecution?.updatedAt !== nextExecution.updatedAt
-          || currentExecution?.status !== nextExecution.status
-          || (currentExecution?.events?.length ?? 0) !== (nextExecution.events?.length ?? 0)
-        if (hasExecutionChanged)
-          setExecution(nextExecution)
-        if (nextExecution.status === 'running')
-          scheduleNextPoll(1000)
-        else
-          stopExecutionPolling()
+        if (!response.ok || !payload.data)
+          return true
+        if (cancelled || executionStreamIdRef.current !== currentExecutionId)
+          return false
+        applyExecutionSnapshot(payload.data)
+        return payload.data.status === 'running'
       }
       catch {
-        scheduleNextPoll(1500)
-      }
-      finally {
-        executionPollInFlightRef.current = false
+        return true
       }
     }
 
-    void syncExecution()
+    const scheduleReconnect = (delay: number) => {
+      if (cancelled || executionStreamIdRef.current !== currentExecutionId)
+        return
+      if (executionStreamReconnectTimerRef.current !== null)
+        window.clearTimeout(executionStreamReconnectTimerRef.current)
+      executionStreamReconnectTimerRef.current = window.setTimeout(() => {
+        executionStreamReconnectTimerRef.current = null
+        void connectExecutionStream()
+      }, delay)
+    }
+
+    const handleStreamEvent = (eventName: string, dataText: string) => {
+      if (eventName === 'execution.keepalive')
+        return
+      try {
+        const payload = JSON.parse(dataText) as WorkflowExecution | { status?: string }
+        if (eventName === 'execution.snapshot' && 'id' in payload)
+          applyExecutionSnapshot(payload)
+        if (eventName === 'execution.closed')
+          executionStreamRetryRef.current = 0
+      }
+      catch {
+      }
+    }
+
+    const consumeSSEChunk = (chunkText: string, state: { buffer: string }) => {
+      state.buffer += chunkText.replace(/\r\n/g, '\n')
+      let delimiterIndex = state.buffer.indexOf('\n\n')
+      while (delimiterIndex >= 0) {
+        const rawEvent = state.buffer.slice(0, delimiterIndex)
+        state.buffer = state.buffer.slice(delimiterIndex + 2)
+        delimiterIndex = state.buffer.indexOf('\n\n')
+        const lines = rawEvent.split('\n')
+        let eventName = 'message'
+        const dataLines: string[] = []
+        lines.forEach((line) => {
+          const normalizedLine = line.replace(/\r$/, '')
+          if (normalizedLine.startsWith('event:'))
+            eventName = normalizedLine.slice(6).trim()
+          else if (normalizedLine.startsWith('data:'))
+            dataLines.push(normalizedLine.slice(5).trim())
+        })
+        if (dataLines.length > 0)
+          handleStreamEvent(eventName, dataLines.join('\n'))
+      }
+    }
+
+    const connectExecutionStream = async () => {
+      if (cancelled || executionStreamIdRef.current !== currentExecutionId)
+        return
+      if (executionStreamAbortRef.current)
+        executionStreamAbortRef.current.abort()
+      const controller = new AbortController()
+      executionStreamAbortRef.current = controller
+      const decoder = new TextDecoder()
+      const sseState = { buffer: '' }
+
+      try {
+        const response = await fetch(`/api/workflow/executions/${currentExecutionId}/stream`, {
+          method: 'GET',
+          credentials: 'include',
+          headers,
+          signal: controller.signal,
+        })
+        if (response.status === 401) {
+          router.push('/?redirect=/app/workflow')
+          return
+        }
+        if (!response.ok || !response.body)
+          throw new Error('建立执行流失败')
+
+        executionStreamRetryRef.current = 0
+        const reader = response.body.getReader()
+        while (!cancelled) {
+          const { value, done } = await reader.read()
+          if (done)
+            break
+          consumeSSEChunk(decoder.decode(value, { stream: true }), sseState)
+          const latestExecution = executionRef.current
+          if (!latestExecution || latestExecution.id !== currentExecutionId || latestExecution.status !== 'running')
+            return
+        }
+      }
+      catch (streamError) {
+        if (controller.signal.aborted || cancelled)
+          return
+      }
+      finally {
+        if (executionStreamAbortRef.current === controller)
+          executionStreamAbortRef.current = null
+      }
+
+      const shouldContinue = await syncExecutionSnapshot()
+      if (!shouldContinue || cancelled || executionStreamIdRef.current !== currentExecutionId)
+        return
+      executionStreamRetryRef.current += 1
+      const retryCount = executionStreamRetryRef.current
+      scheduleReconnect(Math.min(5000, retryCount === 1 ? 1000 : retryCount === 2 ? 2000 : 5000))
+    }
+
+    void connectExecutionStream()
 
     return () => {
       cancelled = true
-      stopExecutionPolling()
+      if (executionStreamAbortRef.current) {
+        executionStreamAbortRef.current.abort()
+        executionStreamAbortRef.current = null
+      }
+      if (executionStreamReconnectTimerRef.current !== null) {
+        window.clearTimeout(executionStreamReconnectTimerRef.current)
+        executionStreamReconnectTimerRef.current = null
+      }
     }
   }, [execution?.id, execution?.status, router])
 
@@ -1396,7 +1488,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   }
 
   const restartWorkflow = () => {
-    stopExecutionPolling()
+    stopExecutionStream()
     setExecution(null)
     setLoading(false)
     setSubmitPhase('')

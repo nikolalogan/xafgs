@@ -58,3 +58,41 @@ export const proxyToBackend = async (options: ProxyOptions) => {
     return NextResponse.json({ message }, { status: 502 })
   }
 }
+
+export const proxyStreamToBackend = async (options: ProxyOptions) => {
+  const baseURL = resolveBackendBaseURL()
+  const url = `${baseURL}${options.path.startsWith('/') ? '' : '/'}${options.path}`
+
+  const headers: Record<string, string> = {}
+  const authorization = options.request.headers.get('authorization')
+  if (authorization)
+    headers.authorization = authorization
+  const cookie = options.request.headers.get('cookie')
+  if (cookie)
+    headers.cookie = cookie
+  const requestID = options.request.headers.get('x-request-id')
+  if (requestID)
+    headers['x-request-id'] = requestID
+
+  try {
+    const response = await fetch(url, {
+      method: options.method,
+      headers,
+    })
+
+    const nextHeaders = new Headers()
+    nextHeaders.set('content-type', response.headers.get('content-type') || 'text/event-stream')
+    nextHeaders.set('cache-control', response.headers.get('cache-control') || 'no-cache, no-transform')
+    nextHeaders.set('connection', response.headers.get('connection') || 'keep-alive')
+    nextHeaders.set('x-accel-buffering', 'no')
+
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers: nextHeaders,
+    })
+  }
+  catch (error) {
+    const message = error instanceof Error ? error.message : '后端不可用'
+    return NextResponse.json({ message }, { status: 502 })
+  }
+}

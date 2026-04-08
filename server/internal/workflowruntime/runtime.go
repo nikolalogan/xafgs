@@ -31,6 +31,7 @@ type Runtime struct {
 	executors map[string]NodeExecutor
 	asyncMu   sync.Mutex
 	running   map[string]bool
+	streamHub *executionStreamHub
 }
 
 type RuntimeOption func(*Runtime)
@@ -43,8 +44,9 @@ func WithAIClient(client ai.ChatCompletionClient) RuntimeOption {
 
 func NewRuntime(store ExecutionStorePort, options ...RuntimeOption) *Runtime {
 	runtime := &Runtime{
-		store:   store,
-		running: map[string]bool{},
+		store:     store,
+		running:   map[string]bool{},
+		streamHub: newExecutionStreamHub(),
 	}
 	for _, option := range options {
 		if option == nil {
@@ -65,7 +67,7 @@ func (runtime *Runtime) Start(ctx context.Context, input StartExecutionInput) (W
 	})
 
 	result := runtime.runUntilPauseOrEnd(ctx, execution, runOptions{})
-	_ = runtime.store.Save(result)
+	runtime.publishExecution(result)
 	return result, nil
 }
 
@@ -77,7 +79,7 @@ func (runtime *Runtime) StartAsync(ctx context.Context, input StartExecutionInpu
 		"executionId": execution.ID,
 		"mode":        "async",
 	})
-	_ = runtime.store.Save(execution)
+	runtime.publishExecution(execution)
 	runtime.launchAsync(ctx, execution.ID, func(runCtx context.Context) WorkflowExecution {
 		return runtime.runUntilPauseOrEnd(runCtx, execution, runOptions{})
 	})
@@ -186,7 +188,7 @@ func (runtime *Runtime) Resume(ctx context.Context, input ResumeExecutionInput) 
 	}
 
 	result := runtime.runUntilPauseOrEnd(ctx, next, options)
-	_ = runtime.store.Save(result)
+	runtime.publishExecution(result)
 	return result, nil
 }
 
@@ -198,7 +200,7 @@ func (runtime *Runtime) ResumeAsync(ctx context.Context, input ResumeExecutionIn
 	if !runtime.markExecutionRunning(next.ID) {
 		return WorkflowExecution{}, errors.New("execution 正在运行，请稍后重试")
 	}
-	_ = runtime.store.Save(next)
+	runtime.publishExecution(next)
 	runtime.launchMarkedAsync(ctx, next.ID, func(runCtx context.Context) WorkflowExecution {
 		return runtime.runUntilPauseOrEnd(runCtx, next, options)
 	})
@@ -287,7 +289,7 @@ func (runtime *Runtime) launchMarkedAsync(ctx context.Context, executionID strin
 		defer runtime.unmarkExecutionRunning(executionID)
 		runCtx := context.WithoutCancel(ctx)
 		result := run(runCtx)
-		_ = runtime.store.Save(result)
+		runtime.publishExecution(result)
 	}()
 }
 
@@ -309,6 +311,13 @@ func (runtime *Runtime) unmarkExecutionRunning(executionID string) {
 
 func (runtime *Runtime) Get(_ context.Context, executionID string) (*WorkflowExecution, error) {
 	return runtime.store.Get(executionID)
+}
+
+func (runtime *Runtime) SubscribeExecution(executionID string) (<-chan WorkflowExecution, func()) {
+	if runtime.streamHub == nil {
+		return nil, func() {}
+	}
+	return runtime.streamHub.Subscribe(executionID)
 }
 
 func (runtime *Runtime) Cancel(_ context.Context, executionID string) (WorkflowExecution, error) {
@@ -333,7 +342,7 @@ func (runtime *Runtime) Cancel(_ context.Context, executionID string) (WorkflowE
 		"event":       "execution.cancelled",
 		"executionId": cancelled.ID,
 	})
-	_ = runtime.store.Save(cancelled)
+	runtime.publishExecution(cancelled)
 	return cancelled, nil
 }
 
@@ -465,6 +474,10 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 		})
 	}
 
+	persistProgress := func() {
+		runtime.publishExecution(next)
+	}
+
 	enqueue := func(nodeID string) {
 		if strings.TrimSpace(nodeID) == "" || pushed[nodeID] {
 			return
@@ -559,6 +572,8 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			"nodeId":      nodeID,
 			"nodeType":    node.Data.Type,
 		})
+		next.UpdatedAt = NowISO()
+		persistProgress()
 
 		var nodeInput map[string]any
 		if options.ResumedNodeID == nodeID {
@@ -603,6 +618,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"nodeId":      nodeID,
 				})
 				appendNodeFinishedEvent(nodeID, waitingState.Status, waitingState.EndedAt, "")
+				persistProgress()
 				return next
 
 			case NodeExecutorResultBranch:
@@ -630,6 +646,8 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"branchName":  result.BranchName,
 				})
 				appendNodeFinishedEvent(nodeID, succeededState.Status, succeededState.EndedAt, "")
+				next.UpdatedAt = NowISO()
+				persistProgress()
 				outgoing := outgoingEdgesMap[nodeID]
 				nextEdges := orderFanOutEdges(node, selectIfElseNextEdges(outgoing, result.HandleID), nodeMap)
 				for _, edge := range nextEdges {
@@ -666,6 +684,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"durationMs":  nodeDurationMs(state.StartedAt, failedState.EndedAt),
 				})
 				appendNodeFinishedEvent(nodeID, failedState.Status, failedState.EndedAt, result.Error)
+				persistProgress()
 				return next
 
 			default:
@@ -747,6 +766,8 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"durationMs":  nodeDurationMs(state.StartedAt, succeededState.EndedAt),
 				})
 				appendNodeFinishedEvent(nodeID, succeededState.Status, succeededState.EndedAt, "")
+				next.UpdatedAt = NowISO()
+				persistProgress()
 				nextEdges := orderFanOutEdges(node, outgoingEdgesMap[nodeID], nodeMap)
 				for _, edge := range nextEdges {
 					markArrived(edge.Target, nodeID)
@@ -814,6 +835,58 @@ func (runtime *Runtime) failExecution(execution WorkflowExecution, message strin
 		"error":       message,
 	})
 	return next
+}
+
+func (runtime *Runtime) publishExecution(execution WorkflowExecution) {
+	snapshot := cloneExecutionSnapshot(execution)
+	_ = runtime.store.Save(snapshot)
+	if runtime.streamHub != nil {
+		runtime.streamHub.Publish(snapshot)
+	}
+}
+
+func cloneExecutionSnapshot(source WorkflowExecution) WorkflowExecution {
+	cloned := source
+	cloned.NodeStates = cloneNodeStates(source.NodeStates)
+	cloned.LifecycleEvents = append([]LifecycleEvent{}, source.LifecycleEvents...)
+	cloned.Events = cloneExecutionEvents(source.Events)
+	if variables, cycle := cloneMapForRuntimeJSON(source.Variables, map[uintptr]struct{}{}, map[uintptr]struct{}{}); !cycle && variables != nil {
+		cloned.Variables = variables
+	} else {
+		cloned.Variables = cloneMap(source.Variables)
+	}
+	if outputs, cycle := cloneMapForRuntimeJSON(source.Outputs, map[uintptr]struct{}{}, map[uintptr]struct{}{}); !cycle && outputs != nil {
+		cloned.Outputs = outputs
+	} else if source.Outputs != nil {
+		cloned.Outputs = cloneMap(source.Outputs)
+	}
+	if source.WaitingInput != nil {
+		waitingCopy := *source.WaitingInput
+		if schema, cycle := cloneMapForRuntimeJSON(source.WaitingInput.Schema, map[uintptr]struct{}{}, map[uintptr]struct{}{}); !cycle && schema != nil {
+			waitingCopy.Schema = schema
+		} else {
+			waitingCopy.Schema = cloneMap(source.WaitingInput.Schema)
+		}
+		cloned.WaitingInput = &waitingCopy
+	}
+	return cloned
+}
+
+func cloneExecutionEvents(source []ExecutionEvent) []ExecutionEvent {
+	if len(source) == 0 {
+		return nil
+	}
+	out := make([]ExecutionEvent, 0, len(source))
+	for _, item := range source {
+		next := item
+		if payload, cycle := cloneMapForRuntimeJSON(item.Payload, map[uintptr]struct{}{}, map[uintptr]struct{}{}); !cycle && payload != nil {
+			next.Payload = payload
+		} else if item.Payload != nil {
+			next.Payload = cloneMap(item.Payload)
+		}
+		out = append(out, next)
+	}
+	return out
 }
 
 func cloneNodeStates(source map[string]ExecutionNodeState) map[string]ExecutionNodeState {

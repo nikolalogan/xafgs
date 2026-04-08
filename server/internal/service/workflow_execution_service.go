@@ -11,6 +11,7 @@ import (
 type WorkflowExecutionService interface {
 	Start(ctx context.Context, workflowDsl workflowruntime.WorkflowDSL, input map[string]any) (workflowruntime.WorkflowExecution, *model.APIError)
 	Get(ctx context.Context, executionID string) (*workflowruntime.WorkflowExecution, *model.APIError)
+	Subscribe(ctx context.Context, executionID string) (*workflowruntime.WorkflowExecution, <-chan workflowruntime.WorkflowExecution, func(), *model.APIError)
 	Resume(ctx context.Context, executionID string, nodeID string, input map[string]any) (workflowruntime.WorkflowExecution, *model.APIError)
 	Cancel(ctx context.Context, executionID string) (workflowruntime.WorkflowExecution, *model.APIError)
 }
@@ -50,6 +51,18 @@ func (service *workflowExecutionService) Get(
 		return nil, model.NewAPIError(404, response.CodeNotFound, "execution 不存在")
 	}
 	return execution, nil
+}
+
+func (service *workflowExecutionService) Subscribe(
+	ctx context.Context,
+	executionID string,
+) (*workflowruntime.WorkflowExecution, <-chan workflowruntime.WorkflowExecution, func(), *model.APIError) {
+	execution, apiError := service.Get(ctx, executionID)
+	if apiError != nil {
+		return nil, nil, nil, apiError
+	}
+	channel, unsubscribe := service.runtime.SubscribeExecution(executionID)
+	return execution, channel, unsubscribe, nil
 }
 
 func (service *workflowExecutionService) Resume(
