@@ -341,7 +341,7 @@ export const validateWorkflow = (
 
         if (constrainedSources.length < 2)
           return
-        if (commonHandles && commonHandles.size > 0)
+        if (commonHandles !== null && (commonHandles as Set<string>).size > 0)
           return
 
         const sourceSummary = constrainedSources
@@ -568,6 +568,18 @@ export const validateWorkflow = (
           title: `${node.data.title} Prompt 缺失`,
           message: 'System Prompt 和 User Prompt 不能同时为空。',
         })
+      }
+      if (!trim(config.outputVar || '')) {
+        issues.push({
+          id: `${prefix}-llm-output-var`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 输出变量未配置`,
+          message: 'LLM 节点必须配置输出变量名。',
+        })
+      }
+      if (config.outputType === 'json') {
+        issues.push(...validateJsonataWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings as any))
       }
     }
 

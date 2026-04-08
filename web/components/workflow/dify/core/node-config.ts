@@ -164,6 +164,9 @@ const defaultLLMConfig = (): LLMNodeConfig => ({
   systemPrompt: '你是一个有帮助的助手。',
   userPrompt: '{{query}}',
   contextEnabled: false,
+  outputType: 'string',
+  outputVar: 'result',
+  writebackMappings: [],
 })
 
 const defaultIfElseConfig = (): IfElseNodeConfig => ({
@@ -435,6 +438,9 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       ...llm,
       joinMode: normalizeJoinMode(llm.joinMode),
       fanOutMode: normalizeFanOutMode(llm.fanOutMode),
+      outputType: llm.outputType === 'json' ? 'json' : 'string',
+      outputVar: typeof llm.outputVar === 'string' && llm.outputVar.trim() ? llm.outputVar : fallback.outputVar,
+      writebackMappings: normalizeWritebackMappings(llm.writebackMappings),
     } as DifyNodeConfigMap[K]
   }
 

@@ -218,6 +218,13 @@ function IterationSubflowEditorInner({
           <textarea className="h-20 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={config.systemPrompt} onChange={event => updateActiveNodeConfig({ ...config, systemPrompt: event.target.value })} />
           <label className={labelClass}>User Prompt</label>
           <textarea className="h-20 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={config.userPrompt} onChange={event => updateActiveNodeConfig({ ...config, userPrompt: event.target.value })} />
+          <label className={labelClass}>输出结果类型</label>
+          <select className={inputClass} value={config.outputType} onChange={event => updateActiveNodeConfig({ ...config, outputType: event.target.value === 'json' ? 'json' : 'string' })}>
+            <option value="string">string</option>
+            <option value="json">json</option>
+          </select>
+          <label className={labelClass}>输出变量名</label>
+          <input className={inputClass} value={config.outputVar} onChange={event => updateActiveNodeConfig({ ...config, outputVar: event.target.value })} />
         </div>
       )
     }

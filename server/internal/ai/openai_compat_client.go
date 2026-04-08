@@ -40,6 +40,7 @@ type ChatCompletionRequest struct {
 	Messages     []ChatMessage
 	Tools        []ChatTool
 	Temperature  float64
+	MaxTokens    int
 	Timeout      time.Duration
 	UserAgent    string
 	RequestID    string
@@ -88,6 +89,9 @@ func (client *openAICompatClient) CreateChatCompletion(ctx context.Context, requ
 		"messages":    request.Messages,
 		"temperature": request.Temperature,
 		"stream":      false,
+	}
+	if request.MaxTokens > 0 {
+		payload["max_tokens"] = request.MaxTokens
 	}
 	if len(request.Tools) > 0 {
 		payload["tools"] = request.Tools

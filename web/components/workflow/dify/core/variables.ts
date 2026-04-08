@@ -269,6 +269,17 @@ export const buildWorkflowVariableOptions = (
       return
     }
 
+    if (type === BlockEnum.LLM) {
+      const config = ensureNodeConfig(BlockEnum.LLM, node.data.config)
+      const mainOutput = (config.outputVar || '').trim() || 'result'
+      const mainScope: VariableScope = config.outputType === 'json' ? 'object' : 'string'
+      pushVariableOption(nodeId, nodeTitle, mainOutput, mainScope)
+      // 兼容旧模板：保留 text 别名。
+      if (mainOutput !== 'text')
+        pushVariableOption(nodeId, nodeTitle, 'text', mainScope)
+      return
+    }
+
     const defaultOutputs = ['text']
     defaultOutputs.forEach((outputName) => {
       options.push({

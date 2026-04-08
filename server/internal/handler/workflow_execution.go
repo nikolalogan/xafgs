@@ -29,6 +29,11 @@ var requiredUserConfigFields = []requiredUserConfigField{
 	{key: "aiApiKey", label: "AI APIKey"},
 }
 
+var requiredAIUserConfigFields = []requiredUserConfigField{
+	{key: "aiBaseUrl", label: "AI 服务商地址"},
+	{key: "aiApiKey", label: "AI APIKey"},
+}
+
 type executionIDPathRequest struct {
 	ID string `path:"id" validate:"required"`
 }
@@ -145,7 +150,7 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
-	if missing := detectMissingRequiredUserConfig(publishedDSL, userConfig); len(missing) > 0 {
+	if missing := detectMissingRequiredUserConfig(publishedDSL, dsl, userConfig); len(missing) > 0 {
 		labels := make([]string, 0, len(missing))
 		for _, item := range missing {
 			labels = append(labels, item.label)
@@ -233,7 +238,7 @@ func requestID(c *fiber.Ctx) string {
 	return requestID
 }
 
-func detectMissingRequiredUserConfig(rawDSL any, config model.UserConfigDTO) []requiredUserConfigField {
+func detectMissingRequiredUserConfig(rawDSL any, dsl workflowruntime.WorkflowDSL, config model.UserConfigDTO) []requiredUserConfigField {
 	raw, err := json.Marshal(rawDSL)
 	if err != nil {
 		return nil
@@ -262,5 +267,34 @@ func detectMissingRequiredUserConfig(rawDSL any, config model.UserConfigDTO) []r
 		}
 		missing = append(missing, field)
 	}
+
+	if hasNodeType(dsl.Nodes, "llm") {
+		existing := map[string]bool{}
+		for _, item := range missing {
+			existing[item.key] = true
+		}
+		for _, field := range requiredAIUserConfigFields {
+			if existing[field.key] {
+				continue
+			}
+			if values[field.key] != "" {
+				continue
+			}
+			missing = append(missing, field)
+		}
+	}
 	return missing
+}
+
+func hasNodeType(nodes []workflowruntime.WorkflowNode, nodeType string) bool {
+	target := strings.TrimSpace(nodeType)
+	if target == "" {
+		return false
+	}
+	for _, node := range nodes {
+		if strings.TrimSpace(node.Data.Type) == target {
+			return true
+		}
+	}
+	return false
 }

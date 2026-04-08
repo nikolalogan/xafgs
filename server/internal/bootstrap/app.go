@@ -147,7 +147,7 @@ func NewApp() (*fiber.App, Config) {
 	workflowNodeGenerateService := service.NewWorkflowNodeGenerateService(userConfigService, systemConfigService, aiClient)
 	workflowDSLGenerateService := service.NewWorkflowDSLGenerateService(userConfigService, systemConfigService, fileService, aiClient)
 	executionStore := workflowruntime.NewInMemoryExecutionStore()
-	executionRuntime := workflowruntime.NewRuntime(executionStore)
+	executionRuntime := workflowruntime.NewRuntime(executionStore, workflowruntime.WithAIClient(aiClient))
 	workflowExecutionService := service.NewWorkflowExecutionService(executionRuntime)
 	workflowExecutionRateLimiter := service.NewWorkflowExecutionRateLimiter()
 	authService := service.NewAuthService(authRepository, userRepository)

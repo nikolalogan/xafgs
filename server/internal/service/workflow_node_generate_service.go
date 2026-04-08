@@ -332,7 +332,9 @@ func buildNodeTypeConstraintText(request WorkflowNodeGenerateRequest) string {
 	case "input":
 		writeLine("config 必须包含 fields 数组，每项至少包含 name、label、type、required；可选 prompt（输入提示词）。")
 	case "llm":
-		writeLine("config 必须包含 model、temperature、maxTokens、systemPrompt、userPrompt、contextEnabled。")
+		writeLine("config 必须包含 model、temperature、maxTokens、systemPrompt、userPrompt、contextEnabled、outputType、outputVar。")
+		writeLine("outputType 仅允许 string/json；string 模式下 writebackMappings 置空数组。")
+		writeLine("仅当 outputType=json 时允许配置 writebackMappings，元素需包含 sourcePath 或 expression，以及 targetPath。")
 	case "if-else":
 		writeLine("config 必须包含 conditions 数组与 elseBranchName。")
 	case "http-request":

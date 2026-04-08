@@ -1083,7 +1083,10 @@
       "maxTokens": 2000,                  // 最大 Token 数
       "systemPrompt": "你是一个专业的分析师", // 系统提示词
       "userPrompt": "分析{{city}}的预算情况", // 用户提示词（支持变量）
-      "contextEnabled": true              // 是否启用上下文
+      "contextEnabled": true,             // 是否启用上下文
+      "outputType": "string",             // 输出类型：string/json
+      "outputVar": "result",              // 主输出变量名（默认 result）
+      "writebackMappings": []             // 仅 outputType=json 时生效
     }
   }
 
@@ -1133,15 +1136,38 @@
   - 默认值：false
   - 说明：是否传递之前的对话历史
 
+  outputType（输出类型）
+
+  - 类型：string
+  - 枚举：string / json
+  - 默认值：string
+  - 说明：仅 json 模式可配置 writebackMappings
+
+  outputVar（输出变量名）
+
+  - 类型：string
+  - 默认值：result
+  - 说明：主输出字段名，可在编辑器中修改
+
+  writebackMappings（写回映射）
+
+  - 类型：array
+  - 必填：否
+  - 说明：仅 outputType=json 时使用，映射源以 JSON 根对象为基准
+
   节点输出结构：
 
+  // outputType=string
   {
-    "text": "分析结果文本...",
-    "usage": {
-      "promptTokens": 150,
-      "completionTokens": 500,
-      "totalTokens": 650
-    },
+    "result": "分析结果文本...",
+    "text": "分析结果文本...",  // 兼容别名
+    "model": "gpt-4"
+  }
+
+  // outputType=json
+  {
+    "result": { "decision": "pass" },
+    "text": { "decision": "pass" }, // 兼容别名
     "model": "gpt-4"
   }
 
@@ -1160,13 +1186,16 @@
         "maxTokens": 2000,
         "systemPrompt": "你是一个专业的财务分析师，擅长分析城市预算数据。请用专业、客观的语言进行分析。",
         "userPrompt": "请分析{{city}}的预算情况：\n- 一般预算收入：{{budget}}亿元\n- 人口：{{population}}万人\n- 上年同期：{{lastYearBudget}}亿元\n\n请给出风险评估和建议。",
-        "contextEnabled": false
+        "contextEnabled": false,
+        "outputType": "string",
+        "outputVar": "result",
+        "writebackMappings": []
       }
     }
   }
 
   注意事项：
-  - ⚠️ 当前实现为占位符（PassthroughExecutor），实际调用需要集成 LLM API
+  - ✅ 后端工作流运行时已支持真实 LLM 调用（OpenAI 兼容接口）
   - ⚠️ 需要配置 API Key 和端点
   - ⚠️ 注意成本控制（maxTokens）
 

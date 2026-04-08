@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"sxfgssever/server/internal/ai"
 )
 
 type StartExecutionInput struct {
@@ -24,14 +26,28 @@ type ResumeExecutionInput struct {
 
 type Runtime struct {
 	store     ExecutionStorePort
+	aiClient  ai.ChatCompletionClient
 	executors map[string]NodeExecutor
 }
 
-func NewRuntime(store ExecutionStorePort) *Runtime {
-	return &Runtime{
-		store:     store,
-		executors: CreateExecutorRegistry(),
+type RuntimeOption func(*Runtime)
+
+func WithAIClient(client ai.ChatCompletionClient) RuntimeOption {
+	return func(runtime *Runtime) {
+		runtime.aiClient = client
 	}
+}
+
+func NewRuntime(store ExecutionStorePort, options ...RuntimeOption) *Runtime {
+	runtime := &Runtime{store: store}
+	for _, option := range options {
+		if option == nil {
+			continue
+		}
+		option(runtime)
+	}
+	runtime.executors = CreateExecutorRegistry(runtime.aiClient)
+	return runtime
 }
 
 func (runtime *Runtime) Start(ctx context.Context, input StartExecutionInput) (WorkflowExecution, error) {

@@ -85,6 +85,9 @@ export type LLMNodeConfig = {
   systemPrompt: string
   userPrompt: string
   contextEnabled: boolean
+  outputType: 'string' | 'json'
+  outputVar: string
+  writebackMappings: WritebackMapping[]
 }
 
 export type IfElseNodeConfig = {

@@ -74,8 +74,8 @@ type MappingCascaderOption = {
   children?: MappingCascaderOption[]
 }
 
-type MappingModalType = 'code' | 'http' | 'api'
-type MappingOwner = 'code' | 'http' | 'api'
+type MappingModalType = 'code' | 'http' | 'api' | 'llm'
+type MappingOwner = 'code' | 'http' | 'api' | 'llm'
 
 type ArrayMappingPair = {
   sourceField: string
@@ -713,6 +713,8 @@ export default function NodeConfigPanel({
   const [codeResponseJsonErrorByNode, setCodeResponseJsonErrorByNode] = useState<Record<string, string>>({})
   const [httpResponseJsonByNode, setHttpResponseJsonByNode] = useState<Record<string, string>>({})
   const [httpResponseJsonErrorByNode, setHttpResponseJsonErrorByNode] = useState<Record<string, string>>({})
+  const [llmResponseJsonByNode, setLlmResponseJsonByNode] = useState<Record<string, string>>({})
+  const [llmResponseJsonErrorByNode, setLlmResponseJsonErrorByNode] = useState<Record<string, string>>({})
   const [apiJsonDraftByNode, setApiJsonDraftByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
   const [apiJsonErrorByNode, setApiJsonErrorByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
   const [apiJsonInsertKeyByNode, setApiJsonInsertKeyByNode] = useState<Record<string, Partial<Record<ApiRequestParamLocation, string>>>>({})
@@ -937,13 +939,17 @@ export default function NodeConfigPanel({
       ? 'http'
       : activeNode.data.type === BlockEnum.ApiRequest
         ? 'api'
+        : activeNode.data.type === BlockEnum.LLM
+          ? 'llm'
         : null
     if (!owner)
       return
 
     const config = activeNode.data.type === BlockEnum.HttpRequest
       ? ensureNodeConfig(BlockEnum.HttpRequest, activeNode.data.config) as HttpNodeConfig
-      : ensureNodeConfig(BlockEnum.ApiRequest, activeNode.data.config) as ApiRequestNodeConfig
+      : activeNode.data.type === BlockEnum.ApiRequest
+        ? ensureNodeConfig(BlockEnum.ApiRequest, activeNode.data.config) as ApiRequestNodeConfig
+        : ensureNodeConfig(BlockEnum.LLM, activeNode.data.config) as LLMNodeConfig
     const matched = [...(config.writebackMappings ?? [])]
       .reverse()
       .find(item => item?.arrayMapping && item.arrayMapping.sourceArrayPath && item.arrayMapping.targetArrayPath)
@@ -1421,6 +1427,132 @@ export default function NodeConfigPanel({
   const renderLLMConfig = () => {
     const config = ensureNodeConfig(BlockEnum.LLM, activeNode.data.config) as LLMNodeConfig
     const updateConfig = (nextConfig: LLMNodeConfig) => updateBase({ config: nextConfig })
+    const responseJsonDraft = llmResponseJsonByNode[activeNode.id] ?? ''
+    const responseJsonError = llmResponseJsonErrorByNode[activeNode.id] ?? ''
+    const applyResponseJson = () => {
+      const parsed = parseJsonAny(responseJsonDraft)
+      if (!parsed.ok) {
+        setLlmResponseJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: parsed.error }))
+        return
+      }
+      setLlmResponseJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: '' }))
+      const paths = extractPathsFromJson(parsed.value)
+      const normalized = paths.map(path => ({
+        expression: path,
+        targetPath: '',
+      }))
+      updateConfig({ ...config, writebackMappings: normalized })
+    }
+    const responseJsonPaths = (() => {
+      const parsed = parseJsonAny(responseJsonDraft)
+      if (!parsed.ok)
+        return [] as string[]
+      return extractPathsFromJson(parsed.value)
+    })()
+    const suggestedSourcePaths = [...new Set([
+      '$',
+      ...responseJsonPaths,
+    ])]
+    const sourcePathCascaderOptions = buildSourcePathCascaderOptions(suggestedSourcePaths)
+    const renderWritebackMappings = (showZoomButton: boolean) => (
+      <div className="space-y-2">
+        {renderArrayMappingBuilder('llm', config.writebackMappings, next => updateConfig({ ...config, writebackMappings: next }), suggestedSourcePaths)}
+        {config.writebackMappings.length === 0 && (
+          <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
+            仅 JSON 输出支持映射；可先粘贴 JSON 后点击“按 JSON 生成映射”。
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[11px] text-gray-400">
+            映射源以 LLM JSON 输出根对象为基准（如 a.b、data.list[]）。
+          </div>
+          {showZoomButton && renderMappingZoomButton('llm')}
+        </div>
+        {config.writebackMappings.map((mapping, index) => (
+          <div key={`llm-writeback-${index}`} className="grid grid-cols-12 gap-2">
+            <div className="col-span-12 md:col-span-5 min-w-0 space-y-1">
+              <Cascader
+                className={mappingCascaderClass}
+                options={sourcePathCascaderOptions}
+                placeholder="选择 JSONata 表达式"
+                value={buildSourcePathCascaderValue(getWritebackExpression(mapping))}
+                allowClear
+                changeOnSelect
+                showSearch
+                onChange={(value) => {
+                  const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                  if (selected === getWritebackExpression(mapping))
+                    return
+                  const next = [...config.writebackMappings]
+                  next[index] = { ...mapping, expression: selected }
+                  updateConfig({ ...config, writebackMappings: next })
+                  if (selected) {
+                    setArrayDraft('llm', prev => ({
+                      ...prev,
+                      mappingType: selected.endsWith('[]') ? 'array' : 'object',
+                      sourcePath: selected,
+                      pairs: prev.pairs.length ? prev.pairs : [{ sourceField: '', targetField: '' }],
+                    }))
+                  }
+                }}
+              />
+              <input
+                className={`${inputClass} font-mono text-xs`}
+                placeholder="手动输入 JSONata 表达式"
+                value={getWritebackExpression(mapping)}
+                onChange={(event) => {
+                  const expression = event.target.value
+                  const next = [...config.writebackMappings]
+                  next[index] = { ...mapping, expression }
+                  updateConfig({ ...config, writebackMappings: next })
+                  if (String(expression || '').trim()) {
+                    const selected = String(expression || '').trim()
+                    setArrayDraft('llm', prev => ({
+                      ...prev,
+                      mappingType: selected.endsWith('[]') ? 'array' : 'object',
+                      sourcePath: selected,
+                      pairs: prev.pairs.length ? prev.pairs : [{ sourceField: '', targetField: '' }],
+                    }))
+                  }
+                }}
+              />
+            </div>
+            <Cascader
+              className={`col-span-12 md:col-span-5 ${mappingCascaderClass}`}
+              options={mappingTargetCascaderOptions}
+              placeholder="选择全局/流程参数"
+              value={buildMappingCascaderValue(mapping.targetPath || '', mappingTargetCascaderOptions)}
+              allowClear
+              changeOnSelect
+              showSearch
+              onChange={(value) => {
+                const selected = Array.isArray(value) && value.length ? String(value[value.length - 1] || '') : ''
+                if (selected === (mapping.targetPath || ''))
+                  return
+                const next = [...config.writebackMappings]
+                next[index] = { ...mapping, mode: selected ? 'value' : mapping.mode, targetPath: selected }
+                updateConfig({ ...config, writebackMappings: next })
+              }}
+            />
+            <button
+              type="button"
+              aria-label="删除映射"
+              title="删除映射"
+              className="col-span-12 md:col-span-2 md:min-w-[44px] md:shrink-0 inline-flex items-center justify-center rounded bg-red-50 px-2 py-1 text-red-600"
+              onClick={() => updateConfig({
+                ...config,
+                writebackMappings: config.writebackMappings.filter((_, idx) => idx !== index),
+              })}
+            >
+              <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                <path fillRule="evenodd" d="M8.75 2.5a1.25 1.25 0 0 0-1.25 1.25V5H5a.75.75 0 0 0 0 1.5h.5v8.25A2.25 2.25 0 0 0 7.75 17h4.5a2.25 2.25 0 0 0 2.25-2.25V6.5H15a.75.75 0 0 0 0-1.5h-2.5V3.75A1.25 1.25 0 0 0 11.25 2.5h-2.5ZM11 5V4h-2v1h2Zm-3 1.5a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6A.75.75 0 0 1 8 6.5Zm4 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0v-6Z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        ))}
+        {!showZoomButton && renderMappingTester('llm', config.writebackMappings)}
+      </div>
+    )
     return (
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">LLM 配置</div>
@@ -1458,6 +1590,65 @@ export default function NodeConfigPanel({
           <input type="checkbox" checked={config.contextEnabled} onChange={event => updateConfig({ ...config, contextEnabled: event.target.checked })} />
           启用上下文
         </label>
+        <label className={labelClass}>输出结果类型</label>
+        <select
+          className={inputClass}
+          value={config.outputType}
+          onChange={(event) => updateConfig({
+            ...config,
+            outputType: event.target.value === 'json' ? 'json' : 'string',
+          })}
+        >
+          <option value="string">string</option>
+          <option value="json">json</option>
+        </select>
+        <label className={labelClass}>输出变量名</label>
+        <input
+          className={inputClass}
+          value={config.outputVar}
+          placeholder="result"
+          onChange={event => updateConfig({ ...config, outputVar: event.target.value })}
+        />
+        <div className="text-[11px] text-gray-500">
+          兼容旧流程：始终保留 <code>text</code> 别名，可继续使用 <code>{`{{${activeNode.id}.text}}`}</code>。
+        </div>
+        {config.outputType === 'json' && (
+          <div className="space-y-2 rounded border border-gray-200 p-2">
+            <div className="text-xs font-semibold text-gray-700">JSON 输出映射</div>
+            <label className={labelClass}>LLM 输出 JSON（导入，可选）</label>
+            <textarea
+              className="h-28 w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
+              placeholder='{"data":{"id":1}}'
+              value={responseJsonDraft}
+              onChange={(event) => {
+                setLlmResponseJsonByNode(prev => ({ ...prev, [activeNode.id]: event.target.value }))
+              }}
+            />
+            {!!responseJsonError && <div className="text-xs text-rose-600">JSON 错误：{responseJsonError}</div>}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
+                onClick={applyResponseJson}
+              >
+                按 JSON 生成映射
+              </button>
+            </div>
+            {renderWritebackMappings(true)}
+          </div>
+        )}
+        <Modal
+          open={mappingModalType === 'llm'}
+          onCancel={() => setMappingModalType(null)}
+          footer={null}
+          title="映射关系（LLM 节点）"
+          width="80vw"
+          style={{ maxWidth: 1400 }}
+        >
+          <div className="max-h-[70vh] overflow-y-auto pr-1">
+            {renderWritebackMappings(false)}
+          </div>
+        </Modal>
       </div>
     )
   }

@@ -19,6 +19,8 @@ import (
 
 	"github.com/blues/jsonata-go"
 	"github.com/dop251/goja"
+
+	"sxfgssever/server/internal/ai"
 )
 
 type NodeExecutorContext struct {
@@ -69,13 +71,13 @@ type NodeExecutor interface {
 	Execute(ctx context.Context, input NodeExecutorContext) (NodeExecutorResult, error)
 }
 
-func CreateExecutorRegistry() map[string]NodeExecutor {
+func CreateExecutorRegistry(aiClient ai.ChatCompletionClient) map[string]NodeExecutor {
 	return map[string]NodeExecutor{
 		"start":        startNodeExecutor{},
 		"input":        inputNodeExecutor{},
 		"code":         codeNodeExecutor{},
 		"end":          endNodeExecutor{},
-		"llm":          passthroughExecutor{},
+		"llm":          llmNodeExecutor{aiClient: aiClient},
 		"if-else":      ifElseNodeExecutor{},
 		"iteration":    passthroughExecutor{},
 		"http-request": httpNodeExecutor{},
@@ -95,6 +97,112 @@ func (passthroughExecutor) Execute(_ context.Context, input NodeExecutorContext)
 	out := cloneMap(input.Variables)
 	out["__nodeType"] = input.Node.Data.Type
 	return NodeExecutorResult{Type: NodeExecutorResultSuccess, Output: out}, nil
+}
+
+type llmNodeExecutor struct {
+	aiClient ai.ChatCompletionClient
+}
+
+func (executor llmNodeExecutor) Execute(ctx context.Context, input NodeExecutorContext) (NodeExecutorResult, error) {
+	if executor.aiClient == nil {
+		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "LLM 节点未配置 AI 客户端"}, nil
+	}
+
+	userRoot, _ := input.Variables["user"].(map[string]any)
+	baseURL := strings.TrimSpace(toString(userRoot["aiBaseUrl"]))
+	apiKey := strings.TrimSpace(toString(userRoot["aiApiKey"]))
+	if baseURL == "" || apiKey == "" {
+		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "缺少用户配置：AI 服务商地址、AI APIKey"}, nil
+	}
+
+	model := strings.TrimSpace(toString(input.Node.Data.Config["model"]))
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+	temperature := 0.2
+	if value, err := toNumber(input.Node.Data.Config["temperature"]); err == nil {
+		temperature = value
+	}
+	maxTokens := 0
+	if value, err := toNumber(input.Node.Data.Config["maxTokens"]); err == nil && value > 0 {
+		maxTokens = int(value)
+	}
+
+	outputType := strings.ToLower(strings.TrimSpace(toString(input.Node.Data.Config["outputType"])))
+	if outputType != "json" {
+		outputType = "string"
+	}
+	outputVar := strings.TrimSpace(toString(input.Node.Data.Config["outputVar"]))
+	if outputVar == "" {
+		outputVar = "result"
+	}
+
+	systemPrompt := renderTemplate(toString(input.Node.Data.Config["systemPrompt"]), input.Variables)
+	userPrompt := renderTemplate(toString(input.Node.Data.Config["userPrompt"]), input.Variables)
+	systemText := strings.TrimSpace(systemPrompt)
+	userText := strings.TrimSpace(userPrompt)
+	if systemText == "" && userText == "" {
+		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "LLM 节点 prompt 为空"}, nil
+	}
+
+	messages := make([]ai.ChatMessage, 0, 2)
+	if systemText != "" {
+		messages = append(messages, ai.ChatMessage{Role: "system", Content: systemText})
+	}
+	if userText != "" {
+		messages = append(messages, ai.ChatMessage{Role: "user", Content: userText})
+	}
+	if len(messages) == 0 {
+		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "LLM 节点 prompt 为空"}, nil
+	}
+
+	text, err := executor.aiClient.CreateChatCompletion(ctx, ai.ChatCompletionRequest{
+		BaseURL:     baseURL,
+		APIKey:      apiKey,
+		Model:       model,
+		Messages:    messages,
+		Temperature: temperature,
+		MaxTokens:   maxTokens,
+		Timeout:     60 * time.Second,
+	})
+	if err != nil {
+		if ai.IsTimeoutError(err) {
+			return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "LLM 节点请求超时，请稍后重试"}, nil
+		}
+		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "LLM 节点调用失败: " + err.Error()}, nil
+	}
+	text = strings.TrimSpace(text)
+
+	if outputType == "json" {
+		if text == "" {
+			return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "LLM 节点 JSON 输出为空，无法解析"}, nil
+		}
+		root, parseErr := parseJSONObjectFromLLMText(text)
+		if parseErr != nil {
+			return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "LLM 节点 JSON 输出解析失败: " + parseErr.Error()}, nil
+		}
+		if root == nil {
+			return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "LLM 节点 JSON 输出必须为对象"}, nil
+		}
+		writebacks := buildWritebacksByJSONata(input.Node.Data.Config["writebackMappings"], cloneMap(root))
+		output := map[string]any{
+			outputVar: root,
+			"text":    root,
+		}
+		if model != "" {
+			output["model"] = model
+		}
+		return NodeExecutorResult{Type: NodeExecutorResultSuccess, Output: output, Writebacks: writebacks}, nil
+	}
+
+	output := map[string]any{
+		outputVar: text,
+		"text":    text,
+	}
+	if model != "" {
+		output["model"] = model
+	}
+	return NodeExecutorResult{Type: NodeExecutorResultSuccess, Output: output}, nil
 }
 
 type inputNodeExecutor struct{}
@@ -1435,6 +1543,114 @@ func cloneSliceForRuntimeJSON(source []any, seenMaps map[uintptr]struct{}, seenS
 		delete(seenSlices, slicePtr)
 	}
 	return out, hasCycle
+}
+
+func parseJSONObjectFromLLMText(raw string) (map[string]any, error) {
+	candidates := []string{}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed != "" {
+		candidates = append(candidates, trimmed)
+	}
+	if fenced, ok := extractMarkdownFencedContent(trimmed); ok {
+		candidates = append(candidates, fenced)
+	}
+	if objectText, ok := extractFirstJSONObject(trimmed); ok {
+		candidates = append(candidates, objectText)
+	}
+	if len(candidates) == 0 {
+		return nil, errors.New("空响应")
+	}
+
+	var lastErr error
+	for _, candidate := range candidates {
+		var object map[string]any
+		if err := json.Unmarshal([]byte(candidate), &object); err != nil {
+			lastErr = err
+			continue
+		}
+		if object == nil {
+			return nil, errors.New("JSON 输出必须为对象")
+		}
+		return object, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("无法提取 JSON 对象")
+	}
+	return nil, lastErr
+}
+
+func extractMarkdownFencedContent(raw string) (string, bool) {
+	text := strings.TrimSpace(raw)
+	if !strings.HasPrefix(text, "```") {
+		return "", false
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) < 2 {
+		return "", false
+	}
+	end := -1
+	for i := len(lines) - 1; i >= 1; i-- {
+		if strings.TrimSpace(lines[i]) == "```" {
+			end = i
+			break
+		}
+	}
+	if end <= 0 {
+		return "", false
+	}
+	content := strings.TrimSpace(strings.Join(lines[1:end], "\n"))
+	if content == "" {
+		return "", false
+	}
+	return strings.TrimPrefix(content, "\uFEFF"), true
+}
+
+func extractFirstJSONObject(raw string) (string, bool) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return "", false
+	}
+	start := strings.Index(text, "{")
+	if start < 0 {
+		return "", false
+	}
+
+	inString := false
+	escaped := false
+	depth := 0
+	for index := start; index < len(text); index++ {
+		char := text[index]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if char == '\\' {
+				escaped = true
+				continue
+			}
+			if char == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		if char == '"' {
+			inString = true
+			continue
+		}
+		if char == '{' {
+			depth++
+			continue
+		}
+		if char == '}' {
+			depth--
+			if depth == 0 {
+				return strings.TrimSpace(text[start : index+1]), true
+			}
+		}
+	}
+	return "", false
 }
 
 func toString(value any) string {
