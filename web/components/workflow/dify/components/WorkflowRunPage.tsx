@@ -444,8 +444,11 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const playbackActiveRef = useRef(false)
   const autoOpenedNodeIdsRef = useRef<Set<string>>(new Set())
   const nodeCardRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const nodeHeaderRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const waitingFormRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const startFormRef = useRef<HTMLDivElement | null>(null)
+  const scrollRetryTimerRef = useRef<number | null>(null)
+  const scrollRequestTokenRef = useRef(0)
   const startFields = useMemo(() => normalizeStartFields(nodes), [nodes])
   const [startInput, setStartInput] = useState<Record<string, unknown>>({})
   const waitingFields = useMemo(() => normalizeWaitingFields(execution?.waitingInput?.schema), [execution?.waitingInput?.schema])
@@ -485,6 +488,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const startNodeId = useMemo(() => {
     return nodes.find(node => String(node.data.type).toLowerCase() === BlockEnum.Start)?.id || ''
   }, [nodes])
+  const currentDisplayNodeId = activeNodeId || focusedNodeId
 
   const collapseNodePanel = (nodeId: string) => {
     if (!nodeId)
@@ -506,6 +510,11 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       window.clearTimeout(playbackTimerRef.current)
       playbackTimerRef.current = null
     }
+    if (scrollRetryTimerRef.current !== null) {
+      window.clearTimeout(scrollRetryTimerRef.current)
+      scrollRetryTimerRef.current = null
+    }
+    scrollRequestTokenRef.current += 1
     playbackActiveRef.current = false
     processedExecutionIdRef.current = ''
     processedEventCountRef.current = 0
@@ -538,7 +547,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     if (!nodeId)
       return
     const nextVisible = [nodeId]
-    const nextOpenPanels = { [nodeId]: false }
+    const nextOpenPanels = { [nodeId]: true }
     visibleNodeIdsRef.current = nextVisible
     focusedNodeIdRef.current = nodeId
     activeNodeIdRef.current = nodeId
@@ -593,36 +602,76 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const scrollNodeCardIntoView = (nodeId: string) => {
     if (typeof window === 'undefined')
       return
-    const element = nodeCardRefs.current[nodeId]
-    if (!element)
+    const titleElement = nodeHeaderRefs.current[nodeId] || nodeCardRefs.current[nodeId]
+    if (!titleElement)
       return
 
-    const focusedNode = nodes.find(node => node.id === nodeId)
-    const isEndNode = focusedNode?.data.type === BlockEnum.End
-
-    window.requestAnimationFrame(() => {
+    const requestToken = ++scrollRequestTokenRef.current
+    const alignTitleIntoView = (behavior: ScrollBehavior) => {
+      if (scrollRequestTokenRef.current !== requestToken)
+        return false
       try {
-        const container = element.closest('.workflow-run-scroll') as HTMLDivElement | null
+        const container = titleElement.closest('.workflow-run-scroll') as HTMLDivElement | null
         if (!container) {
-          element.scrollIntoView({ behavior: 'smooth', block: isEndNode ? 'start' : 'center' })
-          return
+          titleElement.scrollIntoView({ behavior, block: 'start' })
+          return true
         }
 
         const containerRect = container.getBoundingClientRect()
-        const elementRect = element.getBoundingClientRect()
+        const titleRect = titleElement.getBoundingClientRect()
         const currentScrollTop = container.scrollTop
-        const targetOffsetTop = elementRect.top - containerRect.top + currentScrollTop
-        const targetTop = isEndNode
-          ? Math.max(0, targetOffsetTop - container.clientHeight * 0.25)
-          : Math.max(0, targetOffsetTop - Math.max(0, (container.clientHeight - elementRect.height) / 2))
+        const targetOffsetTop = titleRect.top - containerRect.top + currentScrollTop
+        const topAnchorOffset = Math.max(16, Math.round(container.clientHeight / 8))
+        const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+        const targetTop = Math.min(maxScrollTop, Math.max(0, targetOffsetTop - topAnchorOffset))
+        if (Math.abs(container.scrollTop - targetTop) <= 4)
+          return true
 
         container.scrollTo({
           top: targetTop,
-          behavior: 'smooth',
+          behavior,
         })
+        return true
       }
       catch {
+        return false
       }
+    }
+
+    window.requestAnimationFrame(() => {
+      const aligned = alignTitleIntoView('smooth')
+      if (!aligned)
+        return
+      if (scrollRetryTimerRef.current !== null)
+        window.clearTimeout(scrollRetryTimerRef.current)
+      scrollRetryTimerRef.current = window.setTimeout(() => {
+        if (scrollRequestTokenRef.current !== requestToken)
+          return
+        window.requestAnimationFrame(() => {
+          if (scrollRequestTokenRef.current !== requestToken)
+            return
+          alignTitleIntoView('auto')
+        })
+      }, 90)
+    })
+  }
+
+  const focusCurrentNode = (nodeId: string, options?: { open?: boolean }) => {
+    if (!nodeId)
+      return
+    focusedNodeIdRef.current = nodeId
+    setFocusedNodeId(nodeId)
+    if (!options?.open)
+      return
+    setOpenPanels((prev) => {
+      const nextPanels = Object.keys(prev).reduce<Record<string, boolean>>((acc, key) => {
+        if (prev[key])
+          acc[key] = false
+        return acc
+      }, {})
+      nextPanels[nodeId] = true
+      openPanelsRef.current = nextPanels
+      return nextPanels
     })
   }
 
@@ -685,12 +734,33 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   }, [openPanels])
 
   useEffect(() => {
-    if (!focusedNodeId)
+    if (!currentDisplayNodeId)
       return
     if (typeof window === 'undefined')
       return
-    scrollNodeCardIntoView(focusedNodeId)
-  }, [focusedNodeId, nodes])
+    scrollNodeCardIntoView(currentDisplayNodeId)
+  }, [currentDisplayNodeId, nodes, openPanels])
+
+  useEffect(() => {
+    if (typeof window === 'undefined')
+      return
+    if (!currentDisplayNodeId)
+      return
+    const element = nodeCardRefs.current[currentDisplayNodeId]
+    if (!element || typeof ResizeObserver === 'undefined')
+      return
+    const observer = new ResizeObserver(() => {
+      scrollNodeCardIntoView(currentDisplayNodeId)
+    })
+    observer.observe(element)
+    return () => {
+      try {
+        observer.disconnect()
+      }
+      catch {
+      }
+    }
+  }, [currentDisplayNodeId])
 
   useEffect(() => {
     if (!execution?.waitingInput?.nodeId)
@@ -738,6 +808,10 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   useEffect(() => {
     return () => {
       stopExecutionStream()
+      if (scrollRetryTimerRef.current !== null) {
+        window.clearTimeout(scrollRetryTimerRef.current)
+        scrollRetryTimerRef.current = null
+      }
       if (playbackTimerRef.current !== null) {
         window.clearTimeout(playbackTimerRef.current)
         playbackTimerRef.current = null
@@ -859,8 +933,12 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
               waitingResumeNodeIdRef.current = ''
             nextActiveNodeId = nodeId
             nextFocusedNodeId = nodeId
+            Object.keys(nextOpenPanels).forEach((key) => {
+              if (nextOpenPanels[key])
+                nextOpenPanels[key] = false
+            })
+            nextOpenPanels[nodeId] = true
             if (nextAutoOpenedNodeIds.has(nodeId)) {
-              nextOpenPanels[nodeId] = false
               nextAutoOpenedNodeIds.delete(nodeId)
             }
           } else if (currentEvent.type === 'node.finished') {
@@ -873,12 +951,27 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
               nextActiveNodeId = ''
             if (finishedStatus === 'waiting_input') {
               nextFocusedNodeId = nodeId
+              Object.keys(nextOpenPanels).forEach((key) => {
+                if (nextOpenPanels[key])
+                  nextOpenPanels[key] = false
+              })
               nextOpenPanels[nodeId] = true
               nextAutoOpenedNodeIds.add(nodeId)
             } else if (isEndNode && finishedStatus === 'succeeded') {
               nextFocusedNodeId = nodeId
+              Object.keys(nextOpenPanels).forEach((key) => {
+                if (nextOpenPanels[key])
+                  nextOpenPanels[key] = false
+              })
               nextOpenPanels[nodeId] = true
               nextAutoOpenedNodeIds.add(nodeId)
+            } else if (finishedStatus === 'failed') {
+              nextFocusedNodeId = nodeId
+              Object.keys(nextOpenPanels).forEach((key) => {
+                if (nextOpenPanels[key])
+                  nextOpenPanels[key] = false
+              })
+              nextOpenPanels[nodeId] = true
             } else if (nextAutoOpenedNodeIds.has(nodeId)) {
               nextOpenPanels[nodeId] = false
               nextAutoOpenedNodeIds.delete(nodeId)
@@ -2058,11 +2151,22 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
               return (
                 <div key={node.id} ref={(el) => { nodeCardRefs.current[node.id] = el }} className="rounded border border-gray-200">
                   <button
+                    ref={(el) => { nodeHeaderRefs.current[node.id] = el }}
                     type="button"
                     onClick={() => {
                       autoOpenedNodeIdsRef.current.delete(node.id)
-                      setOpenPanels(prev => ({ ...prev, [node.id]: !(prev[node.id] ?? false) }))
-                      setFocusedNodeId(node.id)
+                      setOpenPanels((prev) => {
+                        const nextOpen = !(prev[node.id] ?? false)
+                        const nextPanels = Object.keys(prev).reduce<Record<string, boolean>>((acc, key) => {
+                          if (key !== node.id && prev[key])
+                            acc[key] = false
+                          return acc
+                        }, {})
+                        nextPanels[node.id] = nextOpen
+                        openPanelsRef.current = nextPanels
+                        return nextPanels
+                      })
+                      focusCurrentNode(node.id)
                     }}
                     className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-gray-50"
                   >
