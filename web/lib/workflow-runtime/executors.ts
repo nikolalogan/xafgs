@@ -126,6 +126,48 @@ const renderTemplateWithMissing = (value: string, variables: Record<string, unkn
   return { rendered, missing: [...missing].sort() }
 }
 
+const encodePythonLiteral = (value: unknown): string => {
+  if (value === null || value === undefined)
+    return 'None'
+  if (typeof value === 'boolean')
+    return value ? 'True' : 'False'
+  if (typeof value === 'number')
+    return JSON.stringify(value)
+  if (typeof value === 'string')
+    return JSON.stringify(value)
+  if (Array.isArray(value))
+    return `[${value.map(item => encodePythonLiteral(item)).join(', ')}]`
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}: ${encodePythonLiteral(item)}`)
+    return `{${entries.join(', ')}}`
+  }
+  return JSON.stringify(value)
+}
+
+const renderCodeTemplateWithMissing = (
+  value: string,
+  variables: Record<string, unknown>,
+  language: string,
+) => {
+  const missing = new Set<string>()
+  const rendered = value.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_full, rawKey) => {
+    const key = String(rawKey || '').trim()
+    if (!key)
+      return 'null'
+    const resolved = getByPath(variables, key)
+    if (!hasValue(resolved)) {
+      missing.add(key)
+      return 'null'
+    }
+    if (language === 'python3')
+      return encodePythonLiteral(resolved)
+    return JSON.stringify(resolved)
+  })
+  return { rendered, missing: [...missing].sort() }
+}
+
 const buildWritebacks = (
   mappings: unknown,
   output: Record<string, unknown>,
@@ -281,7 +323,11 @@ class CodeNodeExecutor implements NodeExecutor {
       return { type: 'failed', error: '代码节点 code 为空' }
 
     try {
-      const run = new Function('input', `${code}\n;return typeof main === 'function' ? main(input) : {}`)
+      const language = typeof config.language === 'string' ? config.language : 'javascript'
+      const prepared = renderCodeTemplateWithMissing(code, ctx.variables, language)
+      if (prepared.missing.length > 0)
+        return { type: 'failed', error: `代码节点参数未解析：${prepared.missing.join('，')}` }
+      const run = new Function('input', `${prepared.rendered}\n;return typeof main === 'function' ? main(input) : {}`)
       const result = run(ctx.variables)
       const output = toObject(result)
       const writebacks = buildNodeWritebacks(config.writebackMappings, output)

@@ -120,7 +120,7 @@ export const demoDSL: DifyWorkflowDSL = {
         type: BlockEnum.Code,
         config: {
           language: 'javascript',
-          code: 'function main(input) {\n  const text = String(input?.text || input || \'\')\n  return { result: text.trim() }\n}',
+          code: 'function main(input) {\n  const text = String({{http-1.text}} || \'\')\n  return { result: text.trim() }\n}',
           outputSchema: '{\n  "type": "object",\n  "properties": {\n    "result": { "type": "string" }\n  }\n}',
           writebackMappings: [{ expression: 'result', targetPath: 'workflow.query' }],
           outputs: ['result'],
@@ -168,7 +168,7 @@ export const demoDSL: DifyWorkflowDSL = {
                   type: BlockEnum.Code,
                   config: {
                     language: 'javascript',
-                    code: 'function main(input) {\n  const value = input?.item ?? input\n  return { result: String(value) }\n}',
+                    code: 'function main(input) {\n  return { result: String({{item}}) }\n}',
                     outputSchema: '',
                     writebackMappings: [],
                     outputs: ['result'],

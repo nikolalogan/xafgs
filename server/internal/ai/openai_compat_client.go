@@ -78,11 +78,15 @@ func (client *openAICompatClient) CreateChatCompletion(ctx context.Context, requ
 	}
 
 	timeout := request.Timeout
-	if timeout <= 0 {
+	callCtx := ctx
+	cancel := func() {}
+	if timeout == 0 {
 		timeout = 60 * time.Second
 	}
-	callCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	if timeout > 0 {
+		callCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 
 	payload := map[string]any{
 		"model":       model,

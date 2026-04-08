@@ -24,10 +24,24 @@
 - `node.resumed`：waiting_input 节点在 `resume` 后再次开始执行
 - `node.succeeded`：节点成功完成
 - `node.failed`：节点失败
+- `node.finished`：节点本轮生命周期结束，`payload.status` 为 `succeeded | failed | waiting_input`
 - `node.skipped`：节点被标记跳过（execution 收尾）
 - `node.branch`：If-Else 选择分支（包含 `handleId/branchName`）
 
 实现位置：`server/internal/workflowruntime/runtime.go`
+
+前端推荐消费方式：
+
+- 收到 `node.started` 时，进入当前节点并渲染节点内容
+- 收到 `node.finished` 时，立即退出当前节点
+- 收到下一条 `node.started` 时，再切换并渲染下一个节点内容
+
+其中 `node.finished.payload` 约定包含：
+
+- `nodeId`
+- `status`
+- `endedAt`
+- `error`（仅失败时存在）
 
 ## 3. waiting_input 的表单渲染与校验
 
@@ -61,4 +75,3 @@
 - `durationMs`：节点耗时（仅 succeeded/failed）
 
 实现位置：`server/internal/workflowruntime/log.go`
-

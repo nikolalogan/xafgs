@@ -821,17 +821,17 @@
 
   1. 必须导出 main 函数：
   function main(input) {
-    // input 为当前全局变量表 variables
+    // 通过 {{xxx}} 读取变量，input 仅保留为函数签名
     // 返回对象即为节点输出
     return {
       result: "success",
       score: 95
     }
   }
-  2. input 参数：
-    - 类型：Record<string, unknown>
-    - 内容：当前全局变量表 variables
-    - 包含：启动输入、所有节点输出、写回的变量
+  2. 变量引用：
+    - 统一使用 {{path}} 占位符
+    - 执行前先做模板替换，再执行代码
+    - 示例：{{city}}、{{http-1.body.score}}、{{workflow.items}}
   3. 返回值：
     - 类型：对象
     - 会写入 variables[nodeId]
@@ -870,7 +870,7 @@
       "type": "code",
       "config": {
         "language": "javascript",
-        "code": "function main(input) {\n  const budget = input.budget || 0;\n  const population = input.population || 0;\n  const riskScore = budget / population * 100;\n  \n  let level = 'low';\n  if (riskScore > 100) level = 'high';\n  else if (riskScore > 50) level = 'medium';\n  \n  return {\n    riskScore: Math.round(riskScore),\n    riskLevel: level,\n    timestamp: Date.now()\n  };\n}",
+        "code": "function main(input) {\n  const budget = {{budget}} || 0;\n  const population = {{population}} || 0;\n  const riskScore = budget / population * 100;\n  \n  let level = 'low';\n  if (riskScore > 100) level = 'high';\n  else if (riskScore > 50) level = 'medium';\n  \n  return {\n    riskScore: Math.round(riskScore),\n    riskLevel: level,\n    timestamp: Date.now()\n  };\n}",
         "writebackMappings": [
           {
             "sourcePath": "riskScore",
@@ -896,7 +896,7 @@
       "type": "code",
       "config": {
         "language": "javascript",
-        "code": "function main(input) {\n  // 获取所有 HTTP 节点的响应\n  const http1 = input['http-1'] || {};\n  const http2 = input['http-2'] || {};\n  \n  // 聚合数据\n  const summary = {\n    totalScore: (http1.body?.score || 0) + (http2.body?.score || 0),\n    decision: http1.body?.score > 80 ? '通过' : '拒绝',\n    sources: ['http-1', 'http-2']\n  };\n  \n  return { summary };\n}",
+        "code": "function main(input) {\n  const summary = {\n    totalScore: (({{http-1.body.score}} || 0) + ({{http-2.body.score}} || 0)),\n    decision: ({{http-1.body.score}} || 0) > 80 ? '通过' : '拒绝',\n    sources: ['http-1', 'http-2']\n  };\n  \n  return { summary };\n}",
         "writebackMappings": [
           {
             "sourcePath": "summary",
@@ -1466,7 +1466,7 @@
           "title": "处理单项",
           "type": "code",
           "config": {
-            "code": "function main(input) { return { score: input.item * 2 }; }"
+            "code": "function main(input) { return { score: {{item}} * 2 }; }"
           }
         }
       },
@@ -1561,7 +1561,7 @@
                 "title": "计算评分",
                 "type": "code",
                 "config": {
-                  "code": "function main(input) {\n  const cityData = input['http-1'].body;\n  const score = cityData.budget / cityData.population * 100;\n  return { score: Math.round(score) };\n}"
+                  "code": "function main(input) {\n  const cityData = {{http-1.body}};\n  const score = cityData.budget / cityData.population * 100;\n  return { score: Math.round(score) };\n}"
                 }
               }
             },
@@ -1649,7 +1649,7 @@
           "type": "code",
           "config": {
             "joinAll": true,
-            "code": "function main(input) {\n  const dataA = input['http-1'].body;\n  const dataB = input['http-2'].body;\n  return { summary: { a: dataA, b: dataB } };\n}"
+            "code": "function main(input) {\n  return { summary: { a: {{http-1.body}}, b: {{http-2.body}} } };\n}"
           }
         }
       }
@@ -1756,7 +1756,7 @@
           "title": "高风险处理",
           "type": "code",
           "config": {
-            "code": "function main(input) {\n  return {\n    highRiskResult: {\n      decision: '需要进一步审核',\n      score: input.cityScore,\n      level: 'high'\n    }\n  };\n}"
+            "code": "function main(input) {\n  return {\n    highRiskResult: {\n      decision: '需要进一步审核',\n      score: {{cityScore}},\n      level: 'high'\n    }\n  };\n}"
           }
         }
       },
@@ -1768,7 +1768,7 @@
           "title": "低风险处理",
           "type": "code",
           "config": {
-            "code": "function main(input) {\n  return {\n    lowRiskResult: {\n      decision: '通过',\n      score: input.cityScore,\n      level: 'low'\n    }\n  };\n}"
+            "code": "function main(input) {\n  return {\n    lowRiskResult: {\n      decision: '通过',\n      score: {{cityScore}},\n      level: 'low'\n    }\n  };\n}"
           }
         }
       },
@@ -1781,7 +1781,7 @@
           "type": "code",
           "config": {
             "joinMode": "any",
-            "code": "function main(input) {\n  const high = input['code-1']?.highRiskResult;\n  const low = input['code-2']?.lowRiskResult;\n  const picked = high || low || { decision: '未知', score: null, level: 'unknown' };\n  return {\n    summary: {\n      decision: picked.decision,\n      score: picked.score,\n      level: picked.level\n    }\n  };\n}"
+            "code": "function main(input) {\n  const high = {{code-1.highRiskResult}};\n  const low = {{code-2.lowRiskResult}};\n  const picked = high || low || { decision: '未知', score: null, level: 'unknown' };\n  return {\n    summary: {\n      decision: picked.decision,\n      score: picked.score,\n      level: picked.level\n    }\n  };\n}"
           }
         }
       },
@@ -2101,8 +2101,7 @@
   解决：
   // 正确
   function main(input) {
-    // 安全访问
-    const value = input['http-1']?.body?.data || {};
+    const value = {{http-1.body.data}} || {};
     return { result: value };
   }
 

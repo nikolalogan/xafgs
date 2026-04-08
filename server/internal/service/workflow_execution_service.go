@@ -28,7 +28,7 @@ func (service *workflowExecutionService) Start(
 	workflowDsl workflowruntime.WorkflowDSL,
 	input map[string]any,
 ) (workflowruntime.WorkflowExecution, *model.APIError) {
-	execution, err := service.runtime.Start(ctx, workflowruntime.StartExecutionInput{
+	execution, err := service.runtime.StartAsync(ctx, workflowruntime.StartExecutionInput{
 		WorkflowDSL: workflowDsl,
 		Input:       input,
 	})
@@ -58,7 +58,7 @@ func (service *workflowExecutionService) Resume(
 	nodeID string,
 	input map[string]any,
 ) (workflowruntime.WorkflowExecution, *model.APIError) {
-	execution, err := service.runtime.Resume(ctx, workflowruntime.ResumeExecutionInput{
+	execution, err := service.runtime.ResumeAsync(ctx, workflowruntime.ResumeExecutionInput{
 		ExecutionID: executionID,
 		NodeID:      nodeID,
 		Input:       input,
@@ -79,4 +79,3 @@ func (service *workflowExecutionService) Cancel(
 	}
 	return execution, nil
 }
-

@@ -44,6 +44,10 @@ type WorkflowExecution = {
   updatedAt: string
 }
 
+type WorkflowExecutionEvent = NonNullable<WorkflowExecution['events']>[number]
+type SubmitPhase = '' | 'checking_user_config' | 'submitting_start' | 'submitting_waiting_input'
+type ExecutionViewPhase = 'idle' | 'starting' | 'bootstrapping' | 'playing' | 'waiting_input' | 'completed' | 'failed_or_cancelled'
+
 type WorkflowRunPageProps = {
   workflowId?: number
   nodes: DifyNode[]
@@ -140,6 +144,12 @@ const statusClassMap: Record<RuntimeNodeStatus, string> = {
   skipped: 'bg-slate-100 text-slate-700',
 }
 
+const shouldShowRunningIcon = (nodeType: string, status: RuntimeNodeStatus, activeNodeId: string, nodeId: string) => {
+  if (activeNodeId !== nodeId || status !== 'running')
+    return false
+  return nodeType === BlockEnum.HttpRequest || nodeType === BlockEnum.ApiRequest || nodeType === BlockEnum.LLM
+}
+
 const getNodePreviewStyle = (status: RuntimeNodeStatus | undefined) => {
   if (status === 'succeeded')
     return { border: '1.5px solid #10b981', background: '#ecfdf5' }
@@ -229,6 +239,28 @@ const normalizeWaitingFields = (schema?: Record<string, unknown>): DynamicField[
       validateWhen: typeof entry.validateWhen === 'string' ? entry.validateWhen : undefined,
     } satisfies DynamicField
   }).filter(field => field.name)
+}
+
+const isJSONResponse = (response: Response) => {
+  const contentType = response.headers.get('content-type') || ''
+  return contentType.toLowerCase().includes('application/json')
+}
+
+const readErrorResponseText = async (response: Response) => {
+  const raw = (await response.text()).trim()
+  if (!raw)
+    return ''
+  if (raw.startsWith('<'))
+    return `请求失败（HTTP ${response.status}），网关返回了非 JSON 响应`
+  return raw
+}
+
+const readWorkflowExecutionPayload = async (response: Response): Promise<{ data?: WorkflowExecution; message?: string; error?: string }> => {
+  if (!isJSONResponse(response)) {
+    const message = await readErrorResponseText(response)
+    return { message, error: message }
+  }
+  return await response.json() as { data?: WorkflowExecution; message?: string; error?: string }
 }
 
 const isNodeEntered = (status?: RuntimeNodeStatus) => status === 'running'
@@ -391,16 +423,29 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const router = useRouter()
   const [execution, setExecution] = useState<WorkflowExecution | null>(null)
   const [loading, setLoading] = useState(false)
+  const [submitPhase, setSubmitPhase] = useState<SubmitPhase>('')
   const [error, setError] = useState('')
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [authToken, setAuthToken] = useState('')
   const [previewCollapsed, setPreviewCollapsed] = useState(true)
   const [focusedNodeId, setFocusedNodeId] = useState('')
+  const [activeNodeId, setActiveNodeId] = useState('')
   const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({})
   const [visibleNodeIds, setVisibleNodeIds] = useState<string[]>([])
+  const [pendingPlaybackEvents, setPendingPlaybackEvents] = useState<WorkflowExecutionEvent[]>([])
+  const executionRef = useRef<WorkflowExecution | null>(null)
   const visibleNodeIdsRef = useRef<string[]>([])
   const focusedNodeIdRef = useRef('')
+  const activeNodeIdRef = useRef('')
+  const openPanelsRef = useRef<Record<string, boolean>>({})
+  const processedExecutionIdRef = useRef('')
+  const processedEventCountRef = useRef(0)
+  const playbackTimerRef = useRef<number | null>(null)
+  const playbackActiveRef = useRef(false)
+  const autoOpenedNodeIdsRef = useRef<Set<string>>(new Set())
   const nodeCardRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const waitingFormRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const startFormRef = useRef<HTMLDivElement | null>(null)
   const startFields = useMemo(() => normalizeStartFields(nodes), [nodes])
   const [startInput, setStartInput] = useState<Record<string, unknown>>({})
   const waitingFields = useMemo(() => normalizeWaitingFields(execution?.waitingInput?.schema), [execution?.waitingInput?.schema])
@@ -433,6 +478,147 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const [nodeOutputExpandedById, setNodeOutputExpandedById] = useState<Record<string, boolean>>({})
   const iframeResizeObserversRef = useRef<Record<string, ResizeObserver>>({})
   const executionPollingIdRef = useRef<string>('')
+  const executionPollTimerRef = useRef<number | null>(null)
+  const executionPollInFlightRef = useRef(false)
+  const waitingResumeNodeIdRef = useRef('')
+  const startNodeId = useMemo(() => {
+    return nodes.find(node => String(node.data.type).toLowerCase() === BlockEnum.Start)?.id || ''
+  }, [nodes])
+
+  const collapseNodePanel = (nodeId: string) => {
+    if (!nodeId)
+      return
+    autoOpenedNodeIdsRef.current.delete(nodeId)
+    focusedNodeIdRef.current = ''
+    activeNodeIdRef.current = ''
+    openPanelsRef.current = {
+      ...openPanelsRef.current,
+      [nodeId]: false,
+    }
+    setFocusedNodeId('')
+    setActiveNodeId('')
+    setOpenPanels(prev => ({ ...prev, [nodeId]: false }))
+  }
+
+  const resetPlaybackState = () => {
+    if (playbackTimerRef.current !== null) {
+      window.clearTimeout(playbackTimerRef.current)
+      playbackTimerRef.current = null
+    }
+    playbackActiveRef.current = false
+    processedExecutionIdRef.current = ''
+    processedEventCountRef.current = 0
+    visibleNodeIdsRef.current = []
+    focusedNodeIdRef.current = ''
+    activeNodeIdRef.current = ''
+    openPanelsRef.current = {}
+    autoOpenedNodeIdsRef.current = new Set()
+    setPendingPlaybackEvents([])
+    setVisibleNodeIds([])
+    setFocusedNodeId('')
+    setActiveNodeId('')
+    setOpenPanels({})
+  }
+
+  const stopExecutionPolling = () => {
+    executionPollInFlightRef.current = false
+    if (executionPollTimerRef.current !== null) {
+      window.clearTimeout(executionPollTimerRef.current)
+      executionPollTimerRef.current = null
+    }
+  }
+
+  const bootstrapExecutionView = (nodeId: string) => {
+    if (!nodeId)
+      return
+    const nextVisible = [nodeId]
+    const nextOpenPanels = { [nodeId]: false }
+    visibleNodeIdsRef.current = nextVisible
+    focusedNodeIdRef.current = nodeId
+    activeNodeIdRef.current = nodeId
+    openPanelsRef.current = nextOpenPanels
+    setVisibleNodeIds(nextVisible)
+    setFocusedNodeId(nodeId)
+    setActiveNodeId(nodeId)
+    setOpenPanels(nextOpenPanels)
+  }
+
+  const getSubmitButtonText = () => {
+    if (submitPhase === 'checking_user_config')
+      return '检查运行配置中...'
+    if (submitPhase === 'submitting_start')
+      return '启动流程中...'
+    return loading ? '运行中...' : '提交并运行'
+  }
+
+  const getWaitingSubmitButtonText = () => {
+    if (submitPhase === 'submitting_waiting_input')
+      return '提交并继续执行中...'
+    return loading ? '提交中...' : '提交并继续'
+  }
+
+  const scrollWaitingFormIntoView = (nodeId: string) => {
+    if (typeof window === 'undefined')
+      return
+    const formElement = waitingFormRefs.current[nodeId]
+    if (!formElement)
+      return
+    window.requestAnimationFrame(() => {
+      try {
+        formElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+      catch {
+      }
+      window.setTimeout(() => {
+        try {
+          const rect = formElement.getBoundingClientRect()
+          const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0
+          if (rect.bottom > viewportHeight - 24) {
+            const overshoot = rect.bottom - viewportHeight + 24
+            window.scrollBy({ top: overshoot, behavior: 'smooth' })
+          }
+        }
+        catch {
+        }
+      }, 80)
+    })
+  }
+
+  const scrollNodeCardIntoView = (nodeId: string) => {
+    if (typeof window === 'undefined')
+      return
+    const element = nodeCardRefs.current[nodeId]
+    if (!element)
+      return
+
+    const focusedNode = nodes.find(node => node.id === nodeId)
+    const isEndNode = focusedNode?.data.type === BlockEnum.End
+
+    window.requestAnimationFrame(() => {
+      try {
+        const container = element.closest('.workflow-run-scroll') as HTMLDivElement | null
+        if (!container) {
+          element.scrollIntoView({ behavior: 'smooth', block: isEndNode ? 'start' : 'center' })
+          return
+        }
+
+        const containerRect = container.getBoundingClientRect()
+        const elementRect = element.getBoundingClientRect()
+        const currentScrollTop = container.scrollTop
+        const targetOffsetTop = elementRect.top - containerRect.top + currentScrollTop
+        const targetTop = isEndNode
+          ? Math.max(0, targetOffsetTop - container.clientHeight * 0.25)
+          : Math.max(0, targetOffsetTop - Math.max(0, (container.clientHeight - elementRect.height) / 2))
+
+        container.scrollTo({
+          top: targetTop,
+          behavior: 'smooth',
+        })
+      }
+      catch {
+      }
+    })
+  }
 
   const injectNoScrollStyleForIframe = (rawHtml: string) => {
     const style = `
@@ -473,6 +659,10 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   }
 
   useEffect(() => {
+    executionRef.current = execution
+  }, [execution])
+
+  useEffect(() => {
     visibleNodeIdsRef.current = visibleNodeIds
   }, [visibleNodeIds])
 
@@ -481,21 +671,28 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   }, [focusedNodeId])
 
   useEffect(() => {
+    activeNodeIdRef.current = activeNodeId
+  }, [activeNodeId])
+
+  useEffect(() => {
+    openPanelsRef.current = openPanels
+  }, [openPanels])
+
+  useEffect(() => {
     if (!focusedNodeId)
       return
     if (typeof window === 'undefined')
       return
-    const element = nodeCardRefs.current[focusedNodeId]
-    if (!element)
+    scrollNodeCardIntoView(focusedNodeId)
+  }, [focusedNodeId, nodes])
+
+  useEffect(() => {
+    if (!execution?.waitingInput?.nodeId)
       return
-    window.requestAnimationFrame(() => {
-      try {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }
-      catch {
-      }
-    })
-  }, [focusedNodeId])
+    if ((openPanels[execution.waitingInput.nodeId] ?? false) !== true)
+      return
+    scrollWaitingFormIntoView(execution.waitingInput.nodeId)
+  }, [execution?.waitingInput?.nodeId, openPanels])
 
   useEffect(() => {
     const cached = typeof window !== 'undefined'
@@ -534,6 +731,11 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
 
   useEffect(() => {
     return () => {
+      stopExecutionPolling()
+      if (playbackTimerRef.current !== null) {
+        window.clearTimeout(playbackTimerRef.current)
+        playbackTimerRef.current = null
+      }
       Object.values(iframeResizeObserversRef.current).forEach((observer) => {
         try {
           observer.disconnect()
@@ -549,20 +751,25 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     return new Map(nodes.map(node => [node.id, node]))
   }, [nodes])
 
-  const orderedNodeIds = useMemo(() => nodes.map(node => node.id), [nodes])
-
-  const enteredNodeIds = useMemo(() => {
+  const executionEventCount = execution?.events?.length ?? 0
+  const isBootstrappingExecution = Boolean(
+    execution
+    && execution.status === 'running'
+    && executionEventCount === 0,
+  )
+  const executionViewPhase = useMemo<ExecutionViewPhase>(() => {
     if (!execution)
-      return []
-    const entered = new Set<string>()
-    Object.entries(execution.nodeStates ?? {}).forEach(([nodeId, state]) => {
-      if (!state)
-        return
-      if (isNodeEntered(state.status))
-        entered.add(nodeId)
-    })
-    return orderedNodeIds.filter(nodeId => entered.has(nodeId))
-  }, [execution, orderedNodeIds])
+      return submitPhase === 'submitting_start' ? 'starting' : 'idle'
+    if (execution.status === 'waiting_input')
+      return 'waiting_input'
+    if (execution.status === 'completed')
+      return 'completed'
+    if (execution.status === 'failed' || execution.status === 'cancelled')
+      return 'failed_or_cancelled'
+    if (isBootstrappingExecution)
+      return 'bootstrapping'
+    return 'playing'
+  }, [execution, isBootstrappingExecution, submitPhase])
 
   useEffect(() => {
     if (!execution)
@@ -585,85 +792,118 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     })
   }, [execution, nodeMap, visibleNodeIds])
 
-  const executedNodeSequence = useMemo(() => {
-    if (!execution)
-      return []
-    const events = Array.isArray(execution.events) ? execution.events : []
-    const sorted = [...events].sort((a, b) => {
-      const at = a?.at ? new Date(a.at).getTime() : Number.MAX_SAFE_INTEGER
-      const bt = b?.at ? new Date(b.at).getTime() : Number.MAX_SAFE_INTEGER
-      return at - bt
-    })
-    const sequence: string[] = []
-    const seen = new Set<string>()
-    sorted.forEach((event) => {
-      if (!event || typeof event.type !== 'string')
-        return
-      if (!event.type.startsWith('node.'))
-        return
-      if (event.type === 'node.skipped')
-        return
-      const nodeId = typeof event.payload?.nodeId === 'string' ? event.payload.nodeId : ''
-      if (!nodeId)
-        return
-      const status = execution.nodeStates?.[nodeId]?.status
-      if (status === 'skipped')
-        return
-      if (seen.has(nodeId))
-        return
-      seen.add(nodeId)
-      sequence.push(nodeId)
-    })
-    enteredNodeIds.forEach((nodeId) => {
-      if (seen.has(nodeId))
-        return
-      seen.add(nodeId)
-      sequence.push(nodeId)
-    })
-    return sequence
-  }, [enteredNodeIds, execution])
-
   useEffect(() => {
     if (!execution) {
-      setVisibleNodeIds([])
-      setFocusedNodeId('')
-      setOpenPanels({})
+      resetPlaybackState()
+      waitingResumeNodeIdRef.current = ''
       return
     }
 
-    const existing = new Set(visibleNodeIdsRef.current)
-    const pending = executedNodeSequence.filter(nodeId => !existing.has(nodeId))
-    if (pending.length === 0)
+    if (processedExecutionIdRef.current !== execution.id) {
+      resetPlaybackState()
+      processedExecutionIdRef.current = execution.id
+    }
+
+    const events = Array.isArray(execution.events) ? execution.events : []
+    const nextEvents = events.slice(processedEventCountRef.current)
+    if (nextEvents.length === 0)
       return
 
-    const stepMs = pending.length <= 12 ? 180 : 80
-    let cursor = 0
-    const timer = window.setInterval(() => {
-      const nodeId = pending[cursor]
-      if (!nodeId) {
-        window.clearInterval(timer)
-        return
-      }
-      setVisibleNodeIds(prev => (prev.includes(nodeId) ? prev : [...prev, nodeId]))
-      setFocusedNodeId(nodeId)
-      setOpenPanels((prev) => {
-        const next = { ...prev }
-        const prevFocused = focusedNodeIdRef.current
-        if (prevFocused)
-          next[prevFocused] = false
-        next[nodeId] = true
-        return next
-      })
-      cursor += 1
-      if (cursor >= pending.length)
-        window.clearInterval(timer)
-    }, stepMs)
+    processedEventCountRef.current = events.length
+    setPendingPlaybackEvents(prev => [...prev, ...nextEvents])
+  }, [execution])
 
-    return () => window.clearInterval(timer)
-  }, [executedNodeSequence, execution?.id, execution?.updatedAt])
+  useEffect(() => {
+    if (pendingPlaybackEvents.length === 0) {
+      playbackActiveRef.current = false
+      if (playbackTimerRef.current !== null) {
+        window.clearTimeout(playbackTimerRef.current)
+        playbackTimerRef.current = null
+      }
+      return
+    }
+    if (playbackTimerRef.current !== null)
+      return
+
+    const currentEvent = pendingPlaybackEvents[0]
+    const isStepEvent = currentEvent.type === 'node.started' || currentEvent.type === 'node.finished'
+    const delay = isStepEvent && playbackActiveRef.current ? 120 : 0
+
+    playbackTimerRef.current = window.setTimeout(() => {
+      playbackTimerRef.current = null
+      playbackActiveRef.current = true
+
+      const nextVisible = [...visibleNodeIdsRef.current]
+      const visibleSet = new Set(nextVisible)
+      const nextOpenPanels = { ...openPanelsRef.current }
+      const nextAutoOpenedNodeIds = new Set(autoOpenedNodeIdsRef.current)
+      let nextFocusedNodeId = focusedNodeIdRef.current
+      let nextActiveNodeId = activeNodeIdRef.current
+
+      if (currentEvent && typeof currentEvent.type === 'string') {
+        const nodeId = typeof currentEvent.payload?.nodeId === 'string' ? currentEvent.payload.nodeId : ''
+        if (nodeId) {
+          if (!visibleSet.has(nodeId) && currentEvent.type.startsWith('node.') && currentEvent.type !== 'node.skipped') {
+            visibleSet.add(nodeId)
+            nextVisible.push(nodeId)
+          }
+
+          if (currentEvent.type === 'node.started') {
+            if (waitingResumeNodeIdRef.current === nodeId)
+              waitingResumeNodeIdRef.current = ''
+            nextActiveNodeId = nodeId
+            nextFocusedNodeId = nodeId
+            if (nextAutoOpenedNodeIds.has(nodeId)) {
+              nextOpenPanels[nodeId] = false
+              nextAutoOpenedNodeIds.delete(nodeId)
+            }
+          } else if (currentEvent.type === 'node.finished') {
+            const finishedStatus = typeof currentEvent.payload?.status === 'string' ? currentEvent.payload.status : ''
+            const node = nodeMap.get(nodeId)
+            const isEndNode = node?.data.type === BlockEnum.End
+            if (waitingResumeNodeIdRef.current === nodeId && finishedStatus !== 'waiting_input')
+              waitingResumeNodeIdRef.current = ''
+            if (nextActiveNodeId === nodeId)
+              nextActiveNodeId = ''
+            if (finishedStatus === 'waiting_input') {
+              nextFocusedNodeId = nodeId
+              nextOpenPanels[nodeId] = true
+              nextAutoOpenedNodeIds.add(nodeId)
+            } else if (isEndNode && finishedStatus === 'succeeded') {
+              nextFocusedNodeId = nodeId
+              nextOpenPanels[nodeId] = true
+              nextAutoOpenedNodeIds.add(nodeId)
+            } else if (nextAutoOpenedNodeIds.has(nodeId)) {
+              nextOpenPanels[nodeId] = false
+              nextAutoOpenedNodeIds.delete(nodeId)
+            }
+          }
+        }
+      }
+
+      visibleNodeIdsRef.current = nextVisible
+      focusedNodeIdRef.current = nextFocusedNodeId
+      activeNodeIdRef.current = nextActiveNodeId
+      openPanelsRef.current = nextOpenPanels
+      autoOpenedNodeIdsRef.current = nextAutoOpenedNodeIds
+      setVisibleNodeIds(nextVisible)
+      setFocusedNodeId(nextFocusedNodeId)
+      setActiveNodeId(nextActiveNodeId)
+      setOpenPanels(nextOpenPanels)
+      setPendingPlaybackEvents(prev => prev.slice(1))
+    }, delay)
+
+    return () => {
+      if (playbackTimerRef.current !== null) {
+        window.clearTimeout(playbackTimerRef.current)
+        playbackTimerRef.current = null
+      }
+    }
+  }, [pendingPlaybackEvents])
 
   useEffect(() => {
     if (!execution?.id || execution.status !== 'running') {
+      stopExecutionPolling()
       executionPollingIdRef.current = ''
       return
     }
@@ -675,9 +915,21 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     if (token)
       headers.Authorization = `Bearer ${token}`
 
-    const syncExecution = async () => {
-      if (cancelled)
+    const scheduleNextPoll = (delay: number) => {
+      if (cancelled || executionPollingIdRef.current !== currentExecutionId)
         return
+      if (executionPollTimerRef.current !== null)
+        window.clearTimeout(executionPollTimerRef.current)
+      executionPollTimerRef.current = window.setTimeout(() => {
+        executionPollTimerRef.current = null
+        void syncExecution()
+      }, delay)
+    }
+
+    const syncExecution = async () => {
+      if (cancelled || executionPollInFlightRef.current)
+        return
+      executionPollInFlightRef.current = true
       try {
         const response = await fetch(`/api/workflow/executions/${currentExecutionId}`, {
           method: 'GET',
@@ -685,28 +937,42 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
           headers,
         })
         if (response.status === 401) {
+          stopExecutionPolling()
           router.push('/?redirect=/app/workflow')
           return
         }
-        const payload = await response.json() as { data?: WorkflowExecution }
-        if (!response.ok || !payload.data)
+        const payload = await readWorkflowExecutionPayload(response)
+        if (!response.ok || !payload.data) {
+          scheduleNextPoll(1500)
           return
+        }
         if (cancelled || executionPollingIdRef.current !== currentExecutionId)
           return
-        setExecution(payload.data)
+        const nextExecution = payload.data
+        const currentExecution = executionRef.current
+        const hasExecutionChanged = currentExecution?.updatedAt !== nextExecution.updatedAt
+          || currentExecution?.status !== nextExecution.status
+          || (currentExecution?.events?.length ?? 0) !== (nextExecution.events?.length ?? 0)
+        if (hasExecutionChanged)
+          setExecution(nextExecution)
+        if (nextExecution.status === 'running')
+          scheduleNextPoll(1000)
+        else
+          stopExecutionPolling()
       }
       catch {
+        scheduleNextPoll(1500)
+      }
+      finally {
+        executionPollInFlightRef.current = false
       }
     }
 
     void syncExecution()
-    const timer = window.setInterval(() => {
-      void syncExecution()
-    }, 1000)
 
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      stopExecutionPolling()
     }
   }, [execution?.id, execution?.status, router])
 
@@ -1033,8 +1299,10 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       return
     const requiredKeys = detectRequiredUserConfigKeys(runtimeDsl)
       if (requiredKeys.length > 0) {
+        setSubmitPhase('checking_user_config')
         const token = resolveAuthToken()
         if (!token) {
+        setSubmitPhase('')
         router.push('/?redirect=/app/workflow')
         return
         }
@@ -1046,6 +1314,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         })
         const payload = await response.json() as { data?: UserConfigDTO; message?: string }
         if (response.status === 401) {
+          setSubmitPhase('')
           router.push('/?redirect=/app/workflow')
           return
         }
@@ -1068,10 +1337,12 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
               router.push(`/app/user-config${targetHash}`)
             },
           })
+          setSubmitPhase('')
           return
         }
       }
       catch (requestError) {
+        setSubmitPhase('')
         setError(requestError instanceof Error ? requestError.message : '加载用户配置失败')
         return
       }
@@ -1082,6 +1353,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       return
     }
     setLoading(true)
+    setSubmitPhase('submitting_start')
     setError('')
     try {
       const headers: Record<string, string> = { 'content-type': 'application/json' }
@@ -1097,42 +1369,45 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
           input: startValidation.normalized,
         }),
       })
-      const payload = await response.json() as { data?: WorkflowExecution; message?: string; error?: string }
+      const payload = await readWorkflowExecutionPayload(response)
       if (response.status === 401) {
+        setSubmitPhase('')
         router.push('/?redirect=/app/workflow')
         return
       }
       if (!response.ok || !payload.data)
         throw new Error(payload.error || payload.message || '运行失败')
       const executionData = payload.data
+      resetPlaybackState()
+      if ((executionData.events?.length ?? 0) === 0)
+        bootstrapExecutionView(startNodeId)
       setExecution(executionData)
       setEndRendered({})
       setEndRenderLoading({})
       setEndRenderError({})
-      setVisibleNodeIds([])
-      setFocusedNodeId('')
-      setOpenPanels({})
     }
     catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '运行失败')
     }
     finally {
       setLoading(false)
+      setSubmitPhase('')
     }
   }
 
   const restartWorkflow = () => {
+    stopExecutionPolling()
     setExecution(null)
     setLoading(false)
+    setSubmitPhase('')
     setError('')
     setEndRendered({})
     setEndRenderLoading({})
     setEndRenderError({})
     setEndRenderedHeights({})
-    setVisibleNodeIds([])
-    setFocusedNodeId('')
-    setOpenPanels({})
+    resetPlaybackState()
     setAutoRunTriggered(false)
+    waitingResumeNodeIdRef.current = ''
   }
 
   const downloadExecutionSnapshot = () => {
@@ -1441,7 +1716,10 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       return
     }
     setLoading(true)
+    setSubmitPhase('submitting_waiting_input')
     setError('')
+    waitingResumeNodeIdRef.current = execution.waitingInput.nodeId
+    collapseNodePanel(execution.waitingInput.nodeId)
     try {
       const headers: Record<string, string> = { 'content-type': 'application/json' }
       const token = resolveAuthToken()
@@ -1456,8 +1734,9 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
           input: waitingValidation.normalized,
         }),
       })
-      const payload = await response.json() as { data?: WorkflowExecution; message?: string; error?: string }
+      const payload = await readWorkflowExecutionPayload(response)
       if (response.status === 401) {
+        setSubmitPhase('')
         router.push('/?redirect=/app/workflow')
         return
       }
@@ -1467,10 +1746,12 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       setExecution(executionData)
     }
     catch (requestError) {
+      waitingResumeNodeIdRef.current = ''
       setError(requestError instanceof Error ? requestError.message : '提交输入失败')
     }
     finally {
       setLoading(false)
+      setSubmitPhase('')
     }
   }
 
@@ -1572,9 +1853,19 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 bg-white p-3">
+      <div className="workflow-run-scroll min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 bg-white p-3">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-gray-900">流程执行</div>
+          <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-gray-900">
+            <span className="shrink-0">流程执行</span>
+            {error && !execution && (
+              <span
+                className="min-w-0 truncate text-xs font-normal text-rose-600"
+                title={error}
+              >
+                {error}
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -1601,8 +1892,13 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         </div>
 
         {!execution && (
-          <div className="space-y-3 rounded border border-dashed border-gray-300 p-3">
+          <div ref={startFormRef} className="space-y-3 rounded border border-dashed border-gray-300 p-3">
             <div className="text-xs text-gray-600">开始/输入节点会在这里生成交互表单。填写后点击底部“提交并运行”。</div>
+            {!!submitPhase && (
+              <div className="rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                {submitPhase === 'checking_user_config' ? '正在检查运行配置，请稍候。' : '正在提交开始节点并启动流程，请稍候。'}
+              </div>
+            )}
             <DynamicForm fields={startFields} values={startInput} onChange={setStartInput} />
             <div className="flex justify-end pt-1">
               <button
@@ -1611,15 +1907,19 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                 disabled={loading}
                 className="rounded bg-violet-600 px-4 py-2 text-xs text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
-                {loading ? '运行中...' : '提交并运行'}
+                {getSubmitButtonText()}
               </button>
             </div>
           </div>
         )}
 
-        {error && <div className="mb-3 whitespace-pre-wrap rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        {executionViewPhase === 'bootstrapping' && (
+          <div className="mb-2 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+            流程已启动，正在进入首个执行节点，请稍候。
+          </div>
+        )}
 
-        {execution && visibleNodeIds.length === 0 && (
+        {execution && executionViewPhase !== 'bootstrapping' && visibleNodeIds.length === 0 && (
           <div className="rounded border border-dashed border-gray-300 p-3 text-xs text-gray-500">暂无执行节点。</div>
         )}
 
@@ -1628,17 +1928,26 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
             {visibleNodeIds.map((nodeId) => {
               const node = nodeMap.get(nodeId)
               const state = node ? execution.nodeStates[node.id] : undefined
-              if (!node || !state)
+              const runtimeState = state || (
+                executionViewPhase === 'bootstrapping' && node?.id === startNodeId
+                  ? {
+                      nodeId: node.id,
+                      status: 'running' as RuntimeNodeStatus,
+                    }
+                  : undefined
+              )
+              if (!node || !runtimeState)
                 return null
-              if (state.status === 'skipped')
+              if (runtimeState.status === 'skipped')
                 return null
               const panelOpen = openPanels[node.id] ?? false
-              const status = state.status
+              const status = runtimeState.status
               const rawNodeOutput = execution.variables[node.id]
               const nodeOutput = node.data.type === BlockEnum.End
                 ? buildEndConfiguredOutput(node, execution.variables, rawNodeOutput)
                 : rawNodeOutput
               const isWaitingCurrent = execution.waitingInput?.nodeId === node.id && status === 'waiting_input'
+              const showRunningIcon = shouldShowRunningIcon(node.data.type, status, activeNodeId, node.id)
               const nodeConfig: Record<string, unknown> = isObject(node.data.config) ? node.data.config : {}
               const waitingPrompt = (() => {
                 if (!isWaitingCurrent)
@@ -1659,12 +1968,28 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                   <button
                     type="button"
                     onClick={() => {
+                      autoOpenedNodeIdsRef.current.delete(node.id)
                       setOpenPanels(prev => ({ ...prev, [node.id]: !(prev[node.id] ?? false) }))
                       setFocusedNodeId(node.id)
                     }}
                     className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-gray-50"
                   >
-                    <div className="text-sm font-medium text-gray-800">{node.data.title}</div>
+                    <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-gray-800">
+                      {showRunningIcon && (
+                        <span className="inline-flex h-4 w-4 items-center justify-center text-blue-600" aria-label="运行中">
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                        </span>
+                      )}
+                      <span className="shrink-0">{node.data.title}</span>
+                      {runtimeState.error && (
+                        <span
+                          className="min-w-0 truncate text-xs font-normal text-rose-600"
+                          title={runtimeState.error}
+                        >
+                          {runtimeState.error}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2">
                       <span className={`rounded px-2 py-0.5 text-xs ${statusClassMap[status]}`}>{statusTextMap[status]}</span>
                       <span className="text-xs text-gray-500">{panelOpen ? '收起' : '展开'}</span>
@@ -1673,7 +1998,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
 
 	              {panelOpen && (
 	                    <div className="space-y-2 border-t border-gray-200 px-3 py-3">
-	                      {state.error && <div className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700">{state.error}</div>}
 
                       {node.data.type === 'http-request' && (
                         <>
@@ -1683,8 +2007,13 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                       )}
 
                   {isWaitingCurrent && (
-                        <div className="space-y-2 rounded border border-gray-200 bg-white p-2">
+                        <div ref={(el) => { waitingFormRefs.current[node.id] = el }} className="space-y-2 rounded border border-gray-200 bg-white p-2">
                           <div className="text-xs font-medium text-gray-800">节点等待输入，请提交后继续</div>
+                          {!!submitPhase && submitPhase === 'submitting_waiting_input' && (
+                            <div className="rounded border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-700">
+                              正在提交当前输入并继续执行，请稍候。
+                            </div>
+                          )}
                           {!!waitingPrompt && (
                             <div className="whitespace-pre-wrap rounded border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-800">
                               {waitingPrompt}
@@ -1698,7 +2027,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                               disabled={loading}
                               className="rounded bg-blue-600 px-4 py-2 text-xs text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
                             >
-                              {loading ? '提交中...' : '提交并继续'}
+                              {getWaitingSubmitButtonText()}
                             </button>
                           </div>
                         </div>

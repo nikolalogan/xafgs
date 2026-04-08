@@ -163,7 +163,7 @@ func (executor llmNodeExecutor) Execute(ctx context.Context, input NodeExecutorC
 		Messages:    messages,
 		Temperature: temperature,
 		MaxTokens:   maxTokens,
-		Timeout:     60 * time.Second,
+		Timeout:     -1,
 	})
 	if err != nil {
 		if ai.IsTimeoutError(err) {
@@ -237,13 +237,21 @@ func (codeNodeExecutor) Execute(_ context.Context, input NodeExecutorContext) (N
 		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "代码节点入参包含循环引用，无法执行"}, nil
 	}
 	safeInputMap := toObject(safeInput)
+	language := strings.ToLower(strings.TrimSpace(toString(input.Node.Data.Config["language"])))
+	if language == "" {
+		language = "javascript"
+	}
+	renderedCode, missing := renderCodeTemplateWithMissing(code, safeInputMap, language)
+	if len(missing) > 0 {
+		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "代码节点参数未解析：" + strings.Join(missing, "，")}, nil
+	}
 
 	vm := goja.New()
 	if err := vm.Set("input", safeInputMap); err != nil {
 		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: "代码执行失败"}, nil
 	}
 
-	script := code + "\n; (typeof main === 'function') ? main(input) : ({})"
+	script := renderedCode + "\n; (typeof main === 'function') ? main(input) : ({})"
 	value, err := vm.RunString(script)
 	if err != nil {
 		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: err.Error()}, nil
@@ -806,6 +814,125 @@ func renderTemplateWithMissing(value string, variables map[string]any) (string, 
 	}
 	sort.Strings(out)
 	return renderTemplate(value, variables), out
+}
+
+func renderCodeTemplateWithMissing(value string, variables map[string]any, language string) (string, []string) {
+	matches := templateRegexp.FindAllStringSubmatch(value, -1)
+	missing := map[string]bool{}
+	for _, match := range matches {
+		if len(match) != 2 {
+			continue
+		}
+		key := normalizeVariablePath(match[1])
+		if key == "" {
+			continue
+		}
+		resolved, found := getByPathWithFallback(variables, key)
+		if !found || !hasValue(resolved) {
+			missing[key] = true
+		}
+	}
+	out := make([]string, 0, len(missing))
+	for key := range missing {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	if len(out) > 0 {
+		return value, out
+	}
+
+	return templateRegexp.ReplaceAllStringFunc(value, func(full string) string {
+		match := templateRegexp.FindStringSubmatch(full)
+		if len(match) != 2 {
+			return full
+		}
+		key := normalizeVariablePath(match[1])
+		resolved, found := getByPathWithFallback(variables, key)
+		if !found {
+			return full
+		}
+		literal, err := encodeCodeLiteral(resolved, language)
+		if err != nil {
+			return full
+		}
+		return literal
+	}), nil
+}
+
+func encodeCodeLiteral(value any, language string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "python3":
+		return encodePythonLiteral(value)
+	default:
+		return encodeJSLiteral(value)
+	}
+}
+
+func encodeJSLiteral(value any) (string, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func encodePythonLiteral(value any) (string, error) {
+	switch typed := value.(type) {
+	case nil:
+		return "None", nil
+	case bool:
+		if typed {
+			return "True", nil
+		}
+		return "False", nil
+	case string:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return "", err
+		}
+		return string(raw), nil
+	case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return "", err
+		}
+		return string(raw), nil
+	case []any:
+		items := make([]string, 0, len(typed))
+		for _, item := range typed {
+			literal, err := encodePythonLiteral(item)
+			if err != nil {
+				return "", err
+			}
+			items = append(items, literal)
+		}
+		return "[" + strings.Join(items, ", ") + "]", nil
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		items := make([]string, 0, len(keys))
+		for _, key := range keys {
+			keyLiteral, err := encodePythonLiteral(key)
+			if err != nil {
+				return "", err
+			}
+			valueLiteral, err := encodePythonLiteral(typed[key])
+			if err != nil {
+				return "", err
+			}
+			items = append(items, fmt.Sprintf("%s: %s", keyLiteral, valueLiteral))
+		}
+		return "{" + strings.Join(items, ", ") + "}", nil
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return "", err
+		}
+		return string(raw), nil
+	}
 }
 
 func buildNodeWritebacks(mappings any, source any) []Writeback {

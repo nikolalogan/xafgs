@@ -27,7 +27,7 @@ export default function CodeTestModal({
   language,
   onClose,
 }: CodeTestModalProps) {
-  const [inputJSON, setInputJSON] = useState('{\n  "workflow": {}\n}')
+  const [inputJSON, setInputJSON] = useState('{\n  "start": {\n    "city": "杭州"\n  }\n}')
   const [runResult, setRunResult] = useState<{ ok: boolean; text: string } | null>(null)
   const [showCode, setShowCode] = useState(false)
 
@@ -64,12 +64,12 @@ export default function CodeTestModal({
             )}
           </div>
           <div className="space-y-1">
-            <label className="block text-xs text-gray-500">测试输入（JSON，会作为 main(input) 的 input）</label>
+            <label className="block text-xs text-gray-500">测试输入（JSON，会作为 <code>{'{{xxx}}'}</code> 模板变量上下文）</label>
             <textarea
               className="h-32 w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
               value={inputJSON}
               onChange={event => setInputJSON(event.target.value)}
-              placeholder='{"workflow":{}}'
+              placeholder='{"start":{"city":"杭州"}}'
             />
           </div>
           <div className="flex items-center gap-2">

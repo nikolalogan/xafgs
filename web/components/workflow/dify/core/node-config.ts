@@ -182,7 +182,7 @@ const defaultCodeConfig = (): CodeNodeConfig => ({
   joinMode: 'all',
   fanOutMode: 'sequential',
   language: 'javascript',
-  code: 'function main(input) {\n  return { result: input }\n}',
+  code: 'function main(input) {\n  return { result: {{start.input}} }\n}',
   outputSchema: '',
   writebackMappings: [],
   outputs: ['result'],

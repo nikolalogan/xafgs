@@ -199,6 +199,148 @@ func TestRuntime_JoinModeAll_AfterResume_KeepArrivedSources(t *testing.T) {
 	findEventIndex(t, resumedExecution.Events, "node.started", "join")
 }
 
+func TestRuntime_NodeFinishedEvent_AfterSuccess(t *testing.T) {
+	store := NewInMemoryExecutionStore()
+	runtime := NewRuntime(store)
+
+	dsl := WorkflowDSL{
+		Nodes: []WorkflowNode{
+			{ID: "start", Position: map[string]any{"x": 0, "y": 0}, Data: WorkflowNodeData{Title: "start", Type: "start", Config: map[string]any{}}},
+			{ID: "end", Position: map[string]any{"x": 100, "y": 0}, Data: WorkflowNodeData{Title: "end", Type: "end", Config: map[string]any{}}},
+		},
+		Edges: []WorkflowEdge{
+			{ID: "e-start-end", Source: "start", Target: "end"},
+		},
+	}
+
+	execution, err := runtime.Start(context.Background(), StartExecutionInput{
+		WorkflowDSL: dsl,
+		Input:       map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+
+	endSucceeded := findEventIndex(t, execution.Events, "node.succeeded", "end")
+	endFinished := findEventIndex(t, execution.Events, "node.finished", "end")
+	if endFinished <= endSucceeded {
+		t.Fatalf("期望 node.finished 紧跟成功事件之后：endSucceeded=%d endFinished=%d", endSucceeded, endFinished)
+	}
+	event := findEvent(t, execution.Events, "node.finished", "end")
+	status, _ := event.Payload["status"].(string)
+	if status != string(NodeRunStatusSucceeded) {
+		t.Fatalf("期望 finished.status=%q，实际=%q", NodeRunStatusSucceeded, status)
+	}
+	if _, ok := event.Payload["endedAt"].(string); !ok {
+		t.Fatalf("期望 finished.endedAt 为字符串")
+	}
+}
+
+func TestRuntime_NodeFinishedEvent_AfterWaitingInput(t *testing.T) {
+	store := NewInMemoryExecutionStore()
+	runtime := NewRuntime(store)
+
+	dsl := WorkflowDSL{
+		Nodes: []WorkflowNode{
+			{ID: "start", Position: map[string]any{"x": 0, "y": 0}, Data: WorkflowNodeData{Title: "start", Type: "start", Config: map[string]any{}}},
+			{
+				ID:       "input",
+				Position: map[string]any{"x": 100, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "input",
+					Type:  "input",
+					Config: map[string]any{
+						"fields": []any{
+							map[string]any{
+								"name":     "confirm",
+								"label":    "确认",
+								"type":     "text",
+								"required": true,
+							},
+						},
+					},
+				},
+			},
+		},
+		Edges: []WorkflowEdge{
+			{ID: "e-start-input", Source: "start", Target: "input"},
+		},
+	}
+
+	execution, err := runtime.Start(context.Background(), StartExecutionInput{
+		WorkflowDSL: dsl,
+		Input:       map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	if execution.Status != ExecutionStatusWaitingInput {
+		t.Fatalf("期望 execution waiting_input，实际=%s", execution.Status)
+	}
+
+	waitingEvent := findEventIndex(t, execution.Events, "node.waiting_input", "input")
+	finishedEvent := findEventIndex(t, execution.Events, "node.finished", "input")
+	if finishedEvent <= waitingEvent {
+		t.Fatalf("期望 waiting_input 后立即追加 node.finished：waiting=%d finished=%d", waitingEvent, finishedEvent)
+	}
+	event := findEvent(t, execution.Events, "node.finished", "input")
+	status, _ := event.Payload["status"].(string)
+	if status != string(NodeRunStatusWaitingInput) {
+		t.Fatalf("期望 finished.status=%q，实际=%q", NodeRunStatusWaitingInput, status)
+	}
+}
+
+func TestRuntime_NodeFinishedEvent_AfterFailure(t *testing.T) {
+	store := NewInMemoryExecutionStore()
+	runtime := NewRuntime(store)
+
+	dsl := WorkflowDSL{
+		Nodes: []WorkflowNode{
+			{ID: "start", Position: map[string]any{"x": 0, "y": 0}, Data: WorkflowNodeData{Title: "start", Type: "start", Config: map[string]any{}}},
+			{
+				ID:       "broken",
+				Position: map[string]any{"x": 100, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "broken",
+					Type:  "code",
+					Config: map[string]any{
+						"code":    "function main(input) { throw new Error('boom') }",
+						"outputs": []any{},
+					},
+				},
+			},
+		},
+		Edges: []WorkflowEdge{
+			{ID: "e-start-broken", Source: "start", Target: "broken"},
+		},
+	}
+
+	execution, err := runtime.Start(context.Background(), StartExecutionInput{
+		WorkflowDSL: dsl,
+		Input:       map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	if execution.Status != ExecutionStatusFailed {
+		t.Fatalf("期望 execution failed，实际=%s", execution.Status)
+	}
+
+	failedEvent := findEventIndex(t, execution.Events, "node.failed", "broken")
+	finishedEvent := findEventIndex(t, execution.Events, "node.finished", "broken")
+	if finishedEvent <= failedEvent {
+		t.Fatalf("期望 node.failed 后立即追加 node.finished：failed=%d finished=%d", failedEvent, finishedEvent)
+	}
+	event := findEvent(t, execution.Events, "node.finished", "broken")
+	status, _ := event.Payload["status"].(string)
+	if status != string(NodeRunStatusFailed) {
+		t.Fatalf("期望 finished.status=%q，实际=%q", NodeRunStatusFailed, status)
+	}
+	if _, ok := event.Payload["error"].(string); !ok {
+		t.Fatalf("期望 failed 场景下 finished.error 存在")
+	}
+}
+
 func findEventIndex(t *testing.T, events []ExecutionEvent, typ string, nodeID string) int {
 	t.Helper()
 	for idx, event := range events {
@@ -215,4 +357,22 @@ func findEventIndex(t *testing.T, events []ExecutionEvent, typ string, nodeID st
 	}
 	t.Fatalf("未找到事件 typ=%q nodeId=%q", typ, nodeID)
 	return -1
+}
+
+func findEvent(t *testing.T, events []ExecutionEvent, typ string, nodeID string) ExecutionEvent {
+	t.Helper()
+	for _, event := range events {
+		if event.Type != typ {
+			continue
+		}
+		if event.Payload == nil {
+			continue
+		}
+		id, _ := event.Payload["nodeId"].(string)
+		if id == nodeID {
+			return event
+		}
+	}
+	t.Fatalf("未找到事件 typ=%q nodeId=%q", typ, nodeID)
+	return ExecutionEvent{}
 }

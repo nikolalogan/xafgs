@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,8 @@ type Runtime struct {
 	store     ExecutionStorePort
 	aiClient  ai.ChatCompletionClient
 	executors map[string]NodeExecutor
+	asyncMu   sync.Mutex
+	running   map[string]bool
 }
 
 type RuntimeOption func(*Runtime)
@@ -39,7 +42,10 @@ func WithAIClient(client ai.ChatCompletionClient) RuntimeOption {
 }
 
 func NewRuntime(store ExecutionStorePort, options ...RuntimeOption) *Runtime {
-	runtime := &Runtime{store: store}
+	runtime := &Runtime{
+		store:   store,
+		running: map[string]bool{},
+	}
 	for _, option := range options {
 		if option == nil {
 			continue
@@ -51,6 +57,34 @@ func NewRuntime(store ExecutionStorePort, options ...RuntimeOption) *Runtime {
 }
 
 func (runtime *Runtime) Start(ctx context.Context, input StartExecutionInput) (WorkflowExecution, error) {
+	execution := runtime.buildExecution(input)
+	runtime.log(ctx, map[string]any{
+		"event":       "execution.started",
+		"requestId":   requestIDFromContext(ctx),
+		"executionId": execution.ID,
+	})
+
+	result := runtime.runUntilPauseOrEnd(ctx, execution, runOptions{})
+	_ = runtime.store.Save(result)
+	return result, nil
+}
+
+func (runtime *Runtime) StartAsync(ctx context.Context, input StartExecutionInput) (WorkflowExecution, error) {
+	execution := runtime.buildExecution(input)
+	runtime.log(ctx, map[string]any{
+		"event":       "execution.started",
+		"requestId":   requestIDFromContext(ctx),
+		"executionId": execution.ID,
+		"mode":        "async",
+	})
+	_ = runtime.store.Save(execution)
+	runtime.launchAsync(ctx, execution.ID, func(runCtx context.Context) WorkflowExecution {
+		return runtime.runUntilPauseOrEnd(runCtx, execution, runOptions{})
+	})
+	return execution, nil
+}
+
+func (runtime *Runtime) buildExecution(input StartExecutionInput) WorkflowExecution {
 	createdAt := NowISO()
 	plan := BuildExecutionPlan(input.WorkflowDSL)
 	nodeStates := map[string]ExecutionNodeState{}
@@ -76,15 +110,7 @@ func (runtime *Runtime) Start(ctx context.Context, input StartExecutionInput) (W
 		CreatedAt:       createdAt,
 		UpdatedAt:       createdAt,
 	}
-	runtime.log(ctx, map[string]any{
-		"event":       "execution.started",
-		"requestId":   requestIDFromContext(ctx),
-		"executionId": execution.ID,
-	})
-
-	result := runtime.runUntilPauseOrEnd(ctx, execution, runOptions{})
-	_ = runtime.store.Save(result)
-	return result, nil
+	return execution
 }
 
 func ensureReservedVariableRoots(target map[string]any, dsl WorkflowDSL) {
@@ -154,18 +180,44 @@ func applyDSLDefaults(target map[string]any, dsl WorkflowDSL) {
 }
 
 func (runtime *Runtime) Resume(ctx context.Context, input ResumeExecutionInput) (WorkflowExecution, error) {
-	execution, err := runtime.store.Get(input.ExecutionID)
+	next, options, err := runtime.prepareResumeExecution(ctx, input)
 	if err != nil {
 		return WorkflowExecution{}, err
 	}
+
+	result := runtime.runUntilPauseOrEnd(ctx, next, options)
+	_ = runtime.store.Save(result)
+	return result, nil
+}
+
+func (runtime *Runtime) ResumeAsync(ctx context.Context, input ResumeExecutionInput) (WorkflowExecution, error) {
+	next, options, err := runtime.prepareResumeExecution(ctx, input)
+	if err != nil {
+		return WorkflowExecution{}, err
+	}
+	if !runtime.markExecutionRunning(next.ID) {
+		return WorkflowExecution{}, errors.New("execution 正在运行，请稍后重试")
+	}
+	_ = runtime.store.Save(next)
+	runtime.launchMarkedAsync(ctx, next.ID, func(runCtx context.Context) WorkflowExecution {
+		return runtime.runUntilPauseOrEnd(runCtx, next, options)
+	})
+	return next, nil
+}
+
+func (runtime *Runtime) prepareResumeExecution(ctx context.Context, input ResumeExecutionInput) (WorkflowExecution, runOptions, error) {
+	execution, err := runtime.store.Get(input.ExecutionID)
+	if err != nil {
+		return WorkflowExecution{}, runOptions{}, err
+	}
 	if execution == nil {
-		return WorkflowExecution{}, errors.New("execution 不存在")
+		return WorkflowExecution{}, runOptions{}, errors.New("execution 不存在")
 	}
 	if execution.Status != ExecutionStatusWaitingInput {
-		return WorkflowExecution{}, errors.New("execution 当前不处于 waiting_input")
+		return WorkflowExecution{}, runOptions{}, errors.New("execution 当前不处于 waiting_input")
 	}
 	if execution.WaitingInput == nil || execution.WaitingInput.NodeID != input.NodeID {
-		return WorkflowExecution{}, errors.New("resume 节点不匹配")
+		return WorkflowExecution{}, runOptions{}, errors.New("resume 节点不匹配")
 	}
 
 	resumeInput := cloneMap(input.Input)
@@ -185,7 +237,7 @@ func (runtime *Runtime) Resume(ctx context.Context, input ResumeExecutionInput) 
 					"nodeId":      input.NodeID,
 					"error":       validateErr.Error(),
 				})
-				return WorkflowExecution{}, validateErr
+				return WorkflowExecution{}, runOptions{}, validateErr
 			}
 			resumeInput = normalized
 		}
@@ -196,6 +248,12 @@ func (runtime *Runtime) Resume(ctx context.Context, input ResumeExecutionInput) 
 	next.LifecycleEvents = append(next.LifecycleEvents, LifecycleEvent{Type: "RESUME"})
 	next.Status = StatusFromLifecycleEvents(next.LifecycleEvents)
 	next.UpdatedAt = NowISO()
+	if state, ok := next.NodeStates[input.NodeID]; ok {
+		state.Status = NodeRunStatusRunning
+		state.EndedAt = ""
+		state.Error = ""
+		next.NodeStates[input.NodeID] = state
+	}
 	next.Events = append(next.Events, ExecutionEvent{
 		ID:   uuid.NewString(),
 		Type: "execution.resumed",
@@ -211,12 +269,42 @@ func (runtime *Runtime) Resume(ctx context.Context, input ResumeExecutionInput) 
 		"nodeId":      input.NodeID,
 	})
 
-	result := runtime.runUntilPauseOrEnd(ctx, next, runOptions{
+	return next, runOptions{
 		ResumedNodeID: input.NodeID,
 		ResumedInput:  resumeInput,
-	})
-	_ = runtime.store.Save(result)
-	return result, nil
+	}, nil
+}
+
+func (runtime *Runtime) launchAsync(ctx context.Context, executionID string, run func(context.Context) WorkflowExecution) {
+	if !runtime.markExecutionRunning(executionID) {
+		return
+	}
+	runtime.launchMarkedAsync(ctx, executionID, run)
+}
+
+func (runtime *Runtime) launchMarkedAsync(ctx context.Context, executionID string, run func(context.Context) WorkflowExecution) {
+	go func() {
+		defer runtime.unmarkExecutionRunning(executionID)
+		runCtx := context.WithoutCancel(ctx)
+		result := run(runCtx)
+		_ = runtime.store.Save(result)
+	}()
+}
+
+func (runtime *Runtime) markExecutionRunning(executionID string) bool {
+	runtime.asyncMu.Lock()
+	defer runtime.asyncMu.Unlock()
+	if runtime.running[executionID] {
+		return false
+	}
+	runtime.running[executionID] = true
+	return true
+}
+
+func (runtime *Runtime) unmarkExecutionRunning(executionID string) {
+	runtime.asyncMu.Lock()
+	defer runtime.asyncMu.Unlock()
+	delete(runtime.running, executionID)
 }
 
 func (runtime *Runtime) Get(_ context.Context, executionID string) (*WorkflowExecution, error) {
@@ -351,6 +439,32 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 	}
 	seedArrivedFromHistory()
 
+	appendNodeFinishedEvent := func(nodeID string, status NodeRunStatus, endedAt string, errText string) {
+		payload := map[string]any{
+			"nodeId":  nodeID,
+			"status":  string(status),
+			"endedAt": endedAt,
+		}
+		if strings.TrimSpace(errText) != "" {
+			payload["error"] = errText
+		}
+		next.Events = append(next.Events, ExecutionEvent{
+			ID:      uuid.NewString(),
+			Type:    "node.finished",
+			At:      NowISO(),
+			Payload: payload,
+		})
+		runtime.log(ctx, map[string]any{
+			"event":       "node.finished",
+			"requestId":   requestIDFromContext(ctx),
+			"executionId": next.ID,
+			"nodeId":      nodeID,
+			"status":      status,
+			"endedAt":     endedAt,
+			"error":       errText,
+		})
+	}
+
 	enqueue := func(nodeID string) {
 		if strings.TrimSpace(nodeID) == "" || pushed[nodeID] {
 			return
@@ -464,6 +578,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			case NodeExecutorResultWaitingInput:
 				waitingState := next.NodeStates[nodeID]
 				waitingState.Status = NodeRunStatusWaitingInput
+				waitingState.EndedAt = NowISO()
 				next.NodeStates[nodeID] = waitingState
 			next.WaitingInput = &ExecutionWaitingInput{
 				NodeID:    nodeID,
@@ -487,6 +602,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"executionId": next.ID,
 					"nodeId":      nodeID,
 				})
+				appendNodeFinishedEvent(nodeID, waitingState.Status, waitingState.EndedAt, "")
 				return next
 
 			case NodeExecutorResultBranch:
@@ -513,6 +629,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"handleId":    result.HandleID,
 					"branchName":  result.BranchName,
 				})
+				appendNodeFinishedEvent(nodeID, succeededState.Status, succeededState.EndedAt, "")
 				outgoing := outgoingEdgesMap[nodeID]
 				nextEdges := orderFanOutEdges(node, selectIfElseNextEdges(outgoing, result.HandleID), nodeMap)
 				for _, edge := range nextEdges {
@@ -548,6 +665,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"error":       result.Error,
 					"durationMs":  nodeDurationMs(state.StartedAt, failedState.EndedAt),
 				})
+				appendNodeFinishedEvent(nodeID, failedState.Status, failedState.EndedAt, result.Error)
 				return next
 
 			default:
@@ -628,6 +746,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"nodeId":      nodeID,
 					"durationMs":  nodeDurationMs(state.StartedAt, succeededState.EndedAt),
 				})
+				appendNodeFinishedEvent(nodeID, succeededState.Status, succeededState.EndedAt, "")
 				nextEdges := orderFanOutEdges(node, outgoingEdgesMap[nodeID], nodeMap)
 				for _, edge := range nextEdges {
 					markArrived(edge.Target, nodeID)

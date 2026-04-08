@@ -87,3 +87,77 @@ func TestCodeExecutor_FailsWhenInputContainsCycle(t *testing.T) {
 	}
 }
 
+func TestCodeExecutor_SupportsTemplateVariables(t *testing.T) {
+	executor := codeNodeExecutor{}
+	node := WorkflowNode{
+		ID: "node-code",
+		Data: WorkflowNodeData{
+			Type: "code",
+			Config: map[string]any{
+				"language": "javascript",
+				"code": "function main(input) { return { city: {{start.city}}, score: {{http-1.body.score}}, tags: {{workflow.tags}} } }",
+			},
+		},
+	}
+
+	result, err := executor.Execute(context.Background(), NodeExecutorContext{
+		Node: node,
+		Variables: map[string]any{
+			"start": map[string]any{
+				"city": "杭州",
+			},
+			"http-1": map[string]any{
+				"body": map[string]any{
+					"score": 88,
+				},
+			},
+			"workflow": map[string]any{
+				"tags": []any{"A", "B"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("执行器返回错误：%v", err)
+	}
+	if result.Type != NodeExecutorResultSuccess {
+		t.Fatalf("期望成功，实际=%s，错误=%s", result.Type, result.Error)
+	}
+	if got := result.Output["city"]; got != "杭州" {
+		t.Fatalf("city 错误，期望=杭州，实际=%v", got)
+	}
+	if got := result.Output["score"]; got != float64(88) {
+		t.Fatalf("score 错误，期望=88，实际=%v", got)
+	}
+	tags, ok := result.Output["tags"].([]any)
+	if !ok || len(tags) != 2 {
+		t.Fatalf("tags 错误，实际=%#v", result.Output["tags"])
+	}
+}
+
+func TestCodeExecutor_FailsWhenTemplateVariableMissing(t *testing.T) {
+	executor := codeNodeExecutor{}
+	node := WorkflowNode{
+		ID: "node-code",
+		Data: WorkflowNodeData{
+			Type: "code",
+			Config: map[string]any{
+				"language": "javascript",
+				"code": "function main(input) { return { city: {{start.city}} } }",
+			},
+		},
+	}
+
+	result, err := executor.Execute(context.Background(), NodeExecutorContext{
+		Node:      node,
+		Variables: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("执行器返回错误：%v", err)
+	}
+	if result.Type != NodeExecutorResultFailed {
+		t.Fatalf("期望失败，实际=%s", result.Type)
+	}
+	if result.Error != "代码节点参数未解析：start.city" {
+		t.Fatalf("错误信息不符合预期，实际=%s", result.Error)
+	}
+}

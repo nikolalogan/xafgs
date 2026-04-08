@@ -175,9 +175,9 @@ func normalizeWorkflowCodeGenerateRequest(request WorkflowCodeGenerateRequest) (
 func buildSystemPrompt(request WorkflowCodeGenerateRequest) string {
 	if request.TargetType == "code" {
 		if request.Language == "python3" {
-			return "你是工作流 Python3 代码生成器。严格只输出可直接粘贴执行的 Python 代码，不要 Markdown、不要解释。必须定义 def main(input): 并返回 dict。"
+			return "你是工作流 Python3 代码生成器。严格只输出可直接粘贴执行的 Python 代码，不要 Markdown、不要解释。必须定义 def main(input): 并返回 dict。代码中读取变量时必须使用 {{node.field}} 占位符，不要使用 input.xxx。"
 		}
-		return "你是工作流 JavaScript 代码生成器。严格只输出可直接粘贴执行的 JavaScript 代码，不要 Markdown、不要解释。必须定义 function main(input) 并返回对象。"
+		return "你是工作流 JavaScript 代码生成器。严格只输出可直接粘贴执行的 JavaScript 代码，不要 Markdown、不要解释。必须定义 function main(input) 并返回对象。代码中读取变量时必须使用 {{node.field}} 占位符，不要使用 input.xxx。"
 	}
 	return "你是工作流规则代码生成器。严格只输出 JavaScript 规则代码，不要 Markdown、不要解释。代码必须返回布尔值。"
 }
@@ -225,9 +225,9 @@ func buildUserPrompt(request WorkflowCodeGenerateRequest) string {
 func buildRuleConstraints(request WorkflowCodeGenerateRequest) string {
 	if request.TargetType == "code" {
 		if request.Language == "python3" {
-			return "1) 仅输出 Python3 代码。\n2) 入口必须是 def main(input):。\n3) 返回值必须是 dict。\n4) 不要输出解释文本。"
+			return "1) 仅输出 Python3 代码。\n2) 入口必须是 def main(input):。\n3) 返回值必须是 dict。\n4) 变量引用必须使用 {{node.field}} 占位符，不要使用 input.xxx。\n5) 不要输出解释文本。"
 		}
-		return "1) 仅输出 JavaScript 代码。\n2) 入口必须是 function main(input) { ... }。\n3) 返回值必须是对象。\n4) 不要输出解释文本。"
+		return "1) 仅输出 JavaScript 代码。\n2) 入口必须是 function main(input) { ... }。\n3) 返回值必须是对象。\n4) 变量引用必须使用 {{node.field}} 占位符，不要使用 input.xxx。\n5) 不要输出解释文本。"
 	}
 	if request.TargetType == "visibleWhen" {
 		return "1) 输出 JavaScript 规则代码。\n2) 必须 return true 或 false。\n3) 可通过 {{node.param}} 占位符读取变量。\n4) 不要输出解释文本。"

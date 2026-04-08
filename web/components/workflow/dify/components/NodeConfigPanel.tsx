@@ -1081,7 +1081,7 @@ export default function NodeConfigPanel({
 
     return (
       <div className="space-y-2 rounded border border-emerald-200 bg-emerald-50/40 p-2">
-        <div className="text-xs font-semibold text-emerald-800">结构字段配对（无需手写表达式）</div>
+        <div className="text-xs font-semibold text-emerald-800">结构字段配对</div>
         <div className="grid grid-cols-12 gap-2">
           <div className="col-span-12 md:col-span-4">
             <div className="mb-1 text-[11px] text-gray-600">配对模式</div>
@@ -1225,12 +1225,6 @@ export default function NodeConfigPanel({
           </button>
         </div>
         {!!errorText && <div className="text-xs text-rose-600">{errorText}</div>}
-        <div className="text-[11px] text-gray-500">
-          会自动生成 JSONata 表达式并写回，适合“a[].x 到 b[].y”或“a.x 到 b.y”的可视化配置。
-        </div>
-        <div className="text-[11px] text-gray-400">
-          若源字段包含子数组（如 <code>guarantor[].itName</code>），默认取首项并映射到同层目标字段。
-        </div>
       </div>
     )
   }
@@ -1800,9 +1794,7 @@ export default function NodeConfigPanel({
           </div>
         )}
         <div className="flex items-center justify-between gap-2">
-          <div className="text-[11px] text-gray-400">
-            支持 JSONata 表达式；targetPath 为空时会按“整包写回”模式解析表达式结果。
-          </div>
+      
           {showZoomButton && renderMappingZoomButton('code')}
         </div>
         {config.writebackMappings.map((mapping, index) => (
@@ -1919,6 +1911,7 @@ export default function NodeConfigPanel({
             defaultModel: defaultCodeModel,
           }}
         />
+     
         <div className="space-y-2 rounded border border-gray-200 p-2">
           <div className="text-xs font-semibold text-gray-700">输出写入参数</div>
           <label className={labelClass}>输出 JSON Schema（可选）</label>
@@ -2236,9 +2229,7 @@ export default function NodeConfigPanel({
           </div>
         )}
         <div className="flex items-center justify-between gap-2">
-          <div className="text-[11px] text-gray-400">
-            支持 JSONata 表达式；targetPath 为空时会按“整包写回”模式解析表达式结果。
-          </div>
+
           {showZoomButton && renderMappingZoomButton('http')}
         </div>
         {config.writebackMappings.map((mapping, index) => (
@@ -2880,9 +2871,7 @@ export default function NodeConfigPanel({
           </div>
         )}
         <div className="flex items-center justify-between gap-2">
-          <div className="text-[11px] text-gray-400">
-            支持 JSONata 表达式；targetPath 为空时会按“整包写回”模式解析表达式结果。
-          </div>
+
           {showZoomButton && renderMappingZoomButton('api')}
         </div>
         {config.writebackMappings.map((mapping, index) => (
@@ -3231,7 +3220,7 @@ export default function NodeConfigPanel({
           <option value="all">等待全部上游（all）</option>
           <option value="any">任一上游到达即执行（any）</option>
         </select>
-        <div className="text-[11px] text-gray-400">仅当当前节点存在多条输入连线时生效。</div>
+
       </div>
     )
   }
@@ -3262,7 +3251,7 @@ export default function NodeConfigPanel({
           <option value="sequential">顺序执行（sequential）</option>
           <option value="parallel">并行执行（parallel）</option>
         </select>
-        <div className="text-[11px] text-gray-400">仅当当前节点存在多个后续节点时生效。顺序模式按画布坐标（x→y）执行。</div>
+       
       </div>
     )
   }
