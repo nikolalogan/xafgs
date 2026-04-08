@@ -13,6 +13,7 @@ import (
 type WorkflowService interface {
 	GetByID(ctx context.Context, workflowID int64) (model.WorkflowDetailDTO, *model.APIError)
 	GetDraftDSLByID(ctx context.Context, workflowID int64) (json.RawMessage, *model.APIError)
+	GetPublishedDSLByID(ctx context.Context, workflowID int64) (json.RawMessage, *model.APIError)
 	List(ctx context.Context) ([]model.WorkflowDTO, *model.APIError)
 	ListVersions(ctx context.Context, workflowID int64) ([]model.WorkflowVersionDTO, *model.APIError)
 	Create(ctx context.Context, request model.CreateWorkflowRequest) (model.WorkflowDTO, *model.APIError)
@@ -45,6 +46,14 @@ func (service *workflowService) GetDraftDSLByID(_ context.Context, workflowID in
 	dsl, ok := service.workflowRepository.FindDraftDSLByWorkflowID(workflowID)
 	if !ok {
 		return nil, model.NewAPIError(404, response.CodeNotFound, "工作流不存在")
+	}
+	return dsl, nil
+}
+
+func (service *workflowService) GetPublishedDSLByID(_ context.Context, workflowID int64) (json.RawMessage, *model.APIError) {
+	dsl, ok := service.workflowRepository.FindPublishedDSLByWorkflowID(workflowID)
+	if !ok {
+		return nil, model.NewAPIError(400, response.CodeBadRequest, "工作流尚未发布，请先发布后再运行")
 	}
 	return dsl, nil
 }

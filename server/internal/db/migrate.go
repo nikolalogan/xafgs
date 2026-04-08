@@ -145,6 +145,8 @@ CREATE INDEX IF NOT EXISTS idx_upload_session_status_expires_at ON upload_sessio
 CREATE TABLE IF NOT EXISTS region (
   id BIGSERIAL PRIMARY KEY,
   admin_code VARCHAR(64) NOT NULL UNIQUE,
+  region_code VARCHAR(64),
+  region_name VARCHAR(128),
   overview TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -423,6 +425,12 @@ func Migrate(ctx context.Context, conn *sql.DB) error {
 INSERT INTO region (admin_code, overview, created_at, updated_at, created_by, updated_by)
 VALUES ('000000', '默认区域', NOW(), NOW(), 1, 1)
 ON CONFLICT (admin_code) DO NOTHING;
+
+ALTER TABLE region
+ADD COLUMN IF NOT EXISTS region_code VARCHAR(64);
+ALTER TABLE region
+ADD COLUMN IF NOT EXISTS region_name VARCHAR(128);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_region_region_code_unique ON region(region_code) WHERE region_code IS NOT NULL;
 
 ALTER TABLE region_economy
 DROP COLUMN IF EXISTS gdp_rank_province;

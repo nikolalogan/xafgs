@@ -230,6 +230,8 @@ enterprise (id)
 | --- | --- | --- | --- |
 | `id` | `BIGSERIAL` | 主键 | 区域主键 ID |
 | `admin_code` | `VARCHAR(64)` | `NOT NULL UNIQUE` | 行政区划代码 |
+| `region_code` | `VARCHAR(64)` | 可空，唯一索引（非空唯一） | 业务区域编码 |
+| `region_name` | `VARCHAR(128)` | 可空 | 区域名称 |
 | `overview` | `TEXT` | `NOT NULL DEFAULT ''` | 区域概述 |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | 创建时间 |
 | `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | 更新时间 |

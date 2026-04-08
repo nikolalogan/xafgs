@@ -3,6 +3,8 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -95,10 +97,23 @@ func NewApp() (*fiber.App, Config) {
 	chatRepository := repository.NewChatRepository()
 	authRepository := repository.NewAuthRepository(cfg.APIToken)
 
-	if result, ok, err := db.OpenFromEnv(); err == nil && ok {
+	dsnConfigured := strings.TrimSpace(os.Getenv("DATABASE_URL")) != ""
+	result, ok, err := db.OpenFromEnv()
+	if dsnConfigured && (err != nil || !ok) {
+		panic(fmt.Sprintf("DATABASE_URL 已配置，但连接 PostgreSQL 失败: %v", err))
+	}
+	if err != nil {
+		log.Printf("OpenFromEnv 失败，降级为内存仓储: %v", err)
+	}
+	if ok {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := db.Migrate(ctx, result.DB); err == nil {
+		if err := db.Migrate(ctx, result.DB); err != nil {
+			if dsnConfigured {
+				panic(fmt.Sprintf("PostgreSQL 迁移失败: %v", err))
+			}
+			log.Printf("PostgreSQL 迁移失败，降级为内存仓储: %v", err)
+		} else {
 			userRepository = repository.NewPostgresUserRepository(result.DB)
 			systemConfigRepository = repository.NewPostgresSystemConfigRepository(result.DB)
 			userConfigRepository = repository.NewPostgresUserConfigRepository(result.DB)
@@ -108,7 +123,9 @@ func NewApp() (*fiber.App, Config) {
 			fileRepository = repository.NewPostgresFileRepository(result.DB)
 			templateRepository = repository.NewPostgresTemplateRepository(result.DB)
 			chatRepository = repository.NewPostgresChatRepository(result.DB)
-			_ = db.Seed(ctx, result.DB)
+			if err := db.Seed(ctx, result.DB); err != nil {
+				log.Printf("PostgreSQL Seed 失败: %v", err)
+			}
 		}
 	}
 

@@ -120,13 +120,13 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
-	latestDraftDSL, apiError := handler.workflowService.GetDraftDSLByID(c.UserContext(), request.WorkflowID)
+	publishedDSL, apiError := handler.workflowService.GetPublishedDSLByID(c.UserContext(), request.WorkflowID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
-	dsl, err := workflowruntime.ParseWorkflowDSL(latestDraftDSL)
+	dsl, err := workflowruntime.ParseWorkflowDSL(publishedDSL)
 	if err != nil {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "当前工作流草稿 DSL 非法："+err.Error())
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "当前工作流已发布 DSL 非法："+err.Error())
 	}
 
 	startNode, ok := findStartNode(dsl.Nodes)
@@ -145,7 +145,7 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
-	if missing := detectMissingRequiredUserConfig(latestDraftDSL, userConfig); len(missing) > 0 {
+	if missing := detectMissingRequiredUserConfig(publishedDSL, userConfig); len(missing) > 0 {
 		labels := make([]string, 0, len(missing))
 		for _, item := range missing {
 			labels = append(labels, item.label)

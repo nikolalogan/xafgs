@@ -2,8 +2,10 @@ package model
 
 type Region struct {
 	BaseEntity
-	AdminCode string `json:"adminCode"`
-	Overview  string `json:"overview"`
+	AdminCode  string `json:"adminCode"`
+	RegionCode string `json:"regionCode"`
+	RegionName string `json:"regionName"`
+	Overview   string `json:"overview"`
 }
 
 type RegionEconomy struct {
@@ -39,9 +41,11 @@ type RegionRank struct {
 }
 
 type RegionDTO struct {
-	ID        int64  `json:"id"`
-	AdminCode string `json:"adminCode"`
-	Overview  string `json:"overview"`
+	ID         int64  `json:"id"`
+	AdminCode  string `json:"adminCode"`
+	RegionCode string `json:"regionCode"`
+	RegionName string `json:"regionName"`
+	Overview   string `json:"overview"`
 }
 
 type RegionDetailDTO struct {
@@ -64,18 +68,22 @@ type RegionPageResult struct {
 }
 
 type CreateRegionRequest struct {
-	AdminCode string          `json:"adminCode"`
-	Overview  string          `json:"overview"`
-	Economies []RegionEconomy `json:"economies"`
-	Ranks     []RegionRank    `json:"ranks"`
+	AdminCode  string          `json:"adminCode"`
+	RegionCode string          `json:"regionCode"`
+	RegionName string          `json:"regionName"`
+	Overview   string          `json:"overview"`
+	Economies  []RegionEconomy `json:"economies"`
+	Ranks      []RegionRank    `json:"ranks"`
 }
 
 type UpdateRegionRequest = CreateRegionRequest
 
 func (region Region) ToDTO() RegionDTO {
 	return RegionDTO{
-		ID:        region.ID,
-		AdminCode: region.AdminCode,
-		Overview:  region.Overview,
+		ID:         region.ID,
+		AdminCode:  region.AdminCode,
+		RegionCode: region.RegionCode,
+		RegionName: region.RegionName,
+		Overview:   region.Overview,
 	}
 }

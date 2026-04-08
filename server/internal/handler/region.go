@@ -37,26 +37,32 @@ type regionAdminCodeRequest struct {
 }
 
 type createRegionRequest struct {
-	AdminCode string                `json:"adminCode" validate:"required"`
-	Overview  string                `json:"overview"`
-	Economies []model.RegionEconomy `json:"economies"`
-	Ranks     []model.RegionRank    `json:"ranks"`
+	AdminCode  string                `json:"adminCode" validate:"required"`
+	RegionCode string                `json:"regionCode"`
+	RegionName string                `json:"regionName"`
+	Overview   string                `json:"overview"`
+	Economies  []model.RegionEconomy `json:"economies"`
+	Ranks      []model.RegionRank    `json:"ranks"`
 }
 
 type regionValidateConflictRequest struct {
 	ExcludeRegionID *int64                `json:"excludeRegionId" validate:"omitempty,min=1"`
 	AdminCode       string                `json:"adminCode" validate:"required"`
+	RegionCode      string                `json:"regionCode"`
+	RegionName      string                `json:"regionName"`
 	Overview        string                `json:"overview"`
 	Economies       []model.RegionEconomy `json:"economies"`
 	Ranks           []model.RegionRank    `json:"ranks"`
 }
 
 type updateRegionRequest struct {
-	RegionID  int64                 `path:"regionId" validate:"required,min=1"`
-	AdminCode string                `json:"adminCode" validate:"required"`
-	Overview  string                `json:"overview"`
-	Economies []model.RegionEconomy `json:"economies"`
-	Ranks     []model.RegionRank    `json:"ranks"`
+	RegionID   int64                 `path:"regionId" validate:"required,min=1"`
+	AdminCode  string                `json:"adminCode" validate:"required"`
+	RegionCode string                `json:"regionCode"`
+	RegionName string                `json:"regionName"`
+	Overview   string                `json:"overview"`
+	Economies  []model.RegionEconomy `json:"economies"`
+	Ranks      []model.RegionRank    `json:"ranks"`
 }
 
 type RegionHandler struct {
@@ -220,10 +226,12 @@ func (handler *RegionHandler) Create(c *fiber.Ctx, request *createRegionRequest)
 		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
 	}
 	result, apiError := handler.service.Create(c.UserContext(), model.CreateRegionRequest{
-		AdminCode: request.AdminCode,
-		Overview:  request.Overview,
-		Economies: request.Economies,
-		Ranks:     request.Ranks,
+		AdminCode:  request.AdminCode,
+		RegionCode: request.RegionCode,
+		RegionName: request.RegionName,
+		Overview:   request.Overview,
+		Economies:  request.Economies,
+		Ranks:      request.Ranks,
 	}, operatorID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
@@ -237,10 +245,12 @@ func (handler *RegionHandler) Update(c *fiber.Ctx, request *updateRegionRequest)
 		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
 	}
 	result, apiError := handler.service.Update(c.UserContext(), request.RegionID, model.UpdateRegionRequest{
-		AdminCode: request.AdminCode,
-		Overview:  request.Overview,
-		Economies: request.Economies,
-		Ranks:     request.Ranks,
+		AdminCode:  request.AdminCode,
+		RegionCode: request.RegionCode,
+		RegionName: request.RegionName,
+		Overview:   request.Overview,
+		Economies:  request.Economies,
+		Ranks:      request.Ranks,
 	}, operatorID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
@@ -306,10 +316,12 @@ func (handler *RegionHandler) DeleteEconomy(c *fiber.Ctx, request *economyIDPath
 
 func (handler *RegionHandler) ValidateConflict(c *fiber.Ctx, request *regionValidateConflictRequest) error {
 	result, apiError := handler.service.ValidateConflict(c.UserContext(), model.CreateRegionRequest{
-		AdminCode: request.AdminCode,
-		Overview:  request.Overview,
-		Economies: request.Economies,
-		Ranks:     request.Ranks,
+		AdminCode:  request.AdminCode,
+		RegionCode: request.RegionCode,
+		RegionName: request.RegionName,
+		Overview:   request.Overview,
+		Economies:  request.Economies,
+		Ranks:      request.Ranks,
 	}, request.ExcludeRegionID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)

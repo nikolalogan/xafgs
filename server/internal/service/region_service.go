@@ -76,8 +76,10 @@ func (service *regionService) Create(_ context.Context, request model.CreateRegi
 			BaseEntity: model.BaseEntity{
 				UpdatedBy: operatorID,
 			},
-			AdminCode: request.AdminCode,
-			Overview:  request.Overview,
+			AdminCode:  request.AdminCode,
+			RegionCode: request.RegionCode,
+			RegionName: request.RegionName,
+			Overview:   request.Overview,
 		}, request.Economies, request.Ranks)
 		if !ok {
 			return model.RegionDetailDTO{}, model.NewAPIError(500, response.CodeInternal, "更新区域失败")
@@ -89,8 +91,10 @@ func (service *regionService) Create(_ context.Context, request model.CreateRegi
 			CreatedBy: operatorID,
 			UpdatedBy: operatorID,
 		},
-		AdminCode: request.AdminCode,
-		Overview:  request.Overview,
+		AdminCode:  request.AdminCode,
+		RegionCode: request.RegionCode,
+		RegionName: request.RegionName,
+		Overview:   request.Overview,
 	}, request.Economies, request.Ranks)
 	if created.ID <= 0 {
 		return model.RegionDetailDTO{}, model.NewAPIError(500, response.CodeInternal, "创建区域失败")
@@ -110,8 +114,10 @@ func (service *regionService) Update(_ context.Context, regionID int64, request 
 		BaseEntity: model.BaseEntity{
 			UpdatedBy: operatorID,
 		},
-		AdminCode: request.AdminCode,
-		Overview:  request.Overview,
+		AdminCode:  request.AdminCode,
+		RegionCode: request.RegionCode,
+		RegionName: request.RegionName,
+		Overview:   request.Overview,
 	}, request.Economies, request.Ranks)
 	if !ok {
 		return model.RegionDetailDTO{}, model.NewAPIError(404, response.CodeNotFound, "区域不存在")
@@ -242,6 +248,8 @@ func (service *regionService) DeleteRank(_ context.Context, regionID int64, rank
 
 func normalizeRegionRequest(request model.CreateRegionRequest) model.CreateRegionRequest {
 	request.AdminCode = strings.TrimSpace(request.AdminCode)
+	request.RegionCode = strings.TrimSpace(request.RegionCode)
+	request.RegionName = strings.TrimSpace(request.RegionName)
 	request.Overview = strings.TrimSpace(request.Overview)
 	sort.Slice(request.Economies, func(i, j int) bool {
 		return request.Economies[i].Year < request.Economies[j].Year
@@ -278,10 +286,12 @@ func normalizeRankRequest(request model.RegionRank) (model.RegionRank, *model.AP
 
 func regionDetailToCreateRequest(detail model.RegionDetailDTO) model.CreateRegionRequest {
 	return model.CreateRegionRequest{
-		AdminCode: detail.AdminCode,
-		Overview:  detail.Overview,
-		Economies: detail.Economies,
-		Ranks:     detail.Ranks,
+		AdminCode:  detail.AdminCode,
+		RegionCode: detail.RegionCode,
+		RegionName: detail.RegionName,
+		Overview:   detail.Overview,
+		Economies:  detail.Economies,
+		Ranks:      detail.Ranks,
 	}
 }
 

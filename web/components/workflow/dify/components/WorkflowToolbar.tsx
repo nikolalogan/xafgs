@@ -59,7 +59,7 @@ export default function WorkflowToolbar({
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="mr-2 text-sm font-semibold text-gray-900">Dify Workflow（迁移进行中）</div>
+        <div className="mr-2 text-sm font-semibold text-gray-900"></div>
         {toolbarNodeButtons.map(item => (
           <button
             key={item.type}

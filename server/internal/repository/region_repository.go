@@ -45,8 +45,10 @@ func NewRegionRepository() RegionRepository {
 			CreatedBy: 1,
 			UpdatedBy: 1,
 		},
-		AdminCode: "000000",
-		Overview:  "默认区域",
+		AdminCode:  "000000",
+		RegionCode: "",
+		RegionName: "",
+		Overview:   "默认区域",
 	}
 	return &regionRepository{
 		regions: map[int64]model.Region{
@@ -94,7 +96,10 @@ func (repository *regionRepository) FindPage(query model.RegionListQuery) model.
 	filtered := make([]model.RegionDTO, 0, len(repository.regions))
 	for _, region := range repository.regions {
 		if keyword != "" {
-			if !strings.Contains(strings.ToLower(region.AdminCode), keyword) && !strings.Contains(strings.ToLower(region.Overview), keyword) {
+			if (!strings.Contains(strings.ToLower(region.AdminCode), keyword)) &&
+				(!strings.Contains(strings.ToLower(region.RegionCode), keyword)) &&
+				(!strings.Contains(strings.ToLower(region.RegionName), keyword)) &&
+				(!strings.Contains(strings.ToLower(region.Overview), keyword)) {
 				continue
 			}
 		}
@@ -171,6 +176,8 @@ func (repository *regionRepository) Update(regionID int64, region model.Region, 
 		return model.RegionDetailDTO{}, false
 	}
 	existing.AdminCode = region.AdminCode
+	existing.RegionCode = region.RegionCode
+	existing.RegionName = region.RegionName
 	existing.Overview = region.Overview
 	existing.UpdatedBy = region.UpdatedBy
 	existing.UpdatedAt = time.Now().UTC()

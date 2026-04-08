@@ -212,6 +212,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       setWorkflows([])
       return
     }
+    if (pathname.startsWith('/app/workflows'))
+      return
 
     const token = (window.localStorage.getItem('sxfg_access_token')
       || window.localStorage.getItem('access_token')
@@ -244,7 +246,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       }
     }
     run()
-  }, [role])
+  }, [role, pathname])
 
   const workflowChildren = useMemo(() => {
     const safeWorkflows = Array.isArray(workflows) ? workflows : []

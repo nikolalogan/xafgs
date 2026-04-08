@@ -24,12 +24,14 @@ func (repository *PostgresRegionRepository) FindByID(regionID int64) (model.Regi
 
 	var region model.Region
 	err := repository.db.QueryRowContext(ctx, `
-SELECT id, admin_code, overview, created_at, updated_at, created_by, updated_by
+SELECT id, admin_code, COALESCE(region_code, ''), COALESCE(region_name, ''), overview, created_at, updated_at, created_by, updated_by
 FROM region
 WHERE id = $1
 `, regionID).Scan(
 		&region.ID,
 		&region.AdminCode,
+		&region.RegionCode,
+		&region.RegionName,
 		&region.Overview,
 		&region.CreatedAt,
 		&region.UpdatedAt,
@@ -84,7 +86,7 @@ func (repository *PostgresRegionRepository) FindPage(query model.RegionListQuery
 	args := make([]any, 0)
 	argIndex := 1
 	if strings.TrimSpace(query.Keyword) != "" {
-		conditions = append(conditions, "(admin_code ILIKE $"+strconv.Itoa(argIndex)+" OR overview ILIKE $"+strconv.Itoa(argIndex)+")")
+		conditions = append(conditions, "(admin_code ILIKE $"+strconv.Itoa(argIndex)+" OR region_code ILIKE $"+strconv.Itoa(argIndex)+" OR region_name ILIKE $"+strconv.Itoa(argIndex)+" OR overview ILIKE $"+strconv.Itoa(argIndex)+")")
 		args = append(args, "%"+strings.TrimSpace(query.Keyword)+"%")
 		argIndex++
 	}
@@ -98,7 +100,7 @@ func (repository *PostgresRegionRepository) FindPage(query model.RegionListQuery
 	listArgs := append([]any{}, args...)
 	listArgs = append(listArgs, query.PageSize, (query.Page-1)*query.PageSize)
 	rows, err := repository.db.QueryContext(ctx, `
-SELECT id, admin_code, overview
+SELECT id, admin_code, COALESCE(region_code, ''), COALESCE(region_name, ''), overview
 FROM region
 WHERE `+whereClause+`
 ORDER BY id DESC
@@ -111,7 +113,7 @@ LIMIT $`+strconv.Itoa(argIndex)+` OFFSET $`+strconv.Itoa(argIndex+1), listArgs..
 	items := make([]model.RegionDTO, 0)
 	for rows.Next() {
 		var row model.RegionDTO
-		if err := rows.Scan(&row.ID, &row.AdminCode, &row.Overview); err == nil {
+		if err := rows.Scan(&row.ID, &row.AdminCode, &row.RegionCode, &row.RegionName, &row.Overview); err == nil {
 			items = append(items, row)
 		}
 	}
@@ -138,10 +140,10 @@ func (repository *PostgresRegionRepository) Create(region model.Region, economie
 	region.CreatedAt = now
 	region.UpdatedAt = now
 	err = tx.QueryRowContext(ctx, `
-INSERT INTO region (admin_code, overview, created_at, updated_at, created_by, updated_by)
-VALUES ($1, $2, $3, $3, $4, $4)
+INSERT INTO region (admin_code, region_code, region_name, overview, created_at, updated_at, created_by, updated_by)
+VALUES ($1, $2, $3, $4, $5, $5, $6, $6)
 RETURNING id
-`, region.AdminCode, region.Overview, now, region.CreatedBy).Scan(&region.ID)
+`, region.AdminCode, region.RegionCode, region.RegionName, region.Overview, now, region.CreatedBy).Scan(&region.ID)
 	if err != nil {
 		return model.RegionDetailDTO{}
 	}
@@ -180,9 +182,9 @@ func (repository *PostgresRegionRepository) Update(regionID int64, region model.
 	now := time.Now().UTC()
 	result, err := tx.ExecContext(ctx, `
 UPDATE region
-SET admin_code = $2, overview = $3, updated_at = $4, updated_by = $5
+SET admin_code = $2, region_code = $3, region_name = $4, overview = $5, updated_at = $6, updated_by = $7
 WHERE id = $1
-`, regionID, region.AdminCode, region.Overview, now, region.UpdatedBy)
+`, regionID, region.AdminCode, region.RegionCode, region.RegionName, region.Overview, now, region.UpdatedBy)
 	if err != nil {
 		return model.RegionDetailDTO{}, false
 	}

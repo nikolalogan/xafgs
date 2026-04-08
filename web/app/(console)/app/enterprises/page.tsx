@@ -66,6 +66,8 @@ type EnterpriseFormValues = {
 type RegionDTO = {
   id: number
   adminCode: string
+  regionCode?: string
+  regionName?: string
   overview: string
 }
 
@@ -269,13 +271,13 @@ export default function EnterprisesPage() {
   }), [page, pageSize, total])
 
   const regionOptions = useMemo(
-    () => regions.map(item => ({ label: `${item.adminCode} - ${item.overview || '未命名区域'}`, value: item.id })),
+    () => regions.map(item => ({ label: `${item.regionName || item.overview || '未命名区域'}（${item.regionCode || item.adminCode}）`, value: item.id })),
     [regions],
   )
   const regionLabelMap = useMemo(() => {
     const out = new Map<number, string>()
     for (const region of regions)
-      out.set(region.id, `${region.adminCode}`)
+      out.set(region.id, `${region.regionName || region.overview || '未命名区域'}（${region.regionCode || region.adminCode}）`)
     return out
   }, [regions])
 

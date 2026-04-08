@@ -462,7 +462,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const [nodeOutputExpandedById, setNodeOutputExpandedById] = useState<Record<string, boolean>>({})
   const iframeResizeObserversRef = useRef<Record<string, ResizeObserver>>({})
   const executionPollingIdRef = useRef<string>('')
-  const executionHydratedRef = useRef(false)
 
   const injectNoScrollStyleForIframe = (rawHtml: string) => {
     const style = `
@@ -537,16 +536,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     if (cached)
       setAuthToken(cached)
   }, [])
-
-  useEffect(() => {
-    if (!execution || typeof window === 'undefined')
-      return
-    window.localStorage.setItem('workflow_last_execution', JSON.stringify({
-      id: execution.id,
-      status: execution.status,
-      updatedAt: execution.updatedAt,
-    }))
-  }, [execution])
 
   useEffect(() => {
     const nextInput: Record<string, unknown> = {}
@@ -701,52 +690,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
 
     return () => window.clearInterval(timer)
   }, [executedNodeSequence, execution?.id, execution?.updatedAt])
-
-  useEffect(() => {
-    if (executionHydratedRef.current)
-      return
-    executionHydratedRef.current = true
-    if (typeof window === 'undefined')
-      return
-
-    const raw = window.localStorage.getItem('workflow_last_execution')
-    if (!raw)
-      return
-
-    let cachedId = ''
-    try {
-      const parsed = JSON.parse(raw) as { id?: unknown }
-      cachedId = typeof parsed?.id === 'string' ? parsed.id.trim() : ''
-    }
-    catch {
-      cachedId = ''
-    }
-    if (!cachedId)
-      return
-
-    const token = resolveAuthToken()
-    const headers: Record<string, string> = { 'content-type': 'application/json' }
-    if (token)
-      headers.Authorization = `Bearer ${token}`
-
-    void (async () => {
-      try {
-        const response = await fetch(`/api/workflow/executions/${cachedId}`, {
-          method: 'GET',
-          credentials: 'include',
-          headers,
-        })
-        if (response.status === 401)
-          return
-        const payload = await response.json() as { data?: WorkflowExecution }
-        if (!response.ok || !payload.data)
-          return
-        setExecution(payload.data)
-      }
-      catch {
-      }
-    })()
-  }, [authToken])
 
   useEffect(() => {
     if (!execution?.id || execution.status !== 'running') {
