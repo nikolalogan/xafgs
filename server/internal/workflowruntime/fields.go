@@ -14,6 +14,8 @@ type DynamicField struct {
 	Required     bool
 	Options      []DynamicOption
 	DefaultValue any
+	VisibleWhen  string
+	ValidateWhen string
 }
 
 type DynamicOption struct {
@@ -75,6 +77,8 @@ func BuildInputSchema(fields []DynamicField, prompt string) map[string]any {
 			"required":     field.Required,
 			"options":      options,
 			"defaultValue": defaultValue,
+			"visibleWhen":  field.VisibleWhen,
+			"validateWhen": field.ValidateWhen,
 		})
 	}
 	return map[string]any{
@@ -168,6 +172,8 @@ func parseDynamicFields(raw []any) []DynamicField {
 		fieldType := normalizeFieldType(toString(entry["type"]))
 		required, _ := entry["required"].(bool)
 		defaultValue := entry["defaultValue"]
+		visibleWhen := strings.TrimSpace(toString(entry["visibleWhen"]))
+		validateWhen := strings.TrimSpace(toString(entry["validateWhen"]))
 
 		options := []DynamicOption{}
 		if rawOptions, ok := entry["options"].([]any); ok {
@@ -184,6 +190,8 @@ func parseDynamicFields(raw []any) []DynamicField {
 			Required:     required,
 			Options:      options,
 			DefaultValue: defaultValue,
+			VisibleWhen:  visibleWhen,
+			ValidateWhen: validateWhen,
 		})
 	}
 	return fields

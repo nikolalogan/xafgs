@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { runRule } from '../core/rule-engine'
+import { buildLocalRuleInputs, buildPreparedFields, evaluateDynamicFieldStates, evaluateDynamicFieldValidations, validateDynamicInput, type DynamicField } from '../core/dynamic-form-rules'
 import type { StartNodeConfig } from '../core/types'
 
 type StartFormPreviewModalProps = {
@@ -53,76 +53,17 @@ export default function StartFormPreviewModal({
     })
   }, [normalizedFields, open])
 
-  const toRuleRaw = (value: unknown): string => {
-    if (value === null || value === undefined)
-      return ''
-    if (typeof value === 'string')
-      return value
-    if (typeof value === 'number' || typeof value === 'boolean')
-      return String(value)
-    try {
-      return JSON.stringify(value)
-    }
-    catch {
-      return ''
-    }
-  }
-
-  const hasValue = (value: unknown) => {
-    if (value === null || value === undefined)
-      return false
-    if (typeof value === 'string')
-      return value.trim().length > 0
-    if (Array.isArray(value))
-      return value.length > 0
-    return true
-  }
+  const preparedFields = useMemo(() => {
+    return buildPreparedFields(normalizedFields as DynamicField[], nodeId)
+  }, [nodeId, normalizedFields])
 
   const ruleInputs = useMemo(() => {
-    const next: Record<string, string> = {}
-    normalizedFields.forEach((item) => {
-      next[`${nodeId}.${item.name}`] = toRuleRaw(values[item.name])
-    })
-    return next
-  }, [nodeId, normalizedFields, values])
+    return buildLocalRuleInputs(nodeId, values)
+  }, [nodeId, values])
 
   const fieldStates = useMemo(() => {
-    return normalizedFields.map((item) => {
-      let visible = true
-      let visibleError: string | null = null
-      if (item.visibleWhen && item.visibleWhen.trim()) {
-        const visibleResult = runRule(item.visibleWhen, ruleInputs)
-        if (visibleResult.ok)
-          visible = Boolean(visibleResult.result)
-        else
-          visibleError = visibleResult.error ?? '可见规则执行失败'
-      }
-
-      let validateError: string | null = null
-      if (visible && item.validateWhen && item.validateWhen.trim()) {
-        const validateResult = runRule(item.validateWhen, ruleInputs)
-        if (validateResult.ok) {
-          if (!validateResult.result)
-            validateError = '结果校验未通过'
-        }
-        else {
-          validateError = validateResult.error ?? '结果校验执行失败'
-        }
-      }
-
-      const requiredError = visible && item.required && !hasValue(values[item.name])
-        ? '必填项不能为空'
-        : null
-
-      return {
-        item,
-        visible,
-        visibleError,
-        validateError,
-        requiredError,
-      }
-    })
-  }, [normalizedFields, ruleInputs, values])
+    return evaluateDynamicFieldStates(preparedFields, ruleInputs)
+  }, [preparedFields, ruleInputs])
 
   const visibleFieldStates = useMemo(
     () => fieldStates.filter(state => state.visible),
@@ -145,19 +86,13 @@ export default function StartFormPreviewModal({
             type="button"
             className="rounded bg-blue-600 px-2.5 py-1 text-xs text-white hover:bg-blue-700"
             onClick={() => {
-              const errors = visibleFieldStates.flatMap((state) => {
-                const messages: string[] = []
-                if (state.requiredError)
-                  messages.push(`${state.item.label || state.item.name}: ${state.requiredError}`)
-                if (state.validateError)
-                  messages.push(`${state.item.label || state.item.name}: ${state.validateError}`)
-                return messages
-              })
-              if (errors.length === 0) {
+              const validateErrors = evaluateDynamicFieldValidations(preparedFields, ruleInputs)
+              const validation = validateDynamicInput(normalizedFields as DynamicField[], values, fieldStates, validateErrors)
+              if (validation.ok) {
                 setSubmitResult({ ok: true, text: '提交校验通过' })
                 return
               }
-              setSubmitResult({ ok: false, text: errors[0] })
+              setSubmitResult({ ok: false, text: validation.message })
             }}
           >
             提交预览校验
@@ -174,7 +109,7 @@ export default function StartFormPreviewModal({
               暂无可预览字段，请先配置参数名。
             </div>
           )}
-          {fieldStates.map(({ item, visible, visibleError, validateError, requiredError }, index) => (
+          {fieldStates.map(({ item, visible, visibleError, validateError }, index) => (
             <div
               key={`${item.name}-${index}`}
               className={`space-y-1 rounded border p-2 ${visible ? 'border-gray-200' : 'border-dashed border-gray-300 bg-gray-50/70'}`}
@@ -285,9 +220,6 @@ export default function StartFormPreviewModal({
               )}
               {visibleError && (
                 <div className="text-xs text-amber-600">{`可见规则错误：${visibleError}`}</div>
-              )}
-              {visible && requiredError && (
-                <div className="text-xs text-red-600">{requiredError}</div>
               )}
               {visible && validateError && (
                 <div className="text-xs text-red-600">{validateError}</div>

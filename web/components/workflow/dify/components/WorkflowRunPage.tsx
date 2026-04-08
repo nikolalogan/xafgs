@@ -6,6 +6,7 @@ import { Checkbox, Collapse, Empty, Form, Input, InputNumber, Modal, Select, Tab
 import ReactFlow, { Background, Controls, MiniMap } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { CUSTOM_EDGE, CUSTOM_NODE } from '../core/constants'
+import { buildExternalRuleInputs, buildLocalRuleInputs, buildPreparedFields, evaluateDynamicFieldStates, evaluateDynamicFieldValidations, type DynamicField, type DynamicFieldState, validateDynamicInput } from '../core/dynamic-form-rules'
 import { ensureNodeConfig } from '../core/node-config'
 import { edgeTypes, nodeTypes } from '../config/workflowPreset'
 import { validateWorkflow } from '../core/validation'
@@ -41,15 +42,6 @@ type WorkflowExecution = {
   waitingInput?: ExecutionWaitingInput
   error?: string
   updatedAt: string
-}
-
-type DynamicField = {
-  name: string
-  label: string
-  type: 'text' | 'paragraph' | 'number' | 'select' | 'checkbox'
-  required: boolean
-  options: Array<{ label: string; value: string }>
-  defaultValue?: unknown
 }
 
 type WorkflowRunPageProps = {
@@ -233,6 +225,8 @@ const normalizeWaitingFields = (schema?: Record<string, unknown>): DynamicField[
       required: Boolean(entry.required),
       options: normalizeOptions(entry.options),
       defaultValue: entry.defaultValue,
+      visibleWhen: typeof entry.visibleWhen === 'string' ? entry.visibleWhen : undefined,
+      validateWhen: typeof entry.validateWhen === 'string' ? entry.validateWhen : undefined,
     } satisfies DynamicField
   }).filter(field => field.name)
 }
@@ -359,49 +353,6 @@ const buildEndConfiguredOutput = (node: DifyNode, variables: Record<string, unkn
   return result
 }
 
-const validateDynamicInput = (
-  fields: DynamicField[],
-  values: Record<string, unknown>,
-) => {
-  const normalized: Record<string, unknown> = {}
-  for (const field of fields) {
-    const raw = values[field.name]
-    const candidate = raw !== undefined ? raw : field.defaultValue
-
-    const hasValue = (() => {
-      if (field.type === 'checkbox')
-        return candidate !== undefined && candidate !== null
-      return String(candidate ?? '').trim() !== ''
-    })()
-
-    if (field.required && !hasValue)
-      return { ok: false as const, normalized, message: `输入字段 ${field.name} 为必填` }
-
-    if (!hasValue) {
-      normalized[field.name] = candidate
-      continue
-    }
-
-    if (field.type === 'number') {
-      const parsed = typeof candidate === 'number' ? candidate : Number(candidate)
-      if (Number.isNaN(parsed))
-        return { ok: false as const, normalized, message: `输入字段 ${field.name} 需要 number` }
-      normalized[field.name] = parsed
-      continue
-    }
-
-    if (field.type === 'select' && field.options.length > 0) {
-      const allowed = new Set(field.options.map(option => option.value))
-      const valueStr = String(candidate ?? '')
-      if (!allowed.has(valueStr))
-        return { ok: false as const, normalized, message: `输入字段 ${field.name} 不在可选项中` }
-    }
-
-    normalized[field.name] = candidate
-  }
-  return { ok: true as const, normalized, message: '' }
-}
-
 const userConfigFields = [
   { key: 'warningAccount', label: '预警通账号', hash: '#warningAccount' },
   { key: 'warningPassword', label: '预警通密码', hash: '#warningPassword' },
@@ -454,6 +405,26 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const [startInput, setStartInput] = useState<Record<string, unknown>>({})
   const waitingFields = useMemo(() => normalizeWaitingFields(execution?.waitingInput?.schema), [execution?.waitingInput?.schema])
   const [waitingInput, setWaitingInput] = useState<Record<string, unknown>>({})
+  const waitingPreparedFields = useMemo(() => {
+    if (!execution?.waitingInput?.nodeId)
+      return []
+    return buildPreparedFields(waitingFields, execution.waitingInput.nodeId)
+  }, [execution?.waitingInput?.nodeId, waitingFields])
+  const waitingExternalRuleInputs = useMemo(() => {
+    return buildExternalRuleInputs(waitingPreparedFields, (execution?.variables ?? {}) as Record<string, unknown>)
+  }, [execution?.variables, waitingPreparedFields])
+  const waitingLocalRuleInputs = useMemo(() => {
+    if (!execution?.waitingInput?.nodeId)
+      return {}
+    return buildLocalRuleInputs(execution.waitingInput.nodeId, waitingInput)
+  }, [execution?.waitingInput?.nodeId, waitingInput])
+  const waitingFieldStates = useMemo(() => {
+    const mergedRuleInputs = {
+      ...waitingExternalRuleInputs,
+      ...waitingLocalRuleInputs,
+    }
+    return evaluateDynamicFieldStates(waitingPreparedFields, mergedRuleInputs)
+  }, [waitingExternalRuleInputs, waitingLocalRuleInputs, waitingPreparedFields])
   const [autoRunTriggered, setAutoRunTriggered] = useState(false)
   const [endRendered, setEndRendered] = useState<Record<string, { html: string; outputType: 'text' | 'html'; templateName: string; executionId: string }>>({})
   const [endRenderLoading, setEndRenderLoading] = useState<Record<string, boolean>>({})
@@ -1459,7 +1430,12 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       return
     if (!validateBeforeRun())
       return
-    const waitingValidation = validateDynamicInput(waitingFields, waitingInput)
+    const waitingRuleInputs = {
+      ...waitingExternalRuleInputs,
+      ...buildLocalRuleInputs(execution.waitingInput.nodeId, waitingInput),
+    }
+    const waitingValidateErrors = evaluateDynamicFieldValidations(waitingPreparedFields, waitingRuleInputs)
+    const waitingValidation = validateDynamicInput(waitingFields, waitingInput, waitingFieldStates, waitingValidateErrors)
     if (!waitingValidation.ok) {
       setError(waitingValidation.message)
       return
@@ -1714,7 +1690,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                               {waitingPrompt}
                             </div>
                           )}
-                          <DynamicForm fields={waitingFields} values={waitingInput} onChange={setWaitingInput} />
+                          <DynamicForm fieldStates={waitingFieldStates} values={waitingInput} onChange={setWaitingInput} />
                           <div className="flex justify-end pt-1">
                             <button
                               type="button"
@@ -1900,14 +1876,24 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
 
 function DynamicForm({
   fields,
+  fieldStates,
   values,
   onChange,
 }: {
-  fields: DynamicField[]
+  fields?: DynamicField[]
+  fieldStates?: DynamicFieldState[]
   values: Record<string, unknown>
   onChange: (nextValues: Record<string, unknown>) => void
 }) {
-  if (!fields.length)
+  const normalizedStates = fieldStates ?? (fields ?? []).map(item => ({
+    item,
+    visible: true,
+    visibleError: null,
+    validateError: null,
+  }))
+  const visibleStates = normalizedStates.filter(state => state.visible)
+
+  if (!visibleStates.length)
     return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前无可配置字段" />
 
   const [form] = Form.useForm()
@@ -1923,32 +1909,35 @@ function DynamicForm({
       onValuesChange={(_changed, allValues) => onChange(allValues)}
       className="m-0"
     >
-      {fields.map((field) => {
+      {visibleStates.map((state) => {
+        const field = state.item
         const label = `${field.label || field.name}${field.required ? ' *' : ''}`
+        const help = state.visibleError || state.validateError || undefined
+        const validateStatus = help ? 'error' : undefined
         if (field.type === 'checkbox') {
           return (
-            <Form.Item key={field.name} name={field.name} label={label} valuePropName="checked">
+            <Form.Item key={field.name} name={field.name} label={label} valuePropName="checked" help={help} validateStatus={validateStatus}>
               <Checkbox>勾选</Checkbox>
             </Form.Item>
           )
         }
         if (field.type === 'paragraph') {
           return (
-            <Form.Item key={field.name} name={field.name} label={label}>
+            <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
               <Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} />
             </Form.Item>
           )
         }
         if (field.type === 'number') {
           return (
-            <Form.Item key={field.name} name={field.name} label={label}>
+            <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
               <InputNumber style={{ width: '100%' }} />
             </Form.Item>
           )
         }
         if (field.type === 'select') {
           return (
-            <Form.Item key={field.name} name={field.name} label={label}>
+            <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
               <Select
                 allowClear
                 placeholder="请选择"
@@ -1961,7 +1950,7 @@ function DynamicForm({
           )
         }
         return (
-          <Form.Item key={field.name} name={field.name} label={label}>
+          <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
             <Input />
           </Form.Item>
         )

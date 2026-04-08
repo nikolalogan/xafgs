@@ -208,10 +208,26 @@ class InputNodeExecutor implements NodeExecutor {
           label: typeof item.label === 'string' ? item.label : '',
           type: typeof item.type === 'string' ? item.type : 'text',
           required: Boolean(item.required),
-          options: Array.isArray(item.options) ? item.options.map(option => String(option)) : [],
+          options: Array.isArray(item.options)
+            ? item.options.map((option) => {
+                if (option && typeof option === 'object') {
+                  const value = typeof (option as { value?: unknown }).value === 'string'
+                    ? (option as { value: string }).value
+                    : String((option as { value?: unknown }).value ?? '')
+                  const label = typeof (option as { label?: unknown }).label === 'string'
+                    ? (option as { label: string }).label
+                    : value
+                  return { label, value }
+                }
+                return String(option ?? '')
+              })
+            : [],
           defaultValue: item.defaultValue ?? '',
+          visibleWhen: typeof item.visibleWhen === 'string' ? item.visibleWhen : undefined,
+          validateWhen: typeof item.validateWhen === 'string' ? item.validateWhen : undefined,
         }
       }),
+      prompt: typeof config.prompt === 'string' ? config.prompt : '',
     }
     if (!ctx.nodeInput)
       return { type: 'waiting_input', schema }
@@ -241,7 +257,12 @@ class InputNodeExecutor implements NodeExecutor {
       }
 
       if (field.type === 'select' && field.options.length > 0) {
-        if (!field.options.includes(String(fallbackValue)))
+        const allowed = field.options.map((option) => {
+          if (option && typeof option === 'object')
+            return String((option as { value?: unknown }).value ?? '')
+          return String(option ?? '')
+        })
+        if (!allowed.includes(String(fallbackValue)))
           return { type: 'failed', error: `输入字段 ${field.name} 不在可选项中` }
       }
 
