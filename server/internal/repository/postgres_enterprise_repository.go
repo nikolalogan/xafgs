@@ -140,9 +140,9 @@ func (repository *PostgresEnterpriseRepository) FindPage(query model.EnterpriseL
 		args = append(args, query.RegionID)
 		argIndex++
 	}
-	if query.AdmissionStatus != nil {
+	if query.AdmissionStatus != "" {
 		conditions = append(conditions, "admission_status = $"+strconv.Itoa(argIndex))
-		args = append(args, *query.AdmissionStatus)
+		args = append(args, query.AdmissionStatus)
 		argIndex++
 	}
 

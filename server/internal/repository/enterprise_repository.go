@@ -36,7 +36,7 @@ func NewEnterpriseRepository() EnterpriseRepository {
 			},
 			ShortName:         "示例企业",
 			RegionID:          1,
-			AdmissionStatus:   true,
+			AdmissionStatus:   model.EnterpriseAdmissionStatusAdmitted,
 			UnifiedCreditCode: "91310000MA1EXAMPLE",
 			Status:            model.EnterpriseStatusActive,
 		},
@@ -111,7 +111,7 @@ func (repository *enterpriseRepository) FindPage(query model.EnterpriseListQuery
 		if regionID > 0 && enterprise.RegionID != regionID {
 			continue
 		}
-		if query.AdmissionStatus != nil && enterprise.AdmissionStatus != *query.AdmissionStatus {
+		if query.AdmissionStatus != "" && enterprise.AdmissionStatus != query.AdmissionStatus {
 			continue
 		}
 		filtered = append(filtered, enterprise.ToDTO())

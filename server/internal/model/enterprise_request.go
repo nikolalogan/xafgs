@@ -17,7 +17,7 @@ type CreateEnterpriseRequest struct {
 	NonStandardFinancingRatio         *float64                       `json:"nonStandardFinancingRatio"`
 	MainBusiness                      string                         `json:"mainBusiness"`
 	RelatedPartyPublicOpinion         string                         `json:"relatedPartyPublicOpinion"`
-	AdmissionStatus                   bool                           `json:"admissionStatus"`
+	AdmissionStatus                   string                         `json:"admissionStatus"`
 	CalculatedAt                      *time.Time                     `json:"calculatedAt"`
 	RegisteredCapital                 *float64                       `json:"registeredCapital"`
 	PaidInCapital                     *float64                       `json:"paidInCapital"`

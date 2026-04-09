@@ -50,6 +50,10 @@ type ExecutionEvent struct {
 
 type WorkflowExecution struct {
 	ID             string                        `json:"id"`
+	WorkflowID     int64                         `json:"workflowId"`
+	WorkflowName   string                        `json:"workflowName"`
+	MenuKey        string                        `json:"menuKey"`
+	StarterUserID  int64                         `json:"starterUserId"`
 	WorkflowDSL    WorkflowDSL                   `json:"workflowDsl"`
 	Status         ExecutionStatus               `json:"status"`
 	NodeStates     map[string]ExecutionNodeState `json:"nodeStates"`
@@ -63,7 +67,37 @@ type WorkflowExecution struct {
 	UpdatedAt      string                        `json:"updatedAt"`
 }
 
+type ExecutionListFilter struct {
+	Status        string `json:"status"`
+	WorkflowID    int64  `json:"workflowId"`
+	MenuKey       string `json:"menuKey"`
+	StarterUserID int64  `json:"starterUserId"`
+	Keyword       string `json:"keyword"`
+	Page          int64  `json:"page"`
+	PageSize      int64  `json:"pageSize"`
+}
+
+type WorkflowExecutionSummary struct {
+	ID            string          `json:"id"`
+	WorkflowID    int64           `json:"workflowId"`
+	WorkflowName  string          `json:"workflowName"`
+	MenuKey       string          `json:"menuKey"`
+	StarterUserID int64           `json:"starterUserId"`
+	Status        ExecutionStatus `json:"status"`
+	WaitingNodeID string          `json:"waitingNodeId,omitempty"`
+	WaitingTitle  string          `json:"waitingNodeTitle,omitempty"`
+	Error         string          `json:"error,omitempty"`
+	CreatedAt     string          `json:"createdAt"`
+	UpdatedAt     string          `json:"updatedAt"`
+}
+
+type ExecutionListResult struct {
+	Items    []WorkflowExecutionSummary `json:"items"`
+	Page     int64                      `json:"page"`
+	PageSize int64                      `json:"pageSize"`
+	Total    int64                      `json:"total"`
+}
+
 func NowISO() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
-

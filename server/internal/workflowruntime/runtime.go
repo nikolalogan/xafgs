@@ -15,8 +15,12 @@ import (
 )
 
 type StartExecutionInput struct {
-	WorkflowDSL WorkflowDSL       `json:"workflowDsl"`
-	Input       map[string]any    `json:"input"`
+	WorkflowID    int64          `json:"workflowId"`
+	WorkflowName  string         `json:"workflowName"`
+	MenuKey       string         `json:"menuKey"`
+	StarterUserID int64          `json:"starterUserId"`
+	WorkflowDSL   WorkflowDSL    `json:"workflowDsl"`
+	Input         map[string]any `json:"input"`
 }
 
 type ResumeExecutionInput struct {
@@ -103,6 +107,10 @@ func (runtime *Runtime) buildExecution(input StartExecutionInput) WorkflowExecut
 
 	execution := WorkflowExecution{
 		ID:              uuid.NewString(),
+		WorkflowID:      input.WorkflowID,
+		WorkflowName:    input.WorkflowName,
+		MenuKey:         input.MenuKey,
+		StarterUserID:   input.StarterUserID,
 		WorkflowDSL:     input.WorkflowDSL,
 		Status:          ExecutionStatusRunning,
 		NodeStates:      nodeStates,
@@ -311,6 +319,10 @@ func (runtime *Runtime) unmarkExecutionRunning(executionID string) {
 
 func (runtime *Runtime) Get(_ context.Context, executionID string) (*WorkflowExecution, error) {
 	return runtime.store.Get(executionID)
+}
+
+func (runtime *Runtime) List(_ context.Context, filter ExecutionListFilter) (ExecutionListResult, error) {
+	return runtime.store.List(filter)
 }
 
 func (runtime *Runtime) SubscribeExecution(executionID string) (<-chan WorkflowExecution, func()) {

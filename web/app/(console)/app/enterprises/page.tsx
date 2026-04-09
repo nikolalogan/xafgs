@@ -1,15 +1,20 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, message } from 'antd'
+import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, message } from 'antd'
+
+type AdmissionStatus = 'admitted' | 'rejected' | 'pending'
 
 type EnterpriseDTO = {
   id: number
   shortName: string
   unifiedCreditCode: string
   regionId: number
-  admissionStatus: boolean
+  regionAdminCode?: string
+  regionCode?: string
+  regionName?: string
+  admissionStatus: AdmissionStatus
   createdAt: string
   updatedAt: string
 }
@@ -49,30 +54,38 @@ type ApiResponse<T> = {
 type ListFilters = {
   keyword: string
   regionId?: number
-  admissionStatus?: 'true' | 'false'
+  admissionStatus?: AdmissionStatus
 }
 
 type EnterpriseFormValues = {
   shortName: string
   unifiedCreditCode: string
   regionId?: number
-  admissionStatus: boolean
+  admissionStatus: AdmissionStatus
   enterpriseLevel: string
   industry: string
   address: string
   legalPerson: string
 }
 
-type RegionDTO = {
-  id: number
-  adminCode: string
-  regionCode?: string
-  regionName?: string
-  overview: string
+const admissionStatusOptions = [
+  { label: '准入', value: 'admitted' as const },
+  { label: '不准入', value: 'rejected' as const },
+  { label: '待定', value: 'pending' as const },
+]
+
+const admissionStatusLabelMap: Record<AdmissionStatus, string> = {
+  admitted: '准入',
+  rejected: '不准入',
+  pending: '待定',
 }
 
-type RegionPageResult = {
-  items: RegionDTO[]
+const normalizeAdmissionStatus = (value: unknown): AdmissionStatus => {
+  if (value === 'admitted' || value === true || value === 'true')
+    return 'admitted'
+  if (value === 'rejected' || value === false || value === 'false')
+    return 'rejected'
+  return 'pending'
 }
 
 const getToken = () => {
@@ -89,6 +102,7 @@ export default function EnterprisesPage() {
   const [msgApi, contextHolder] = message.useMessage()
   const [form] = Form.useForm<EnterpriseFormValues>()
   const [loading, setLoading] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingID, setEditingID] = useState<number | null>(null)
@@ -97,7 +111,7 @@ export default function EnterprisesPage() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [filters, setFilters] = useState<ListFilters>({ keyword: '' })
-  const [regions, setRegions] = useState<RegionDTO[]>([])
+  const lastQueryRef = useRef('')
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
@@ -126,20 +140,29 @@ export default function EnterprisesPage() {
   }
 
   const fetchList = async () => {
+    const search = new URLSearchParams()
+    search.set('page', String(page))
+    search.set('pageSize', String(pageSize))
+    if (filters.keyword.trim())
+      search.set('keyword', filters.keyword.trim())
+    if (typeof filters.regionId === 'number' && filters.regionId > 0)
+      search.set('regionId', String(filters.regionId))
+    if (filters.admissionStatus)
+      search.set('admissionStatus', filters.admissionStatus)
+
+    const queryKey = search.toString()
+    if (queryKey === lastQueryRef.current)
+      return
+    lastQueryRef.current = queryKey
+
     setLoading(true)
     try {
-      const search = new URLSearchParams()
-      search.set('page', String(page))
-      search.set('pageSize', String(pageSize))
-      if (filters.keyword.trim())
-        search.set('keyword', filters.keyword.trim())
-      if (typeof filters.regionId === 'number' && filters.regionId > 0)
-        search.set('regionId', String(filters.regionId))
-      if (filters.admissionStatus)
-        search.set('admissionStatus', filters.admissionStatus)
-
-      const data = await request<EnterprisePageResult>(`/api/enterprises?${search.toString()}`, { method: 'GET' })
-      setItems(Array.isArray(data?.items) ? data.items : [])
+      const data = await request<EnterprisePageResult>(`/api/enterprises?${queryKey}`, { method: 'GET' })
+      const normalizedItems = (Array.isArray(data?.items) ? data.items : []).map(item => ({
+        ...item,
+        admissionStatus: normalizeAdmissionStatus(item?.admissionStatus),
+      }))
+      setItems(normalizedItems)
       setTotal(Number(data?.total) || 0)
     }
     catch (error) {
@@ -150,54 +173,160 @@ export default function EnterprisesPage() {
     }
   }
 
-  useEffect(() => {
-    fetchList()
-  }, [page, pageSize, filters])
+  const buildSearchParams = (targetPage: number, targetPageSize: number) => {
+    const search = new URLSearchParams()
+    search.set('page', String(targetPage))
+    search.set('pageSize', String(targetPageSize))
+    if (filters.keyword.trim())
+      search.set('keyword', filters.keyword.trim())
+    if (typeof filters.regionId === 'number' && filters.regionId > 0)
+      search.set('regionId', String(filters.regionId))
+    if (filters.admissionStatus)
+      search.set('admissionStatus', filters.admissionStatus)
+    return search
+  }
 
-  const fetchRegions = async () => {
+  const exportExcel = async () => {
+    setExporting(true)
     try {
-      const data = await request<RegionPageResult>('/api/regions?page=1&pageSize=200', { method: 'GET' })
-      setRegions(Array.isArray(data?.items) ? data.items : [])
+      const exportPageSize = 100
+      const firstSearch = buildSearchParams(1, exportPageSize)
+      const firstData = await request<EnterprisePageResult>(`/api/enterprises?${firstSearch.toString()}`, { method: 'GET' })
+      const firstItems = (Array.isArray(firstData?.items) ? firstData.items : []).map(item => ({
+        ...item,
+        admissionStatus: normalizeAdmissionStatus(item?.admissionStatus),
+      }))
+      const exportItems: EnterpriseDTO[] = [...firstItems]
+      const totalCount = Number(firstData?.total) || firstItems.length
+      const totalPages = Math.max(1, Math.ceil(totalCount / exportPageSize))
+
+      for (let currentPage = 2; currentPage <= totalPages; currentPage++) {
+        const nextSearch = buildSearchParams(currentPage, exportPageSize)
+        const nextData = await request<EnterprisePageResult>(`/api/enterprises?${nextSearch.toString()}`, { method: 'GET' })
+        const nextItems = (Array.isArray(nextData?.items) ? nextData.items : []).map(item => ({
+          ...item,
+          admissionStatus: normalizeAdmissionStatus(item?.admissionStatus),
+        }))
+        exportItems.push(...nextItems)
+      }
+
+      if (exportItems.length === 0) {
+        msgApi.warning('暂无可导出的企业数据')
+        return
+      }
+
+      const rows = exportItems.map(item => {
+        const regionCode = item.regionCode || item.regionAdminCode || String(item.regionId || '')
+        const regionName = item.regionName || `区域#${item.regionId || ''}`
+        return {
+          id: item.id,
+          shortName: item.shortName || '',
+          unifiedCreditCode: item.unifiedCreditCode || '',
+          region: `${regionName}（${regionCode}）`,
+          admissionStatus: admissionStatusLabelMap[item.admissionStatus] || '待定',
+          createdAt: item.createdAt || '',
+          updatedAt: item.updatedAt || '',
+        }
+      })
+
+      const escapeHTML = (value: string | number) =>
+        String(value)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll('\'', '&#39;')
+
+      const tableRowsHTML = rows
+        .map(row => `<tr>
+<td>${escapeHTML(row.id)}</td>
+<td>${escapeHTML(row.shortName)}</td>
+<td>${escapeHTML(row.unifiedCreditCode)}</td>
+<td>${escapeHTML(row.region)}</td>
+<td>${escapeHTML(row.admissionStatus)}</td>
+<td>${escapeHTML(row.createdAt)}</td>
+<td>${escapeHTML(row.updatedAt)}</td>
+</tr>`)
+        .join('')
+
+      const excelHTML = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+</head>
+<body>
+  <table border="1">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>企业简称</th>
+        <th>统一信用代码</th>
+        <th>所在区域</th>
+        <th>准入状态</th>
+        <th>创建时间</th>
+        <th>更新时间</th>
+      </tr>
+    </thead>
+    <tbody>${tableRowsHTML}</tbody>
+  </table>
+</body>
+</html>`
+
+      const blob = new Blob([`\uFEFF${excelHTML}`], { type: 'application/vnd.ms-excel;charset=utf-8;' })
+      const url = window.URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      const now = new Date()
+      const filename = `企业列表_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}.xls`
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.URL.revokeObjectURL(url)
+      msgApi.success(`已导出 ${exportItems.length} 条企业数据`)
     }
     catch (error) {
-      msgApi.error(error instanceof Error ? error.message : '加载区域列表失败')
+      msgApi.error(error instanceof Error ? error.message : '导出失败')
+    }
+    finally {
+      setExporting(false)
     }
   }
 
   useEffect(() => {
-    fetchRegions()
-  }, [])
+    fetchList()
+  }, [page, pageSize, filters])
 
   const openCreate = () => {
     setEditingID(null)
+    setModalOpen(true)
     form.setFieldsValue({
       shortName: '',
       unifiedCreditCode: '',
       regionId: undefined,
-      admissionStatus: false,
+      admissionStatus: 'pending',
       enterpriseLevel: '',
       industry: '',
       address: '',
       legalPerson: '',
     })
-    setModalOpen(true)
   }
 
   const openEdit = async (id: number) => {
     try {
       const detail = await request<EnterpriseDetailDTO>(`/api/enterprises/${id}`, { method: 'GET' })
       setEditingID(id)
+      setModalOpen(true)
       form.setFieldsValue({
         shortName: detail.shortName || '',
         unifiedCreditCode: detail.unifiedCreditCode || '',
         regionId: detail.regionId,
-        admissionStatus: !!detail.admissionStatus,
+        admissionStatus: normalizeAdmissionStatus(detail.admissionStatus),
         enterpriseLevel: detail.enterpriseLevel || '',
         industry: detail.industry || '',
         address: detail.address || '',
         legalPerson: detail.legalPerson || '',
       })
-      setModalOpen(true)
     }
     catch (error) {
       msgApi.error(error instanceof Error ? error.message : '加载企业详情失败')
@@ -212,7 +341,7 @@ export default function EnterprisesPage() {
         shortName: values.shortName,
         unifiedCreditCode: values.unifiedCreditCode,
         regionId: Number(values.regionId) || 0,
-        admissionStatus: !!values.admissionStatus,
+        admissionStatus: normalizeAdmissionStatus(values.admissionStatus),
         enterpriseLevel: values.enterpriseLevel || '',
         industry: values.industry || '',
         address: values.address || '',
@@ -235,6 +364,7 @@ export default function EnterprisesPage() {
       }
 
       setModalOpen(false)
+      lastQueryRef.current = ''
       fetchList()
     }
     catch (error) {
@@ -251,6 +381,7 @@ export default function EnterprisesPage() {
     try {
       await request<boolean>(`/api/enterprises/${id}`, { method: 'DELETE' })
       msgApi.success('删除企业成功')
+      lastQueryRef.current = ''
       fetchList()
     }
     catch (error) {
@@ -270,16 +401,22 @@ export default function EnterprisesPage() {
     },
   }), [page, pageSize, total])
 
-  const regionOptions = useMemo(
-    () => regions.map(item => ({ label: `${item.regionName || item.overview || '未命名区域'}（${item.regionCode || item.adminCode}）`, value: item.id })),
-    [regions],
-  )
   const regionLabelMap = useMemo(() => {
     const out = new Map<number, string>()
-    for (const region of regions)
-      out.set(region.id, `${region.regionName || region.overview || '未命名区域'}（${region.regionCode || region.adminCode}）`)
+    for (const item of items) {
+      if (!item.regionId || out.has(item.regionId))
+        continue
+      const regionCode = item.regionCode || item.regionAdminCode || String(item.regionId)
+      const regionName = item.regionName || `区域#${item.regionId}`
+      out.set(item.regionId, `${regionName}（${regionCode}）`)
+    }
     return out
-  }, [regions])
+  }, [items])
+
+  const regionOptions = useMemo(
+    () => Array.from(regionLabelMap.entries()).map(([value, label]) => ({ value, label })),
+    [regionLabelMap],
+  )
 
   return (
     <div className="space-y-3">
@@ -304,10 +441,7 @@ export default function EnterprisesPage() {
             placeholder="准入状态"
             value={filters.admissionStatus}
             onChange={value => setFilters(prev => ({ ...prev, admissionStatus: value }))}
-            options={[
-              { label: '准入', value: 'true' },
-              { label: '不准入', value: 'false' },
-            ]}
+            options={admissionStatusOptions}
           />
           <Space>
             <Button type="primary" onClick={() => setPage(1)}>查询</Button>
@@ -323,7 +457,10 @@ export default function EnterprisesPage() {
       <div className="rounded-xl border border-gray-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold text-gray-900">企业列表</div>
-          <Button type="primary" onClick={openCreate}>新增企业</Button>
+          <Space>
+            <Button onClick={exportExcel} loading={exporting}>导出Excel</Button>
+            <Button type="primary" onClick={openCreate}>新增企业</Button>
+          </Space>
         </div>
 
         <Table<EnterpriseDTO>
@@ -342,10 +479,10 @@ export default function EnterprisesPage() {
               render: (value: number) => regionLabelMap.get(value) || `#${value}`,
             },
             {
-              title: '是否准入',
+              title: '准入状态',
               dataIndex: 'admissionStatus',
               width: 120,
-              render: (value: boolean) => (value ? '是' : '否'),
+              render: (value: AdmissionStatus) => admissionStatusLabelMap[value] || '待定',
             },
             {
               title: '操作',
@@ -379,7 +516,7 @@ export default function EnterprisesPage() {
         getContainer={false}
         destroyOnHidden
       >
-        <Form form={form} layout="vertical" initialValues={{ admissionStatus: false }}>
+        <Form form={form} layout="vertical" initialValues={{ admissionStatus: 'pending' }}>
           <Form.Item label="企业简称" name="shortName" rules={[{ required: true, message: '请输入企业简称' }]}>
             <Input placeholder="请输入企业简称" />
           </Form.Item>
@@ -401,8 +538,8 @@ export default function EnterprisesPage() {
           <Form.Item label="地址" name="address">
             <Input.TextArea rows={2} placeholder="请输入地址" />
           </Form.Item>
-          <Form.Item label="是否准入" name="admissionStatus" valuePropName="checked">
-            <Switch checkedChildren="是" unCheckedChildren="否" />
+          <Form.Item label="准入状态" name="admissionStatus">
+            <Select options={admissionStatusOptions} />
           </Form.Item>
         </Form>
       </Modal>

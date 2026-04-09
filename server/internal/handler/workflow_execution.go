@@ -39,6 +39,15 @@ type executionIDPathRequest struct {
 	ID string `path:"id" validate:"required"`
 }
 
+type listWorkflowTaskRequest struct {
+	Page       *int64 `query:"page" validate:"omitempty,min=1"`
+	PageSize   *int64 `query:"pageSize" validate:"omitempty,min=1,max=200"`
+	Status     string `query:"status"`
+	WorkflowID *int64 `query:"workflowId" validate:"omitempty,min=1"`
+	MenuKey    string `query:"menuKey"`
+	Keyword    string `query:"keyword"`
+}
+
 type startWorkflowExecutionRequest struct {
 	WorkflowID  int64          `json:"workflowId" validate:"required,min=1"`
 	WorkflowDSL any            `json:"workflowDsl"`
@@ -76,20 +85,34 @@ func NewWorkflowExecutionHandler(
 	}
 }
 
-func (handler *WorkflowExecutionHandler) Register(router fiber.Router, adminMiddleware fiber.Handler) {
-	group := router.Group("", adminMiddleware)
+func (handler *WorkflowExecutionHandler) Register(router fiber.Router, _ fiber.Handler) {
+	group := router.Group("")
 	apimeta.Register(group, handler.registry, apimeta.RouteSpec[startWorkflowExecutionRequest]{
 		Method:             fiber.MethodPost,
 		Path:               "/workflow/executions",
 		Summary:            "创建并启动执行",
-		Auth:               "admin",
+		Auth:               "login",
 		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowExecution](),
 	}, handler.Start)
+	apimeta.Register(group, handler.registry, apimeta.RouteSpec[listWorkflowTaskRequest]{
+		Method:             fiber.MethodGet,
+		Path:               "/workflow/tasks",
+		Summary:            "查询任务历史",
+		Auth:               "login",
+		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.ExecutionListResult](),
+	}, handler.ListTasks)
 	apimeta.Register(group, handler.registry, apimeta.RouteSpec[executionIDPathRequest]{
 		Method:             fiber.MethodGet,
 		Path:               "/workflow/executions/:id",
 		Summary:            "获取执行详情",
-		Auth:               "admin",
+		Auth:               "login",
+		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowExecution](),
+	}, handler.Get)
+	apimeta.Register(group, handler.registry, apimeta.RouteSpec[executionIDPathRequest]{
+		Method:             fiber.MethodGet,
+		Path:               "/workflow/tasks/:id",
+		Summary:            "获取任务详情",
+		Auth:               "login",
 		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowExecution](),
 	}, handler.Get)
 	group.Get("/workflow/executions/:id/stream", handler.Stream)
@@ -97,14 +120,21 @@ func (handler *WorkflowExecutionHandler) Register(router fiber.Router, adminMidd
 		Method:             fiber.MethodPost,
 		Path:               "/workflow/executions/:id/resume",
 		Summary:            "提交节点输入并继续",
-		Auth:               "admin",
+		Auth:               "login",
+		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowExecution](),
+	}, handler.Resume)
+	apimeta.Register(group, handler.registry, apimeta.RouteSpec[resumeWorkflowExecutionRequest]{
+		Method:             fiber.MethodPost,
+		Path:               "/workflow/tasks/:id/resume",
+		Summary:            "提交任务节点输入并继续",
+		Auth:               "login",
 		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowExecution](),
 	}, handler.Resume)
 	apimeta.Register(group, handler.registry, apimeta.RouteSpec[executionIDPathRequest]{
 		Method:             fiber.MethodDelete,
 		Path:               "/workflow/executions/:id",
 		Summary:            "取消执行",
-		Auth:               "admin",
+		Auth:               "login",
 		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowExecution](),
 	}, handler.Cancel)
 }
@@ -173,11 +203,51 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 	if !handler.rateLimiter.Allow(limiterKey, time.Now().UTC(), window, workflow.BreakerMaxRequests) {
 		return response.Error(c, fiber.StatusTooManyRequests, response.CodeTooManyRequests, "请求过快，请稍后重试")
 	}
-	data, apiError := handler.service.Start(ctx, dsl, input)
+	data, apiError := handler.service.Start(ctx, workflowruntime.StartExecutionInput{
+		WorkflowID:    workflow.ID,
+		WorkflowName:  workflow.Name,
+		MenuKey:       workflow.MenuKey,
+		StarterUserID: userID,
+		WorkflowDSL:   dsl,
+		Input:         input,
+	})
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, data, "创建并启动执行成功")
+}
+
+func (handler *WorkflowExecutionHandler) ListTasks(c *fiber.Ctx, request *listWorkflowTaskRequest) error {
+	userID, role, ok := currentAuthIdentity(c)
+	if !ok {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+
+	page := int64(1)
+	if request.Page != nil && *request.Page > 0 {
+		page = *request.Page
+	}
+	pageSize := int64(20)
+	if request.PageSize != nil && *request.PageSize > 0 {
+		pageSize = *request.PageSize
+	}
+
+	filter := workflowruntime.ExecutionListFilter{
+		Status:   strings.TrimSpace(request.Status),
+		MenuKey:  strings.TrimSpace(request.MenuKey),
+		Keyword:  strings.TrimSpace(request.Keyword),
+		Page:     page,
+		PageSize: pageSize,
+	}
+	if request.WorkflowID != nil && *request.WorkflowID > 0 {
+		filter.WorkflowID = *request.WorkflowID
+	}
+
+	data, apiError := handler.service.List(c.UserContext(), filter, userID, role)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, data, "查询任务历史成功")
 }
 
 func findStartNode(nodes []workflowruntime.WorkflowNode) (workflowruntime.WorkflowNode, bool) {
@@ -190,9 +260,14 @@ func findStartNode(nodes []workflowruntime.WorkflowNode) (workflowruntime.Workfl
 }
 
 func (handler *WorkflowExecutionHandler) Get(c *fiber.Ctx, request *executionIDPathRequest) error {
+	userID, role, ok := currentAuthIdentity(c)
+	if !ok {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+
 	ctx := workflowruntime.WithRequestID(c.UserContext(), requestID(c))
 	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
-	data, apiError := handler.service.Get(ctx, request.ID)
+	data, apiError := handler.service.Get(ctx, request.ID, userID, role)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
@@ -200,6 +275,11 @@ func (handler *WorkflowExecutionHandler) Get(c *fiber.Ctx, request *executionIDP
 }
 
 func (handler *WorkflowExecutionHandler) Stream(c *fiber.Ctx) error {
+	userID, role, ok := currentAuthIdentity(c)
+	if !ok {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+
 	request := &executionIDPathRequest{ID: strings.TrimSpace(c.Params("id"))}
 	if request.ID == "" {
 		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "id 不能为空")
@@ -207,7 +287,7 @@ func (handler *WorkflowExecutionHandler) Stream(c *fiber.Ctx) error {
 
 	ctx := workflowruntime.WithRequestID(c.UserContext(), requestID(c))
 	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
-	current, updates, unsubscribe, apiError := handler.service.Subscribe(ctx, request.ID)
+	current, updates, unsubscribe, apiError := handler.service.Subscribe(ctx, request.ID, userID, role)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
@@ -287,6 +367,11 @@ func (handler *WorkflowExecutionHandler) Stream(c *fiber.Ctx) error {
 }
 
 func (handler *WorkflowExecutionHandler) Resume(c *fiber.Ctx, request *resumeWorkflowExecutionRequest) error {
+	userID, role, ok := currentAuthIdentity(c)
+	if !ok {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+
 	request.NodeID = strings.TrimSpace(request.NodeID)
 	if request.Input == nil {
 		request.Input = map[string]any{}
@@ -294,7 +379,7 @@ func (handler *WorkflowExecutionHandler) Resume(c *fiber.Ctx, request *resumeWor
 
 	ctx := workflowruntime.WithRequestID(c.UserContext(), requestID(c))
 	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
-	data, apiError := handler.service.Resume(ctx, request.ID, request.NodeID, request.Input)
+	data, apiError := handler.service.Resume(ctx, request.ID, request.NodeID, request.Input, userID, role)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
@@ -302,13 +387,30 @@ func (handler *WorkflowExecutionHandler) Resume(c *fiber.Ctx, request *resumeWor
 }
 
 func (handler *WorkflowExecutionHandler) Cancel(c *fiber.Ctx, request *executionIDPathRequest) error {
+	userID, role, ok := currentAuthIdentity(c)
+	if !ok {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+
 	ctx := workflowruntime.WithRequestID(c.UserContext(), requestID(c))
 	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
-	data, apiError := handler.service.Cancel(ctx, request.ID)
+	data, apiError := handler.service.Cancel(ctx, request.ID, userID, role)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, data, "取消执行成功")
+}
+
+func currentAuthIdentity(c *fiber.Ctx) (int64, string, bool) {
+	userID, ok := c.Locals(middleware.LocalAuthUserID).(int64)
+	if !ok || userID <= 0 {
+		return 0, "", false
+	}
+	role, ok := c.Locals(middleware.LocalAuthRole).(string)
+	if !ok {
+		return 0, "", false
+	}
+	return userID, strings.TrimSpace(role), true
 }
 
 func requestID(c *fiber.Ctx) string {

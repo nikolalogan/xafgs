@@ -100,6 +100,29 @@ CREATE INDEX IF NOT EXISTS idx_workflow_status ON workflow(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_version_workflow_version ON workflow_version(workflow_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_template_status ON template(status);
 
+CREATE TABLE IF NOT EXISTS workflow_execution_task (
+  execution_id VARCHAR(64) PRIMARY KEY,
+  workflow_id BIGINT NOT NULL DEFAULT 0,
+  workflow_name VARCHAR(256) NOT NULL DEFAULT '',
+  menu_key VARCHAR(32) NOT NULL DEFAULT '',
+  starter_user_id BIGINT NOT NULL DEFAULT 0,
+  status VARCHAR(32) NOT NULL DEFAULT 'running',
+  waiting_node_id VARCHAR(128) NOT NULL DEFAULT '',
+  waiting_node_title VARCHAR(256) NOT NULL DEFAULT '',
+  waiting_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error TEXT NOT NULL DEFAULT '',
+  payload_json JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (jsonb_typeof(payload_json) = 'object'),
+  CHECK (jsonb_typeof(waiting_schema_json) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_execution_task_starter_created ON workflow_execution_task(starter_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_execution_task_status_created ON workflow_execution_task(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_execution_task_workflow_created ON workflow_execution_task(workflow_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_execution_task_menu_created ON workflow_execution_task(menu_key, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS file (
   id BIGSERIAL PRIMARY KEY,
   biz_key VARCHAR(128) NOT NULL DEFAULT '',
@@ -212,7 +235,7 @@ CREATE TABLE IF NOT EXISTS enterprise (
   non_standard_financing_ratio NUMERIC(12, 6),
   main_business TEXT NOT NULL DEFAULT '',
   related_party_public_opinion TEXT NOT NULL DEFAULT '',
-  admission_status BOOLEAN NOT NULL DEFAULT false,
+  admission_status VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (admission_status IN ('admitted', 'rejected', 'pending')),
   calculated_at TIMESTAMPTZ,
   registered_capital NUMERIC(20, 4),
   paid_in_capital NUMERIC(20, 4),
@@ -483,8 +506,52 @@ END $$;
 ALTER TABLE enterprise
 DROP COLUMN IF EXISTS region;
 
+DO $$
+DECLARE admission_status_type TEXT;
+BEGIN
+  SELECT data_type INTO admission_status_type
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'enterprise'
+    AND column_name = 'admission_status';
+
+  IF admission_status_type = 'boolean' THEN
+    ALTER TABLE enterprise
+    ALTER COLUMN admission_status DROP DEFAULT;
+    ALTER TABLE enterprise
+    ALTER COLUMN admission_status TYPE VARCHAR(16)
+    USING CASE WHEN admission_status IS TRUE THEN 'admitted' ELSE 'rejected' END;
+  ELSIF admission_status_type IS NULL THEN
+    ALTER TABLE enterprise
+    ADD COLUMN admission_status VARCHAR(16);
+  END IF;
+END $$;
+
+UPDATE enterprise
+SET admission_status = 'pending'
+WHERE admission_status IS NULL OR TRIM(admission_status) = '';
+
+ALTER TABLE enterprise
+ALTER COLUMN admission_status SET DEFAULT 'pending';
+ALTER TABLE enterprise
+ALTER COLUMN admission_status SET NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'enterprise_admission_status_check'
+  ) THEN
+    ALTER TABLE enterprise
+    ADD CONSTRAINT enterprise_admission_status_check
+    CHECK (admission_status IN ('admitted', 'rejected', 'pending'));
+  END IF;
+END $$;
+
 DROP INDEX IF EXISTS idx_enterprise_region;
+DROP INDEX IF EXISTS idx_enterprise_admission_status;
 CREATE INDEX IF NOT EXISTS idx_enterprise_region_id ON enterprise(region_id);
+CREATE INDEX IF NOT EXISTS idx_enterprise_admission_status ON enterprise(admission_status);
 
 ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS liability_asset_ratio NUMERIC(12, 6);

@@ -36,7 +36,7 @@ func RegisterRoutes(
 	workflowNodeGenerateHandler.Register(protectedGroup)
 	workflowDSLGenerateHandler.Register(protectedGroup)
 	workflowHandler.Register(protectedGroup)
-	workflowExecutionHandler.Register(protectedGroup, adminMiddleware)
+	workflowExecutionHandler.Register(protectedGroup, nil)
 	fileHandler.Register(protectedGroup)
 	templateHandler.Register(protectedGroup, adminMiddleware)
 	enterpriseHandler.Register(protectedGroup)

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Select, TreeSelect } from 'antd'
 import {
   buildWorkflowVariableTreeOptions,
@@ -18,6 +18,7 @@ type VariableValueInputProps = {
   allowMultiline?: boolean
   rows?: number
   placeholder?: string
+  commitOnBlur?: boolean
 }
 
 const allScopes: Array<{ value: VariableScope; label: string }> = [
@@ -40,9 +41,14 @@ export default function VariableValueInput({
   allowMultiline = false,
   rows = 4,
   placeholder,
+  commitOnBlur = false,
 }: VariableValueInputProps) {
   const [selectedKey, setSelectedKey] = useState('')
+  const [draftDisplayValue, setDraftDisplayValue] = useState(() => formatValueForDisplay(value, options))
   const activeScope = scope ?? 'all'
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const selectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
 
   const filteredOptions = useMemo(() => {
     if (activeScope === 'all')
@@ -59,15 +65,55 @@ export default function VariableValueInput({
     [options, value],
   )
 
+  useEffect(() => {
+    if (!commitOnBlur)
+      return
+    setDraftDisplayValue(displayValue)
+  }, [commitOnBlur, displayValue])
+
+  const updateSelection = (target: HTMLInputElement | HTMLTextAreaElement) => {
+    const start = target.selectionStart ?? target.value.length
+    const end = target.selectionEnd ?? target.value.length
+    selectionRef.current = { start, end }
+  }
+
+  const commitDisplayValue = (nextDisplayValue: string) => {
+    onChange(parseDisplayToRaw(nextDisplayValue, options))
+  }
+
   const insertVariable = () => {
     const selected = filteredOptions.find(option => option.key === selectedKey)
     if (!selected)
       return
-    onChange(`${value}${selected.placeholder}`)
+
+    const currentDisplayValue = commitOnBlur ? draftDisplayValue : displayValue
+    const inputElement = allowMultiline ? textareaRef.current : inputRef.current
+    const start = inputElement?.selectionStart ?? selectionRef.current.start ?? currentDisplayValue.length
+    const end = inputElement?.selectionEnd ?? selectionRef.current.end ?? currentDisplayValue.length
+    const nextDisplayValue = `${currentDisplayValue.slice(0, start)}${selected.placeholder}${currentDisplayValue.slice(end)}`
+    const caret = start + selected.placeholder.length
+
+    if (commitOnBlur)
+      setDraftDisplayValue(nextDisplayValue)
+    else
+      commitDisplayValue(nextDisplayValue)
+
+    selectionRef.current = { start: caret, end: caret }
+    requestAnimationFrame(() => {
+      const target = allowMultiline ? textareaRef.current : inputRef.current
+      if (!target)
+        return
+      target.focus()
+      target.setSelectionRange(caret, caret)
+    })
   }
 
   const handleDisplayChange = (nextDisplayValue: string) => {
-    onChange(parseDisplayToRaw(nextDisplayValue, options))
+    if (commitOnBlur) {
+      setDraftDisplayValue(nextDisplayValue)
+      return
+    }
+    commitDisplayValue(nextDisplayValue)
   }
 
   return (
@@ -103,19 +149,32 @@ export default function VariableValueInput({
       {allowMultiline
         ? (
             <textarea
+              ref={textareaRef}
               className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
               rows={rows}
-              value={displayValue}
+              value={commitOnBlur ? draftDisplayValue : displayValue}
               placeholder={placeholder}
               onChange={event => handleDisplayChange(event.target.value)}
+              onSelect={event => updateSelection(event.currentTarget)}
+              onClick={event => updateSelection(event.currentTarget)}
+              onKeyUp={event => updateSelection(event.currentTarget)}
+              onBlur={() => {
+                if (!commitOnBlur)
+                  return
+                commitDisplayValue(draftDisplayValue)
+              }}
             />
           )
         : (
             <input
+              ref={inputRef}
               className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
               value={displayValue}
               placeholder={placeholder}
               onChange={event => handleDisplayChange(event.target.value)}
+              onSelect={event => updateSelection(event.currentTarget)}
+              onClick={event => updateSelection(event.currentTarget)}
+              onKeyUp={event => updateSelection(event.currentTarget)}
             />
           )}
     </div>

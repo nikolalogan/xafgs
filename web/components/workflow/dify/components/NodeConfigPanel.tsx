@@ -2374,6 +2374,7 @@ export default function NodeConfigPanel({
             onScopeChange={scope => setScope(`${activeNode.id}.http.body`, scope)}
             allowMultiline
             rows={5}
+            commitOnBlur={config.bodyType === 'json'}
           />
         )}
         <label className={labelClass}>超时（秒）</label>

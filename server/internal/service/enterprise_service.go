@@ -60,7 +60,21 @@ func (service *enterpriseService) List(_ context.Context, query model.Enterprise
 		query.PageSize = 100
 	}
 	query.Keyword = strings.TrimSpace(query.Keyword)
-	return service.repository.FindPage(query), nil
+	query.AdmissionStatus = strings.TrimSpace(query.AdmissionStatus)
+	if query.AdmissionStatus != "" {
+		query.AdmissionStatus = model.NormalizeEnterpriseAdmissionStatus(query.AdmissionStatus)
+	}
+	result := service.repository.FindPage(query)
+	for index := range result.Items {
+		region, exists := service.regionRepository.FindByID(result.Items[index].RegionID)
+		if !exists {
+			continue
+		}
+		result.Items[index].RegionAdminCode = region.AdminCode
+		result.Items[index].RegionCode = region.RegionCode
+		result.Items[index].RegionName = region.RegionName
+	}
+	return result, nil
 }
 
 func (service *enterpriseService) Create(_ context.Context, request model.CreateEnterpriseRequest, operatorID int64) (model.EnterpriseDetailDTO, *model.APIError) {
@@ -187,6 +201,7 @@ func normalizeEnterpriseRequest(request model.CreateEnterpriseRequest) model.Cre
 	request.IssuerRatingAgency = strings.TrimSpace(request.IssuerRatingAgency)
 	request.UnifiedCreditCode = strings.TrimSpace(request.UnifiedCreditCode)
 	request.LegalPersonIDCard = strings.TrimSpace(request.LegalPersonIDCard)
+	request.AdmissionStatus = model.NormalizeEnterpriseAdmissionStatus(strings.TrimSpace(request.AdmissionStatus))
 
 	for i := range request.Tags {
 		request.Tags[i].Title = strings.TrimSpace(request.Tags[i].Title)

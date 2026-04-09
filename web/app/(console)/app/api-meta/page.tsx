@@ -91,6 +91,7 @@ export default function ApiMetaPage() {
   const [keyword, setKeyword] = useState('')
   const [method, setMethod] = useState<string>('ALL')
   const [group, setGroup] = useState<string>('ALL')
+  const [auth, setAuth] = useState<string>('ALL')
 
   const resolveGroupKey = (path: string) => {
     const trimmed = String(path || '').trim()
@@ -170,6 +171,8 @@ export default function ApiMetaPage() {
     return routes.filter((route) => {
       if (method !== 'ALL' && route.method !== method)
         return false
+      if (auth !== 'ALL' && (route.auth || '') !== auth)
+        return false
       if (group !== 'ALL') {
         const g = resolveGroupKey(route.path)
         if (g !== group)
@@ -180,7 +183,7 @@ export default function ApiMetaPage() {
       const combined = `${route.method} ${route.path} ${route.summary || ''} ${route.auth || ''}`.toLowerCase()
       return combined.includes(kw)
     })
-  }, [routes, keyword, method, group])
+  }, [routes, keyword, method, group, auth])
 
   if (!hydrated) {
     return (
@@ -230,6 +233,17 @@ export default function ApiMetaPage() {
             options={[
               { label: '全部分组', value: 'ALL' },
               ...groupOptions,
+            ]}
+          />
+          <Select
+            value={auth}
+            onChange={setAuth}
+            style={{ width: 160 }}
+            options={[
+              { label: '全部权限', value: 'ALL' },
+              { label: 'public', value: 'public' },
+              { label: 'auth', value: 'auth' },
+              { label: 'admin', value: 'admin' },
             ]}
           />
           <Input

@@ -13,6 +13,7 @@ var errValidation = errors.New("validation error")
 
 type validateRule struct {
 	required bool
+	omitEmpty bool
 	min      *int64
 	max      *int64
 	enum     []string
@@ -33,6 +34,10 @@ func parseValidateTag(raw string) (validateRule, error) {
 		}
 		if p == "required" {
 			out.required = true
+			continue
+		}
+		if p == "omitempty" {
+			out.omitEmpty = true
 			continue
 		}
 		if strings.HasPrefix(p, "min=") {
@@ -112,6 +117,10 @@ func validateValue(fieldName string, value reflect.Value, rule validateRule) err
 		}
 	}
 
+	if rule.omitEmpty && isEmptyValue(value) {
+		return nil
+	}
+
 	if len(rule.enum) > 0 {
 		text := ""
 		if value.Kind() == reflect.String {
@@ -178,3 +187,22 @@ func validateValue(fieldName string, value reflect.Value, rule validateRule) err
 	return nil
 }
 
+func isEmptyValue(value reflect.Value) bool {
+	switch value.Kind() {
+	case reflect.String:
+		return strings.TrimSpace(value.String()) == ""
+	case reflect.Bool:
+		return value.Bool() == false
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return value.Int() == 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return value.Uint() == 0
+	case reflect.Float32, reflect.Float64:
+		return value.Float() == 0
+	case reflect.Array, reflect.Slice, reflect.Map:
+		return value.Len() == 0
+	case reflect.Interface, reflect.Pointer:
+		return value.IsNil()
+	}
+	return false
+}

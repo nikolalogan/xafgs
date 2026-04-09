@@ -146,7 +146,10 @@ func NewApp() (*fiber.App, Config) {
 	workflowCodeGenerateService := service.NewWorkflowCodeGenerateService(userConfigService, systemConfigService, aiClient)
 	workflowNodeGenerateService := service.NewWorkflowNodeGenerateService(userConfigService, systemConfigService, aiClient)
 	workflowDSLGenerateService := service.NewWorkflowDSLGenerateService(userConfigService, systemConfigService, fileService, aiClient)
-	executionStore := workflowruntime.NewInMemoryExecutionStore()
+	executionStore := workflowruntime.ExecutionStorePort(workflowruntime.NewInMemoryExecutionStore())
+	if ok {
+		executionStore = workflowruntime.NewPostgresExecutionStore(result.DB)
+	}
 	executionRuntime := workflowruntime.NewRuntime(executionStore, workflowruntime.WithAIClient(aiClient))
 	workflowExecutionService := service.NewWorkflowExecutionService(executionRuntime)
 	workflowExecutionRateLimiter := service.NewWorkflowExecutionRateLimiter()

@@ -33,6 +33,7 @@ type ApiResponse<T> = {
 const menuItems: MenuItem[] = [
   { key: 'home', label: '控制台', href: '/app', roles: ['admin', 'user', 'guest'] as ConsoleRole[] },
   { key: 'chat', label: 'AI 对话', href: '/app/chat', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'workflow-tasks', label: '任务中心', href: '/app/workflow-tasks', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'workflow-config', label: '工作流配置', href: '/app/workflows', roles: ['admin'] as ConsoleRole[] },
   { key: 'reserve', label: '储备', href: '/app/workflows?menuKey=reserve', roles: ['admin'] as ConsoleRole[] },
   { key: 'review', label: '评审', href: '/app/workflows?menuKey=review', roles: ['admin'] as ConsoleRole[] },
@@ -65,6 +66,8 @@ const getWorkflowMenuLabel = (menuKey: string) => {
 const getPageTitle = (pathname: string, search: string) => {
   if (pathname.startsWith('/app/chat'))
     return 'AI 对话'
+  if (pathname.startsWith('/app/workflow-tasks'))
+    return '任务中心'
   if (pathname.startsWith('/app/workflows')) {
     const params = new URLSearchParams(search || '')
     const menuKey = params.get('menuKey') || ''
@@ -153,6 +156,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const breadcrumbs = useMemo(() => {
     if (pathname.startsWith('/app/chat'))
       return ['控制台', 'AI 对话']
+    if (pathname.startsWith('/app/workflow-tasks'))
+      return ['控制台', '任务中心']
     if (pathname.startsWith('/app/workflows')) {
       const params = new URLSearchParams(search || '')
       const menuKey = params.get('menuKey') || ''
@@ -275,6 +280,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       pushIfVisible('home')
       pushIfVisible('chat')
+      pushIfVisible('workflow-tasks')
       pushIfVisible('workflow-config')
 
     if (role === 'admin') {
@@ -310,6 +316,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['templates']
     if (pathname.startsWith('/app/files'))
       return ['files']
+    if (pathname.startsWith('/app/workflow-tasks'))
+      return ['workflow-tasks']
     if (pathname.startsWith('/app/enterprises'))
       return ['enterprises']
     if (pathname.startsWith('/app/system-settings'))
@@ -358,6 +366,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       router.push('/app')
     else if (key === 'chat')
       router.push('/app/chat')
+    else if (key === 'workflow-tasks')
+      router.push('/app/workflow-tasks')
     else if (key === 'workflow-config')
       router.push('/app/workflows')
     else if (key === 'templates')

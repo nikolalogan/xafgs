@@ -22,7 +22,7 @@ type listEnterprisesRequest struct {
 	PageSize        *int64 `query:"pageSize" validate:"min=1,max=100"`
 	Keyword         string `query:"keyword"`
 	RegionID        *int64 `query:"regionId" validate:"omitempty,min=1"`
-	AdmissionStatus *bool  `query:"admissionStatus"`
+	AdmissionStatus string `query:"admissionStatus" validate:"omitempty,oneof=admitted rejected pending true false 1 0"`
 }
 
 type enterpriseShortNameRequest struct {
@@ -44,7 +44,7 @@ type createEnterpriseRequest struct {
 	NonStandardFinancingRatio         *float64                        `json:"nonStandardFinancingRatio"`
 	MainBusiness                      string                          `json:"mainBusiness"`
 	RelatedPartyPublicOpinion         string                          `json:"relatedPartyPublicOpinion"`
-	AdmissionStatus                   bool                            `json:"admissionStatus"`
+	AdmissionStatus                   string                          `json:"admissionStatus" validate:"omitempty,oneof=admitted rejected pending true false 1 0"`
 	CalculatedAt                      *string                         `json:"calculatedAt"`
 	RegisteredCapital                 *float64                        `json:"registeredCapital"`
 	PaidInCapital                     *float64                        `json:"paidInCapital"`
@@ -86,7 +86,7 @@ type enterpriseValidateConflictRequest struct {
 	NonStandardFinancingRatio         *float64                        `json:"nonStandardFinancingRatio"`
 	MainBusiness                      string                          `json:"mainBusiness"`
 	RelatedPartyPublicOpinion         string                          `json:"relatedPartyPublicOpinion"`
-	AdmissionStatus                   bool                            `json:"admissionStatus"`
+	AdmissionStatus                   string                          `json:"admissionStatus" validate:"omitempty,oneof=admitted rejected pending true false 1 0"`
 	CalculatedAt                      *string                         `json:"calculatedAt"`
 	RegisteredCapital                 *float64                        `json:"registeredCapital"`
 	PaidInCapital                     *float64                        `json:"paidInCapital"`
@@ -128,7 +128,7 @@ type updateEnterpriseRequest struct {
 	NonStandardFinancingRatio         *float64                        `json:"nonStandardFinancingRatio"`
 	MainBusiness                      string                          `json:"mainBusiness"`
 	RelatedPartyPublicOpinion         string                          `json:"relatedPartyPublicOpinion"`
-	AdmissionStatus                   bool                            `json:"admissionStatus"`
+	AdmissionStatus                   string                          `json:"admissionStatus" validate:"omitempty,oneof=admitted rejected pending true false 1 0"`
 	CalculatedAt                      *string                         `json:"calculatedAt"`
 	RegisteredCapital                 *float64                        `json:"registeredCapital"`
 	PaidInCapital                     *float64                        `json:"paidInCapital"`
@@ -237,12 +237,16 @@ func (handler *EnterpriseHandler) List(c *fiber.Ctx, request *listEnterprisesReq
 	if request.RegionID != nil {
 		regionID = *request.RegionID
 	}
+	admissionStatus := strings.TrimSpace(request.AdmissionStatus)
+	if admissionStatus != "" {
+		admissionStatus = model.NormalizeEnterpriseAdmissionStatus(admissionStatus)
+	}
 	result, apiError := handler.service.List(c.UserContext(), model.EnterpriseListQuery{
 		Page:            page,
 		PageSize:        pageSize,
 		Keyword:         strings.TrimSpace(request.Keyword),
 		RegionID:        regionID,
-		AdmissionStatus: request.AdmissionStatus,
+		AdmissionStatus: admissionStatus,
 	})
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)

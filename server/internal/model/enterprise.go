@@ -1,11 +1,33 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	EnterpriseStatusActive  = "active"
 	EnterpriseStatusDeleted = "deleted"
 )
+
+const (
+	EnterpriseAdmissionStatusAdmitted = "admitted"
+	EnterpriseAdmissionStatusRejected = "rejected"
+	EnterpriseAdmissionStatusPending  = "pending"
+)
+
+func NormalizeEnterpriseAdmissionStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case EnterpriseAdmissionStatusAdmitted, EnterpriseAdmissionStatusRejected, EnterpriseAdmissionStatusPending:
+		return strings.ToLower(strings.TrimSpace(status))
+	case "true", "1", "yes", "y":
+		return EnterpriseAdmissionStatusAdmitted
+	case "false", "0", "no", "n":
+		return EnterpriseAdmissionStatusRejected
+	default:
+		return EnterpriseAdmissionStatusPending
+	}
+}
 
 type Enterprise struct {
 	BaseEntity
@@ -23,7 +45,7 @@ type Enterprise struct {
 	NonStandardFinancingRatio         *float64   `json:"nonStandardFinancingRatio,omitempty"`
 	MainBusiness                      string     `json:"mainBusiness"`
 	RelatedPartyPublicOpinion         string     `json:"relatedPartyPublicOpinion"`
-	AdmissionStatus                   bool       `json:"admissionStatus"`
+	AdmissionStatus                   string     `json:"admissionStatus"`
 	CalculatedAt                      *time.Time `json:"calculatedAt,omitempty"`
 	RegisteredCapital                 *float64   `json:"registeredCapital,omitempty"`
 	PaidInCapital                     *float64   `json:"paidInCapital,omitempty"`
@@ -161,7 +183,10 @@ type EnterpriseDTO struct {
 	ShortName         string    `json:"shortName"`
 	UnifiedCreditCode string    `json:"unifiedCreditCode"`
 	RegionID          int64     `json:"regionId"`
-	AdmissionStatus   bool      `json:"admissionStatus"`
+	RegionAdminCode   string    `json:"regionAdminCode"`
+	RegionCode        string    `json:"regionCode"`
+	RegionName        string    `json:"regionName"`
+	AdmissionStatus   string    `json:"admissionStatus"`
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
 }
@@ -209,7 +234,7 @@ type EnterpriseListQuery struct {
 	PageSize        int    `json:"pageSize"`
 	Keyword         string `json:"keyword"`
 	RegionID        int64  `json:"regionId"`
-	AdmissionStatus *bool  `json:"admissionStatus,omitempty"`
+	AdmissionStatus string `json:"admissionStatus,omitempty"`
 }
 
 type EnterprisePageResult struct {
@@ -225,7 +250,7 @@ func (enterprise Enterprise) ToDTO() EnterpriseDTO {
 		ShortName:         enterprise.ShortName,
 		UnifiedCreditCode: enterprise.UnifiedCreditCode,
 		RegionID:          enterprise.RegionID,
-		AdmissionStatus:   enterprise.AdmissionStatus,
+		AdmissionStatus:   NormalizeEnterpriseAdmissionStatus(enterprise.AdmissionStatus),
 		CreatedAt:         enterprise.CreatedAt,
 		UpdatedAt:         enterprise.UpdatedAt,
 	}
