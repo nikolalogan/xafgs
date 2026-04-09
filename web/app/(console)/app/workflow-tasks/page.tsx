@@ -374,21 +374,22 @@ export default function WorkflowTasksPage() {
     setWaitingInput(initialValues)
   }
 
-  const findEndTemplateID = (execution: WorkflowExecution) => {
+  const findEndTemplateInfo = (execution: WorkflowExecution) => {
     const nodes = Array.isArray(execution.workflowDsl?.nodes) ? execution.workflowDsl?.nodes : []
     for (const node of nodes || []) {
+      const nodeID = String((node as any)?.id || '').trim()
       const type = String(node?.data?.type || '').trim().toLowerCase()
       if (type !== 'end')
         continue
       const templateID = Number(node?.data?.config?.templateId ?? 0)
       if (Number.isFinite(templateID) && templateID > 0)
-        return templateID
+        return { templateID, endNodeID: nodeID }
     }
-    return 0
+    return { templateID: 0, endNodeID: '' }
   }
 
   const renderTemplatePreviewIfNeeded = async (execution: WorkflowExecution) => {
-    const templateID = findEndTemplateID(execution)
+    const { templateID, endNodeID } = findEndTemplateInfo(execution)
     if (templateID <= 0) {
       setTemplatePreview(null)
       setTemplateError('')
@@ -396,7 +397,16 @@ export default function WorkflowTasksPage() {
     }
     try {
       const detail = await request<TemplateDetailDTO>(`/api/templates/${templateID}`, { method: 'GET' })
-      const contextJson = isObject(execution.outputs) ? execution.outputs : { output: execution.outputs }
+      const endNodeOutput = endNodeID ? execution.variables?.[endNodeID] : undefined
+      const outputs = isObject(execution.outputs) ? execution.outputs : {}
+      const outputsEnd = outputs.end
+      const contextJson = isObject(endNodeOutput)
+        ? endNodeOutput
+        : isObject(outputsEnd)
+          ? outputsEnd
+          : isObject(execution.outputs)
+            ? execution.outputs
+            : { output: execution.outputs }
       const preview = await request<TemplatePreviewResponse>('/api/templates/preview', {
         method: 'POST',
         body: JSON.stringify({

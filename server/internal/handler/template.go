@@ -84,8 +84,7 @@ func (handler *TemplateHandler) Register(router fiber.Router, adminMiddleware fi
 		Method:             fiber.MethodPost,
 		Path:               "/templates/preview",
 		Summary:            "预览模板渲染",
-		Auth:               "admin",
-		Middlewares:        adminMiddlewares,
+		Auth:               "auth",
 		SuccessDataExample: apimeta.ExampleFromType[model.PreviewTemplateResponse](),
 	}, handler.PreviewTemplate)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[updateTemplateRequest]{
