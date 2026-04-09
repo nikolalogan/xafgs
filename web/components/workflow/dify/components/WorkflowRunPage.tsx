@@ -33,6 +33,7 @@ type WorkflowExecution = {
   status: 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled'
   nodeStates: Record<string, ExecutionNodeState>
   variables: Record<string, unknown>
+  outputs?: Record<string, unknown>
   events?: Array<{
     id: string
     type: string
@@ -297,7 +298,8 @@ const normalizeLogPath = (path: string) => path
   .replace(/\[(\d+)\]/g, '.$1')
 
 const getLogValueByPath = (source: Record<string, unknown>, path: string): unknown => {
-  const keys = normalizeLogPath(path).split('.').map(item => item.trim()).filter(Boolean)
+  const normalizedPath = normalizeLogPath(path)
+  const keys = normalizedPath.split('.').map(item => item.trim()).filter(Boolean)
   if (!keys.length)
     return undefined
 
@@ -316,7 +318,22 @@ const getLogValueByPath = (source: Record<string, unknown>, path: string): unkno
       return undefined
     current = (current as Record<string, unknown>)[key]
   }
-  return current
+  if (current !== undefined)
+    return current
+
+  if (normalizedPath.startsWith('workflow.')) {
+    const suffix = normalizedPath.slice('workflow.'.length)
+    const fallbackToGlobal = getLogValueByPath(source, `global.${suffix}`)
+    if (fallbackToGlobal !== undefined)
+      return fallbackToGlobal
+    const fallbackToRoot = getLogValueByPath(source, suffix)
+    if (fallbackToRoot !== undefined)
+      return fallbackToRoot
+    const fallbackToStart = getLogValueByPath(source, `start.${suffix}`)
+    if (fallbackToStart !== undefined)
+      return fallbackToStart
+  }
+  return undefined
 }
 
 const renderRuntimeTemplate = (value: string, variables: Record<string, unknown>) => {
@@ -331,6 +348,32 @@ const renderRuntimeTemplate = (value: string, variables: Record<string, unknown>
       return JSON.stringify(resolved)
     return String(resolved)
   })
+}
+
+const renderRuntimeTemplateKeepUnknown = (value: string, variables: Record<string, unknown>) => {
+  return String(value || '').replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (full, rawKey) => {
+    const key = String(rawKey || '').trim()
+    if (!key)
+      return full
+    const resolved = getLogValueByPath(variables, key)
+    if (resolved === undefined || resolved === null)
+      return full
+    if (typeof resolved === 'object')
+      return JSON.stringify(resolved)
+    return String(resolved)
+  })
+}
+
+const resolveTemplateSourceValue = (rawSource: string, variables: Record<string, unknown>) => {
+  const source = String(rawSource || '').trim()
+  if (!source)
+    return undefined
+  const singlePlaceholder = source.match(/^\s*\{\{\s*([^}]+?)\s*\}\}\s*$/)
+  if (singlePlaceholder?.[1]) {
+    const value = getLogValueByPath(variables, singlePlaceholder[1])
+    return value === undefined ? undefined : value
+  }
+  return renderRuntimeTemplateKeepUnknown(source, variables)
 }
 
 const renderHttpConfigForLog = (
@@ -380,7 +423,7 @@ const buildEndConfiguredOutput = (node: DifyNode, variables: Record<string, unkn
       return
     const source = String(item?.source || '').trim()
     if (source) {
-      const resolved = getLogValueByPath(context, source)
+      const resolved = resolveTemplateSourceValue(source, context)
       result[name] = resolved === undefined ? null : resolved
       return
     }
@@ -1030,7 +1073,8 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         return
       if (state.status !== 'succeeded' && execution.status !== 'completed')
         return
-      const rawOutput = execution.variables?.[nodeId]
+      const rawOutputs = isObject(execution.outputs) ? execution.outputs : {}
+      const rawOutput = rawOutputs[nodeId] ?? execution.variables?.[nodeId]
       const output = buildEndConfiguredOutput(node, execution.variables, rawOutput)
       void renderEndTemplateIfNeeded(node, output)
     })
@@ -1637,7 +1681,11 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         throw new Error(detailPayload.message || '加载模板失败')
 
       const detail = detailPayload.data
+      const rawOutputs = isObject(execution.outputs) ? execution.outputs : {}
+      const executionEndOutput = rawOutputs[node.id]
       const runtimeContext = (() => {
+        if (isObject(executionEndOutput))
+          return executionEndOutput
         if (isObject(output))
           return output
         return { output }
@@ -2173,7 +2221,8 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       return null
     const panelOpen = options?.forceOpen || (openPanels[node.id] ?? false)
     const status = runtimeState.status
-    const rawNodeOutput = execution.variables[node.id]
+    const rawOutputs = isObject(execution.outputs) ? execution.outputs : {}
+    const rawNodeOutput = rawOutputs[node.id] ?? execution.variables[node.id]
     const nodeOutput = node.data.type === BlockEnum.End
       ? buildEndConfiguredOutput(node, execution.variables, rawNodeOutput)
       : rawNodeOutput
@@ -2266,7 +2315,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                     {waitingPrompt}
                   </div>
                 )}
-                <DynamicForm fieldStates={waitingFieldStates} values={waitingInput} onChange={setWaitingInput} />
+                <DynamicForm fieldStates={waitingFieldStates} values={waitingInput} onChange={setWaitingInput} templateVariables={(execution?.variables ?? {}) as Record<string, unknown>} />
                 <div className="flex justify-end pt-1">
                   <button
                     type="button"
@@ -2541,7 +2590,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                 {submitPhase === 'checking_user_config' ? '正在检查运行配置，请稍候。' : '正在提交开始节点并启动流程，请稍候。'}
               </div>
             )}
-            <DynamicForm fields={startFields} values={startInput} onChange={setStartInput} />
+            <DynamicForm fields={startFields} values={startInput} onChange={setStartInput} templateVariables={{}} />
             <div className="flex justify-end pt-1">
               <button
                 type="button"
@@ -2621,11 +2670,13 @@ function DynamicForm({
   fieldStates,
   values,
   onChange,
+  templateVariables,
 }: {
   fields?: DynamicField[]
   fieldStates?: DynamicFieldState[]
   values: Record<string, unknown>
   onChange: (nextValues: Record<string, unknown>) => void
+  templateVariables?: Record<string, unknown>
 }) {
   const normalizedStates = fieldStates ?? (fields ?? []).map(item => ({
     item,
@@ -2653,7 +2704,9 @@ function DynamicForm({
     >
       {visibleStates.map((state) => {
         const field = state.item
-        const label = `${field.label || field.name}${field.required ? ' *' : ''}`
+        const rawLabel = field.label || field.name
+        const labelText = templateVariables ? renderRuntimeTemplateKeepUnknown(rawLabel, templateVariables) : rawLabel
+        const label = `${labelText}${field.required ? ' *' : ''}`
         const help = state.visibleError || state.validateError || undefined
         const validateStatus = help ? 'error' : undefined
         if (field.type === 'checkbox') {
@@ -2666,7 +2719,7 @@ function DynamicForm({
         if (field.type === 'paragraph') {
           return (
             <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-              <Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} />
+              <Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} placeholder={templateVariables && field.placeholder ? renderRuntimeTemplateKeepUnknown(field.placeholder, templateVariables) : field.placeholder} />
             </Form.Item>
           )
         }
@@ -2682,9 +2735,9 @@ function DynamicForm({
             <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
               <Select
                 allowClear
-                placeholder="请选择"
+                placeholder={templateVariables ? renderRuntimeTemplateKeepUnknown('请选择', templateVariables) : '请选择'}
                 options={field.options.map(option => ({
-                  label: option.label || option.value,
+                  label: templateVariables ? renderRuntimeTemplateKeepUnknown(option.label || option.value, templateVariables) : (option.label || option.value),
                   value: option.value,
                 }))}
               />
@@ -2693,7 +2746,7 @@ function DynamicForm({
         }
         return (
           <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-            <Input />
+            <Input placeholder={templateVariables && field.placeholder ? renderRuntimeTemplateKeepUnknown(field.placeholder, templateVariables) : field.placeholder} />
           </Form.Item>
         )
       })}

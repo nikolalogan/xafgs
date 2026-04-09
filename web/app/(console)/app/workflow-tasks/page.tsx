@@ -36,6 +36,7 @@ type WorkflowExecution = {
   }
   workflowDsl?: {
     nodes?: Array<{
+      id?: string
       data?: {
         type?: string
         config?: Record<string, unknown>
@@ -90,6 +91,68 @@ const getToken = () => {
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
+
+const normalizeRuntimePath = (path: string) => path
+  .trim()
+  .replace(/^用户属性\./, 'user.')
+  .replace(/^流程参数\./, 'workflow.')
+  .replace(/^全局参数\./, 'global.')
+  .replace(/^\$\./, '')
+  .replace(/^\$/, '')
+  .replace(/\[(\d+)\]/g, '.$1')
+
+const getRuntimeValueByPath = (source: Record<string, unknown>, path: string): unknown => {
+  const normalizedPath = normalizeRuntimePath(path)
+  const keys = normalizedPath.split('.').map(item => item.trim()).filter(Boolean)
+  if (!keys.length)
+    return undefined
+
+  let current: unknown = source
+  for (const key of keys) {
+    if (current === null || current === undefined)
+      return undefined
+    if (Array.isArray(current)) {
+      const index = Number(key)
+      if (!Number.isInteger(index))
+        return undefined
+      current = current[index]
+      continue
+    }
+    if (typeof current !== 'object')
+      return undefined
+    current = (current as Record<string, unknown>)[key]
+  }
+  if (current !== undefined)
+    return current
+
+  if (normalizedPath.startsWith('workflow.')) {
+    const suffix = normalizedPath.slice('workflow.'.length)
+    const fallbackToGlobal = getRuntimeValueByPath(source, `global.${suffix}`)
+    if (fallbackToGlobal !== undefined)
+      return fallbackToGlobal
+    const fallbackToRoot = getRuntimeValueByPath(source, suffix)
+    if (fallbackToRoot !== undefined)
+      return fallbackToRoot
+    const fallbackToStart = getRuntimeValueByPath(source, `start.${suffix}`)
+    if (fallbackToStart !== undefined)
+      return fallbackToStart
+  }
+  return undefined
+}
+
+const renderRuntimeTemplateKeepUnknown = (value: string, variables: Record<string, unknown>) => {
+  return String(value || '').replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (full, rawKey) => {
+    const key = String(rawKey || '').trim()
+    if (!key)
+      return full
+    const resolved = getRuntimeValueByPath(variables, key)
+    if (resolved === undefined || resolved === null)
+      return full
+    if (typeof resolved === 'object')
+      return JSON.stringify(resolved)
+    return String(resolved)
+  })
+}
 
 const normalizeWaitingFields = (schema?: Record<string, unknown>): DynamicField[] => {
   if (!schema || !Array.isArray(schema.fields))
@@ -377,7 +440,7 @@ export default function WorkflowTasksPage() {
   const findEndTemplateInfo = (execution: WorkflowExecution) => {
     const nodes = Array.isArray(execution.workflowDsl?.nodes) ? execution.workflowDsl?.nodes : []
     for (const node of nodes || []) {
-      const nodeID = String((node as any)?.id || '').trim()
+      const nodeID = String(node?.id || '').trim()
       const type = String(node?.data?.type || '').trim().toLowerCase()
       if (type !== 'end')
         continue
@@ -397,11 +460,14 @@ export default function WorkflowTasksPage() {
     }
     try {
       const detail = await request<TemplateDetailDTO>(`/api/templates/${templateID}`, { method: 'GET' })
-      const endNodeOutput = endNodeID ? execution.variables?.[endNodeID] : undefined
       const outputs = isObject(execution.outputs) ? execution.outputs : {}
+      const endNodeOutput = endNodeID ? outputs[endNodeID] : undefined
+      const variablesEndNodeOutput = endNodeID ? execution.variables?.[endNodeID] : undefined
       const outputsEnd = outputs.end
       const contextJson = isObject(endNodeOutput)
         ? endNodeOutput
+        : isObject(variablesEndNodeOutput)
+          ? variablesEndNodeOutput
         : isObject(outputsEnd)
           ? outputsEnd
           : isObject(execution.outputs)
@@ -749,7 +815,7 @@ export default function WorkflowTasksPage() {
             {waitingFieldStates.filter(item => item.visible).length === 0 && (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该节点暂无可填写字段" />
             )}
-            <DynamicForm fieldStates={waitingFieldStates} values={waitingInput} onChange={setWaitingInput} />
+            <DynamicForm fieldStates={waitingFieldStates} values={waitingInput} onChange={setWaitingInput} templateVariables={(selectedExecution?.variables ?? {}) as Record<string, unknown>} />
           </div>
         )}
         {!detailLoading && selectedExecution?.status !== 'waiting_input' && (
@@ -837,11 +903,13 @@ function DynamicForm({
   fieldStates,
   values,
   onChange,
+  templateVariables,
 }: {
   fields?: DynamicField[]
   fieldStates?: DynamicFieldState[]
   values: Record<string, unknown>
   onChange: (nextValues: Record<string, unknown>) => void
+  templateVariables?: Record<string, unknown>
 }) {
   const normalizedStates = fieldStates ?? (fields ?? []).map(item => ({
     item,
@@ -869,7 +937,9 @@ function DynamicForm({
     >
       {visibleStates.map((state) => {
         const field = state.item
-        const label = `${field.label || field.name}${field.required ? ' *' : ''}`
+        const rawLabel = field.label || field.name
+        const labelText = templateVariables ? renderRuntimeTemplateKeepUnknown(rawLabel, templateVariables) : rawLabel
+        const label = `${labelText}${field.required ? ' *' : ''}`
         const help = state.visibleError || state.validateError || undefined
         const validateStatus = help ? 'error' : undefined
         if (field.type === 'checkbox') {
@@ -882,7 +952,7 @@ function DynamicForm({
         if (field.type === 'paragraph') {
           return (
             <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-              <Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} />
+              <Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} placeholder={templateVariables && field.placeholder ? renderRuntimeTemplateKeepUnknown(field.placeholder, templateVariables) : field.placeholder} />
             </Form.Item>
           )
         }
@@ -901,7 +971,7 @@ function DynamicForm({
                 mode={field.multiSelect ? 'multiple' : undefined}
                 placeholder="请选择"
                 options={field.options.map(option => ({
-                  label: option.label || option.value,
+                  label: templateVariables ? renderRuntimeTemplateKeepUnknown(option.label || option.value, templateVariables) : (option.label || option.value),
                   value: option.value,
                 }))}
               />
@@ -910,7 +980,7 @@ function DynamicForm({
         }
         return (
           <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-            <Input />
+            <Input placeholder={templateVariables && field.placeholder ? renderRuntimeTemplateKeepUnknown(field.placeholder, templateVariables) : field.placeholder} />
           </Form.Item>
         )
       })}
