@@ -92,6 +92,7 @@ func NewApp() (*fiber.App, Config) {
 	workflowRepository := repository.NewWorkflowRepository()
 	enterpriseRepository := repository.NewEnterpriseRepository()
 	regionRepository := repository.NewRegionRepository()
+	adminDivisionRepository := repository.NewAdminDivisionRepository()
 	fileRepository := repository.NewFileRepository()
 	templateRepository := repository.NewTemplateRepository()
 	chatRepository := repository.NewChatRepository()
@@ -120,6 +121,7 @@ func NewApp() (*fiber.App, Config) {
 			workflowRepository = repository.NewPostgresWorkflowRepository(result.DB)
 			enterpriseRepository = repository.NewPostgresEnterpriseRepository(result.DB)
 			regionRepository = repository.NewPostgresRegionRepository(result.DB)
+			adminDivisionRepository = repository.NewPostgresAdminDivisionRepository(result.DB)
 			fileRepository = repository.NewPostgresFileRepository(result.DB)
 			templateRepository = repository.NewPostgresTemplateRepository(result.DB)
 			chatRepository = repository.NewPostgresChatRepository(result.DB)
@@ -136,6 +138,7 @@ func NewApp() (*fiber.App, Config) {
 	workflowService := service.NewWorkflowService(workflowRepository)
 	enterpriseService := service.NewEnterpriseService(enterpriseRepository, regionRepository)
 	regionService := service.NewRegionService(regionRepository)
+	adminDivisionService := service.NewAdminDivisionService(adminDivisionRepository)
 	fileStorage := service.NewLocalFileStorage(cfg.FileStorageRoot)
 	fileService := service.NewFileService(fileRepository, fileStorage)
 	templateRenderer := service.NewGonjaTemplateRenderer()
@@ -164,6 +167,7 @@ func NewApp() (*fiber.App, Config) {
 	workflowHandler := handler.NewWorkflowHandler(workflowService, apiRegistry)
 	enterpriseHandler := handler.NewEnterpriseHandler(enterpriseService, apiRegistry)
 	regionHandler := handler.NewRegionHandler(regionService, apiRegistry)
+	adminDivisionHandler := handler.NewAdminDivisionHandler(adminDivisionService, apiRegistry)
 	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, workflowService, workflowExecutionRateLimiter, userConfigService, apiRegistry)
 	fileHandler := handler.NewFileHandler(fileService, apiRegistry)
 	templateHandler := handler.NewTemplateHandler(templateService, apiRegistry)
@@ -177,7 +181,7 @@ func NewApp() (*fiber.App, Config) {
 	app.Use(traceMiddleware.Handler())
 
 	apiMetaHandler := handler.NewAPIMetaHandler(apiRegistry, traceStore)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, enterpriseHandler, regionHandler, apiMetaHandler, userConfigHandler, chatHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

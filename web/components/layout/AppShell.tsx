@@ -41,6 +41,7 @@ const menuItems: MenuItem[] = [
   { key: 'templates', label: '模板配置', href: '/app/templates', roles: ['admin'] as ConsoleRole[] },
   { key: 'files', label: '文件管理', href: '/app/files', roles: ['admin'] as ConsoleRole[] },
   { key: 'enterprises', label: '企业管理', href: '/app/enterprises', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'admin-divisions', label: '行政区划', href: '/app/admin-divisions', roles: ['admin'] as ConsoleRole[] },
   { key: 'system-settings', label: '系统设置', href: '/app/system-settings', roles: ['admin'] as ConsoleRole[] },
   { key: 'user-config', label: '用户配置', href: '/app/user-config', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'api-meta', label: 'API 查询', href: '/app/api-meta', roles: ['admin'] as ConsoleRole[] },
@@ -83,6 +84,8 @@ const getPageTitle = (pathname: string, search: string) => {
     return '文件管理'
   if (pathname.startsWith('/app/enterprises'))
     return '企业管理'
+  if (pathname.startsWith('/app/admin-divisions'))
+    return '行政区划'
   if (pathname.startsWith('/app/system-settings'))
     return '系统设置'
   if (pathname.startsWith('/app/user-config'))
@@ -173,6 +176,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['控制台', '文件管理']
     if (pathname.startsWith('/app/enterprises'))
       return ['控制台', '企业管理']
+    if (pathname.startsWith('/app/admin-divisions'))
+      return ['控制台', '行政区划']
     if (pathname.startsWith('/app/system-settings'))
       return ['控制台', '系统设置']
     if (pathname.startsWith('/app/user-config'))
@@ -299,6 +304,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     pushIfVisible('templates')
     pushIfVisible('files')
     pushIfVisible('enterprises')
+    pushIfVisible('admin-divisions')
     pushIfVisible('system-settings')
     pushIfVisible('user-config')
     pushIfVisible('api-meta')
@@ -318,6 +324,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['workflow-tasks']
     if (pathname.startsWith('/app/enterprises'))
       return ['enterprises']
+    if (pathname.startsWith('/app/admin-divisions'))
+      return ['admin-divisions']
     if (pathname.startsWith('/app/system-settings'))
       return ['system-settings']
     if (pathname.startsWith('/app/user-config'))
@@ -374,6 +382,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       router.push('/app/files')
     else if (key === 'enterprises')
       router.push('/app/enterprises')
+    else if (key === 'admin-divisions')
+      router.push('/app/admin-divisions')
     else if (key === 'system-settings')
       router.push('/app/system-settings')
     else if (key === 'user-config')

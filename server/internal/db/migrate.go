@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"sxfgssever/server/internal/admindivisiondata"
 )
 
 const schemaSQL = `
@@ -415,6 +417,23 @@ CREATE INDEX IF NOT EXISTS idx_region_economy_region_year ON region_economy(regi
 CREATE INDEX IF NOT EXISTS idx_region_rank_region_year ON region_rank(region_id, year DESC);
 CREATE INDEX IF NOT EXISTS idx_region_rank_region_subject_year ON region_rank(region_id, subject, year DESC);
 
+CREATE TABLE IF NOT EXISTS admin_division (
+  id BIGSERIAL PRIMARY KEY,
+  code VARCHAR(64) NOT NULL UNIQUE,
+  name VARCHAR(256) NOT NULL,
+  level INT NOT NULL CHECK (level >= 1),
+  indent INT NOT NULL DEFAULT 0 CHECK (indent >= 0),
+  parent_code VARCHAR(64),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_division_parent_code ON admin_division(parent_code);
+CREATE INDEX IF NOT EXISTS idx_admin_division_level ON admin_division(level);
+CREATE INDEX IF NOT EXISTS idx_admin_division_code_name ON admin_division(code, name);
+
 CREATE TABLE IF NOT EXISTS chat_conversation (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
@@ -692,6 +711,9 @@ ON CONFLICT (username) DO NOTHING
 `, now)
 	if err != nil {
 		return fmt.Errorf("seed users: %w", err)
+	}
+	if err := seedAdminDivisions(ctx, conn, now); err != nil {
+		return err
 	}
 
 	// demo template
@@ -1308,5 +1330,33 @@ ON CONFLICT (workflow_id, version_no) DO NOTHING
 		return fmt.Errorf("seed workflow version: %w", err)
 	}
 
+	return nil
+}
+
+func seedAdminDivisions(ctx context.Context, conn *sql.DB, now time.Time) error {
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("seed admin divisions begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `
+INSERT INTO admin_division (code, name, level, indent, parent_code, created_at, updated_at, created_by, updated_by)
+VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $6, 1, 1)
+ON CONFLICT (code) DO NOTHING
+`)
+	if err != nil {
+		return fmt.Errorf("seed admin divisions prepare: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for _, row := range admindivisiondata.Rows {
+		if _, execErr := stmt.ExecContext(ctx, row.Code, row.Name, row.Level, row.Indent, row.ParentCode, now); execErr != nil {
+			return fmt.Errorf("seed admin divisions row %s: %w", row.Code, execErr)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("seed admin divisions commit: %w", err)
+	}
 	return nil
 }

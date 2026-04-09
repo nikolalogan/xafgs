@@ -120,7 +120,16 @@ const getRuntimeValueByPath = (source: Record<string, unknown>, path: string): u
     }
     if (typeof current !== 'object')
       return undefined
-    current = (current as Record<string, unknown>)[key]
+    const objectValue = current as Record<string, unknown>
+    if (Object.prototype.hasOwnProperty.call(objectValue, key)) {
+      current = objectValue[key]
+      continue
+    }
+    if (key === 'regionName' && Object.prototype.hasOwnProperty.call(objectValue, 'name')) {
+      current = objectValue.name
+      continue
+    }
+    return undefined
   }
   if (current !== undefined)
     return current
@@ -141,7 +150,7 @@ const getRuntimeValueByPath = (source: Record<string, unknown>, path: string): u
 }
 
 const renderRuntimeTemplateKeepUnknown = (value: string, variables: Record<string, unknown>) => {
-  return String(value || '').replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (full, rawKey) => {
+  return String(value || '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (full, rawKey) => {
     const key = String(rawKey || '').trim()
     if (!key)
       return full

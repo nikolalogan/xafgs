@@ -17,6 +17,7 @@ func RegisterRoutes(
 	templateHandler *TemplateHandler,
 	enterpriseHandler *EnterpriseHandler,
 	regionHandler *RegionHandler,
+	adminDivisionHandler *AdminDivisionHandler,
 	apiMetaHandler *APIMetaHandler,
 	userConfigHandler *UserConfigHandler,
 	chatHandler *ChatHandler,
@@ -41,5 +42,6 @@ func RegisterRoutes(
 	templateHandler.Register(protectedGroup, adminMiddleware)
 	enterpriseHandler.Register(protectedGroup)
 	regionHandler.Register(protectedGroup)
+	adminDivisionHandler.Register(protectedGroup, adminMiddleware)
 	apiMetaHandler.Register(protectedGroup, adminMiddleware)
 }
