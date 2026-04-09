@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState } from 'react'
+import { Select, TreeSelect } from 'antd'
 import AICodeGenerateModal from './AICodeGenerateModal'
 import CodeTestModal from './CodeTestModal'
 import type { AICodeGenerateNodeType } from '../core/ai-code-generate'
 import { checkCodeSyntax } from '../core/code-test-engine'
-import type { VariableScope, WorkflowVariableOption } from '../core/variables'
+import { buildWorkflowVariableTreeOptions, type VariableScope, type WorkflowVariableOption } from '../core/variables'
 
 type CodeEditorAIGenerateConfig = {
   nodeType: AICodeGenerateNodeType
@@ -57,6 +58,10 @@ export default function CodeEditorField({
       return options
     return options.filter(option => option.valueType === scope)
   }, [options, scope])
+  const treeOptions = useMemo(
+    () => buildWorkflowVariableTreeOptions(filteredOptions),
+    [filteredOptions],
+  )
   const testLanguage = aiGenerateConfig?.language ?? 'javascript'
   const syntaxResult = useMemo(() => {
     if (aiGenerateConfig?.nodeType !== 'code')
@@ -92,25 +97,24 @@ export default function CodeEditorField({
     <div className="space-y-2">
       {showVariableInsert && (
         <div className="grid grid-cols-12 gap-2">
-          <select
-            className="col-span-4 rounded border border-gray-300 px-2 py-1.5 text-xs"
+          <Select
+            className="col-span-4 w-full"
+            size="small"
             value={scope}
-            onChange={event => onScopeChange(event.target.value as VariableScope)}
-          >
-            {scopeOptions.map(item => (
-              <option key={item.value} value={item.value}>{item.label}</option>
-            ))}
-          </select>
-          <select
-            className="col-span-6 rounded border border-gray-300 px-2 py-1.5 text-xs"
-            value={selectedKey}
-            onChange={event => setSelectedKey(event.target.value)}
-          >
-            <option value="">选择参数（插入到代码）</option>
-            {filteredOptions.map(option => (
-              <option key={option.key} value={option.key}>{option.displayLabel}</option>
-            ))}
-          </select>
+            options={scopeOptions}
+            onChange={value => onScopeChange(value as VariableScope)}
+          />
+          <TreeSelect
+            className="col-span-6 w-full"
+            value={selectedKey || undefined}
+            placeholder="选择参数（插入到代码）"
+            showSearch
+            treeData={treeOptions}
+            treeDefaultExpandAll
+            popupMatchSelectWidth={false}
+            filterTreeNode={(input, treeNode) => String(treeNode.title || '').toLowerCase().includes(input.toLowerCase())}
+            onChange={value => setSelectedKey(String(value || ''))}
+          />
           <button
             type="button"
             className="col-span-2 rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"

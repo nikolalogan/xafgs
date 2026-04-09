@@ -190,7 +190,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     window.localStorage.removeItem('sxfg_user_role')
     window.localStorage.removeItem('user_role')
     setRole('guest')
-    router.push('/?redirect=/app/workflow')
+    router.push('/login?redirect=/app')
   }
 
   useEffect(() => {

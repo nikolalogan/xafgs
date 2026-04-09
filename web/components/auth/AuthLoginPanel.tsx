@@ -24,7 +24,7 @@ export default function AuthLoginPanel(props: AuthLoginPanelProps) {
   const router = useRouter()
 
   const title = props.title || '西安分公司'
-  const defaultRedirect = props.defaultRedirect || '/app/workflow'
+  const defaultRedirect = props.defaultRedirect || '/app'
   const titlePlacement = props.titlePlacement || 'center'
   const layout = props.layout || 'center'
 

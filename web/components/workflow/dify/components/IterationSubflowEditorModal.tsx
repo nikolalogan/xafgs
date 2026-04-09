@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Select } from 'antd'
 import ReactFlow, {
   addEdge,
   applyEdgeChanges,
@@ -222,10 +223,7 @@ function IterationSubflowEditorInner({
           <label className={labelClass}>User Prompt</label>
           <textarea className="h-20 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={config.userPrompt} onChange={event => updateActiveNodeConfig({ ...config, userPrompt: event.target.value })} />
           <label className={labelClass}>输出结果类型</label>
-          <select className={inputClass} value={config.outputType} onChange={event => updateActiveNodeConfig({ ...config, outputType: event.target.value === 'json' ? 'json' : 'string' })}>
-            <option value="string">string</option>
-            <option value="json">json</option>
-          </select>
+          <Select className="w-full" value={config.outputType} options={[{ value: 'string', label: 'string' }, { value: 'json', label: 'json' }]} onChange={value => updateActiveNodeConfig({ ...config, outputType: value === 'json' ? 'json' : 'string' })} />
           <label className={labelClass}>输出变量名</label>
           <input className={inputClass} value={config.outputVar} onChange={event => updateActiveNodeConfig({ ...config, outputVar: event.target.value })} />
         </div>
@@ -237,10 +235,7 @@ function IterationSubflowEditorInner({
       return (
         <div className="space-y-2">
           <label className={labelClass}>语言</label>
-          <select className={inputClass} value={config.language} onChange={event => updateActiveNodeConfig({ ...config, language: event.target.value as CodeNodeConfig['language'] })}>
-            <option value="javascript">JavaScript</option>
-            <option value="python3">Python3</option>
-          </select>
+          <Select className="w-full" value={config.language} options={[{ value: 'javascript', label: 'JavaScript' }, { value: 'python3', label: 'Python3' }]} onChange={value => updateActiveNodeConfig({ ...config, language: value as CodeNodeConfig['language'] })} />
           <label className={labelClass}>代码</label>
           <CodeEditorField
             value={config.code}
@@ -262,13 +257,7 @@ function IterationSubflowEditorInner({
       return (
         <div className="space-y-2">
           <label className={labelClass}>Method</label>
-          <select className={inputClass} value={config.method} onChange={event => updateActiveNodeConfig({ ...config, method: event.target.value as HttpNodeConfig['method'] })}>
-            <option value="GET">GET</option>
-            <option value="POST">POST</option>
-            <option value="PUT">PUT</option>
-            <option value="PATCH">PATCH</option>
-            <option value="DELETE">DELETE</option>
-          </select>
+          <Select className="w-full" value={config.method} options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(item => ({ value: item, label: item }))} onChange={value => updateActiveNodeConfig({ ...config, method: value as HttpNodeConfig['method'] })} />
           <label className={labelClass}>URL</label>
           <input className={inputClass} value={config.url} onChange={event => updateActiveNodeConfig({ ...config, url: event.target.value })} />
           <label className={labelClass}>重试次数</label>
@@ -284,13 +273,7 @@ function IterationSubflowEditorInner({
       return (
         <div className="space-y-2">
           <label className={labelClass}>Method</label>
-          <select className={inputClass} value={config.route.method} onChange={event => updateActiveNodeConfig({ ...config, route: { ...config.route, method: event.target.value as ApiRequestNodeConfig['route']['method'] } })}>
-            <option value="GET">GET</option>
-            <option value="POST">POST</option>
-            <option value="PUT">PUT</option>
-            <option value="PATCH">PATCH</option>
-            <option value="DELETE">DELETE</option>
-          </select>
+          <Select className="w-full" value={config.route.method} options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(item => ({ value: item, label: item }))} onChange={value => updateActiveNodeConfig({ ...config, route: { ...config.route, method: value as ApiRequestNodeConfig['route']['method'] } })} />
           <label className={labelClass}>路径</label>
           <input className={inputClass} value={config.route.path} onChange={event => updateActiveNodeConfig({ ...config, route: { ...config.route, path: event.target.value } })} />
           <label className={labelClass}>超时（秒）</label>
@@ -469,20 +452,21 @@ function IterationSubflowEditorInner({
                 {activeNode.data.type !== BlockEnum.Start && (
                   <div className="space-y-1 rounded border border-gray-200 p-2">
                     <label className={labelClass}>多入边汇聚策略</label>
-                    <select
-                      className={inputClass}
+                    <Select
+                      className="w-full"
                       value={activeNode.data.config && typeof activeNode.data.config === 'object' && (activeNode.data.config as { joinMode?: unknown }).joinMode === 'any' ? 'any' : 'all'}
-                      onChange={(event) => {
+                      options={[
+                        { value: 'all', label: '等待全部上游（all）' },
+                        { value: 'any', label: '任一上游到达即执行（any）' },
+                      ]}
+                      onChange={(value) => {
                         const base = ensureNodeConfig(activeNode.data.type as never, activeNode.data.config as never) as Record<string, unknown>
                         updateActiveNodeConfig({
                           ...base,
-                          joinMode: event.target.value === 'any' ? 'any' : 'all',
+                          joinMode: value === 'any' ? 'any' : 'all',
                         } as DifyNodeConfig)
                       }}
-                    >
-                      <option value="all">等待全部上游（all）</option>
-                      <option value="any">任一上游到达即执行（any）</option>
-                    </select>
+                    />
                     <div className="text-[11px] text-gray-400">仅当当前节点存在多条输入连线时生效。</div>
                   </div>
                 )}

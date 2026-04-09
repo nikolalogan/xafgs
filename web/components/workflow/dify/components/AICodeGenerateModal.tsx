@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Select, TreeSelect } from 'antd'
 import { requestAICodeGenerate, type AICodeGenerateNodeType, type AICodeGenerateTargetType } from '../core/ai-code-generate'
-import type { WorkflowVariableOption } from '../core/variables'
+import { buildWorkflowVariableTreeOptions, type WorkflowVariableOption } from '../core/variables'
 
 type AICodeGenerateContext = {
   targetType: AICodeGenerateTargetType
@@ -68,6 +69,10 @@ export default function AICodeGenerateModal({
     () => variableOptions.filter(item => selectedKeys.includes(item.key)),
     [selectedKeys, variableOptions],
   )
+  const variableTreeOptions = useMemo(
+    () => buildWorkflowVariableTreeOptions(variableOptions),
+    [variableOptions],
+  )
 
   if (!open || !context)
     return null
@@ -84,31 +89,25 @@ export default function AICodeGenerateModal({
 
         <div className="space-y-2">
           <label className="block text-xs text-gray-500">模型</label>
-          <select
-            className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+          <Select
+            className="w-full"
             value={model}
-            onChange={event => setModel(event.target.value)}
-          >
-            {safeModelOptions.map(item => (
-              <option key={item.name} value={item.name}>{item.label || item.name}</option>
-            ))}
-          </select>
+            options={safeModelOptions.map(item => ({ value: item.name, label: item.label || item.name }))}
+            onChange={setModel}
+          />
 
           <label className="block text-xs text-gray-500">引入参数（多选）</label>
-          <select
-            className="h-36 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+          <TreeSelect
+            className="w-full"
             multiple
             value={selectedKeys}
-            onChange={(event) => {
-              const values = Array.from(event.target.selectedOptions).map(option => option.value)
-              setSelectedKeys(values)
-            }}
-          >
-            {variableOptions.map(option => (
-              <option key={option.key} value={option.key}>{option.displayLabel}</option>
-            ))}
-          </select>
-          <div className="text-xs text-gray-500">按住 Ctrl/Command 可多选</div>
+            showSearch
+            treeData={variableTreeOptions}
+            treeDefaultExpandAll
+            popupMatchSelectWidth={false}
+            filterTreeNode={(input, treeNode) => String(treeNode.title || '').toLowerCase().includes(input.toLowerCase())}
+            onChange={value => setSelectedKeys((value as string[]) || [])}
+          />
 
           <label className="block text-xs text-gray-500">需求描述</label>
           <textarea

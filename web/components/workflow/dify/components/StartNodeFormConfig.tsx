@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Select } from 'antd'
 import RuleTestModal from './RuleTestModal'
 import StartFormPreviewModal from './StartFormPreviewModal'
 import AICodeGenerateModal from './AICodeGenerateModal'
@@ -112,11 +113,11 @@ export default function StartNodeFormConfig({
               onChange={event => updateVariable(index, { label: event.target.value })}
             />
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                className="w-[124px] rounded border border-gray-300 px-2 py-1.5 text-sm"
+              <Select
+                className="w-[124px]"
                 value={item.type}
-                onChange={(event) => {
-                  const nextType = event.target.value as StartNodeConfig['variables'][number]['type']
+                options={visibleTypeOptions}
+                onChange={(nextType) => {
                   updateVariable(index, {
                     type: nextType,
                     placeholder: undefined,
@@ -132,11 +133,7 @@ export default function StartNodeFormConfig({
                     jsonSchema: nextType === 'json_object' ? (item.jsonSchema ?? '') : undefined,
                   })
                 }}
-              >
-                {visibleTypeOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
+              />
               <label className="flex items-center gap-1 text-xs text-gray-600">
                 <input type="checkbox" checked={item.required} onChange={event => updateVariable(index, { required: event.target.checked })} />
                 必填
@@ -179,10 +176,15 @@ export default function StartNodeFormConfig({
                 {item.type === 'checkbox' && (
                   <div className="space-y-1">
                     <label className={labelClass}>默认值</label>
-                    <select className={inputClass} value={Boolean(item.defaultValue) ? 'checked' : 'unchecked'} onChange={event => updateVariable(index, { defaultValue: event.target.value === 'checked' })}>
-                      <option value="checked">默认勾选</option>
-                      <option value="unchecked">不默认勾选</option>
-                    </select>
+                    <Select
+                      className="w-full"
+                      value={Boolean(item.defaultValue) ? 'checked' : 'unchecked'}
+                      options={[
+                        { value: 'checked', label: '默认勾选' },
+                        { value: 'unchecked', label: '不默认勾选' },
+                      ]}
+                      onChange={value => updateVariable(index, { defaultValue: value === 'checked' })}
+                    />
                   </div>
                 )}
 
@@ -216,12 +218,17 @@ export default function StartNodeFormConfig({
                       <div className="space-y-1">
                         <label className={labelClass}>默认值</label>
                         {!item.multiSelect && (
-                          <select className={inputClass} value={typeof item.defaultValue === 'string' ? item.defaultValue : ''} onChange={event => updateVariable(index, { defaultValue: event.target.value || undefined })}>
-                            <option value="">不设置默认值</option>
-                            {(item.options ?? []).filter(option => option.value.trim()).map((option, optionIndex) => (
-                              <option key={`def-${index}-${optionIndex}`} value={option.value}>{option.label || option.value}</option>
-                            ))}
-                          </select>
+                          <Select
+                            className="w-full"
+                            value={typeof item.defaultValue === 'string' ? item.defaultValue : undefined}
+                            placeholder="不设置默认值"
+                            allowClear
+                            options={(item.options ?? []).filter(option => option.value.trim()).map(option => ({
+                              value: option.value,
+                              label: option.label || option.value,
+                            }))}
+                            onChange={value => updateVariable(index, { defaultValue: value || undefined })}
+                          />
                         )}
                         {item.multiSelect && (
                           <div className="space-y-1 rounded border border-gray-200 p-2">

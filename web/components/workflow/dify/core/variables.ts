@@ -14,6 +14,22 @@ export type WorkflowVariableOption = {
   displayLabel: string
 }
 
+export type WorkflowVariableSelectGroupOption = {
+  label: string
+  options: Array<{
+    value: string
+    label: string
+  }>
+}
+
+export type WorkflowVariableTreeOption = {
+  title: string
+  value: string
+  key: string
+  selectable?: boolean
+  children?: WorkflowVariableTreeOption[]
+}
+
 const normalizeScopeFromString = (value: string): VariableScope => {
   if (value === 'file')
     return 'file'
@@ -79,13 +95,7 @@ const parseObjectLeafPathsFromJson = (rawJson?: string): string[] => {
 }
 
 const buildDisplayLabel = (nodeTitle: string, fullParamPath: string) => {
-  const parts = fullParamPath.split('.').filter(Boolean)
-  if (parts.length <= 1)
-    return `${nodeTitle}.${fullParamPath}`
-  const leaf = parts[parts.length - 1]
-  const parent = parts.slice(0, -1).join('.')
-  const indent = '  '.repeat(Math.max(0, parts.length - 2))
-  return `${nodeTitle}.${indent}└ ${leaf} (${parent}.${leaf})`
+  return `${nodeTitle}.${fullParamPath}`
 }
 
 export const buildWorkflowVariableOptions = (
@@ -334,6 +344,84 @@ export const buildWorkflowVariableOptions = (
     finalUnique.set(item.key, item)
   })
   return [...finalUnique.values()]
+}
+
+export const buildWorkflowVariableSelectGroupOptions = (
+  options: WorkflowVariableOption[],
+): WorkflowVariableSelectGroupOption[] => {
+  const grouped = new Map<string, WorkflowVariableSelectGroupOption>()
+
+  options.forEach((option) => {
+    const groupKey = option.nodeId || option.nodeTitle
+    const groupLabel = option.nodeTitle || option.nodeId
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, {
+        label: groupLabel,
+        options: [],
+      })
+    }
+
+    grouped.get(groupKey)?.options.push({
+      value: option.key,
+      label: option.param,
+    })
+  })
+
+  return [...grouped.values()]
+}
+
+export const buildWorkflowVariableTreeOptions = (
+  options: WorkflowVariableOption[],
+): WorkflowVariableTreeOption[] => {
+  const grouped = new Map<string, WorkflowVariableTreeOption>()
+
+  options.forEach((option) => {
+    const groupKey = option.nodeId || option.nodeTitle
+    const groupLabel = option.nodeTitle || option.nodeId
+
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, {
+        title: groupLabel,
+        value: `__group__:${groupKey}`,
+        key: `__group__:${groupKey}`,
+        selectable: false,
+        children: [],
+      })
+    }
+
+    const groupNode = grouped.get(groupKey)!
+    const parts = option.param.split('.').filter(Boolean)
+    let currentChildren = groupNode.children!
+    let currentPath = ''
+
+    parts.forEach((part, index) => {
+      currentPath = currentPath ? `${currentPath}.${part}` : part
+      const isLeaf = index === parts.length - 1
+      const nodeValue = isLeaf ? option.key : `__path__:${groupKey}.${currentPath}`
+      let currentNode = currentChildren.find(item => item.title === part)
+
+      if (!currentNode) {
+        currentNode = {
+          title: part,
+          value: nodeValue,
+          key: nodeValue,
+          selectable: isLeaf,
+          children: [],
+        }
+        currentChildren.push(currentNode)
+      }
+
+      if (isLeaf) {
+        currentNode.value = option.key
+        currentNode.key = option.key
+        currentNode.selectable = true
+      }
+
+      currentChildren = currentNode.children ?? (currentNode.children = [])
+    })
+  })
+
+  return [...grouped.values()]
 }
 
 export const formatValueForDisplay = (rawValue: unknown, options: WorkflowVariableOption[]): string => {

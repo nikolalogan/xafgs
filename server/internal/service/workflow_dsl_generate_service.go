@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -93,7 +92,6 @@ func (service *workflowDSLGenerateService) Generate(ctx context.Context, userID 
 		return WorkflowDSLGenerateResult{}, model.NewAPIError(400, response.CodeBadRequest, "缺少用户配置：AI 服务商地址、AI APIKey")
 	}
 
-	readmeText := loadWorkflowReadme()
 	version, raw, apiError := service.fileService.ReadReferenceContent(ctx, normalized.FileID, normalized.VersionNo, maxWorkflowGenerateFileBytes)
 	if apiError != nil {
 		log.Printf("workflow-dsl-generate parse-file failed user=%d fileId=%d versionNo=%d err=%s", userID, normalized.FileID, normalized.VersionNo, apiError.Message)
@@ -108,20 +106,14 @@ func (service *workflowDSLGenerateService) Generate(ctx context.Context, userID 
 		BaseURL: baseURL,
 		APIKey:  apiKey,
 		Model:   normalized.Model,
-		Messages: []ai.ChatMessage{
-			{
-				Role:    model.ChatMessageRoleSystem,
-				Content: "你是工作流 DSL 生成器。你只能输出合法 JSON，且必须是工作流 DSL 根对象，不要 Markdown，不要解释。",
+		Messages: buildWorkflowAIMessages(
+			"你是工作流 DSL 生成器。你只能输出合法 JSON，且必须是工作流 DSL 根对象，不要 Markdown，不要解释。",
+			[]workflowAIPromptSection{
+				{Title: "用户上传文件内容", Body: filePayload},
+				{Title: "用户需求", Body: normalized.Description},
 			},
-			{
-				Role: model.ChatMessageRoleUser,
-				Content: fmt.Sprintf("下面是 DSL 规范文档：\n%s\n\n下面是用户上传文件内容：\n%s\n\n用户需求：\n%s\n\n请输出最终 DSL JSON，仅输出 JSON。",
-					readmeText,
-					filePayload,
-					normalized.Description,
-				),
-			},
-		},
+			"请输出最终 DSL JSON，仅输出 JSON。",
+		),
 		Temperature: 0.2,
 		Timeout:     aiTimeout,
 	})
@@ -196,25 +188,6 @@ func normalizeGeneratedWorkflowDSL(raw string) (json.RawMessage, *model.APIError
 		return nil, model.NewAPIError(502, response.CodeInternal, "AI 返回 DSL 序列化失败")
 	}
 	return normalized, nil
-}
-
-func loadWorkflowReadme() string {
-	candidates := []string{
-		"docs/workflow-dsl/README.md",
-		"../docs/workflow-dsl/README.md",
-		"../../docs/workflow-dsl/README.md",
-	}
-	for _, filePath := range candidates {
-		raw, err := os.ReadFile(filePath)
-		if err != nil {
-			continue
-		}
-		text := strings.TrimSpace(string(raw))
-		if text != "" {
-			return text
-		}
-	}
-	return "工作流 DSL 至少包含 nodes/edges/viewport。nodes 必须非空；每个节点必须有 id/type/position/data。if-else 分支通过 edge.sourceHandle 连接。"
 }
 
 func buildWorkflowGenerateFilePayload(fileName, mimeType string, raw []byte) string {

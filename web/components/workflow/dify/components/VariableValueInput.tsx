@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
+import { Select, TreeSelect } from 'antd'
 import {
+  buildWorkflowVariableTreeOptions,
   formatValueForDisplay,
   parseDisplayToRaw,
   type VariableScope,
@@ -47,6 +49,10 @@ export default function VariableValueInput({
       return options
     return options.filter(option => option.valueType === activeScope)
   }, [activeScope, options])
+  const treeOptions = useMemo(
+    () => buildWorkflowVariableTreeOptions(filteredOptions),
+    [filteredOptions],
+  )
 
   const displayValue = useMemo(
     () => formatValueForDisplay(value, options),
@@ -68,25 +74,24 @@ export default function VariableValueInput({
     <div className="space-y-1">
       {label && <label className="block text-xs text-gray-500">{label}</label>}
       <div className="grid grid-cols-12 gap-2">
-        <select
-          className="col-span-4 rounded border border-gray-300 px-2 py-1.5 text-xs"
+        <Select
+          className="col-span-4 w-full"
+          size="small"
           value={activeScope}
-          onChange={(event) => onScopeChange?.(event.target.value as VariableScope)}
-        >
-          {allScopes.map(item => (
-            <option key={item.value} value={item.value}>{item.label}</option>
-          ))}
-        </select>
-        <select
-          className="col-span-6 rounded border border-gray-300 px-2 py-1.5 text-xs"
-          value={selectedKey}
-          onChange={event => setSelectedKey(event.target.value)}
-        >
-          <option value="">选择参数</option>
-          {filteredOptions.map(option => (
-            <option key={option.key} value={option.key}>{option.displayLabel}</option>
-          ))}
-        </select>
+          options={allScopes}
+          onChange={(nextValue) => onScopeChange?.(nextValue as VariableScope)}
+        />
+        <TreeSelect
+          className="col-span-6 w-full"
+          value={selectedKey || undefined}
+          placeholder="选择参数"
+          showSearch
+          treeData={treeOptions}
+          treeDefaultExpandAll
+          popupMatchSelectWidth={false}
+          filterTreeNode={(input, treeNode) => String(treeNode.title || '').toLowerCase().includes(input.toLowerCase())}
+          onChange={value => setSelectedKey(String(value || ''))}
+        />
         <button
           type="button"
           onClick={insertVariable}

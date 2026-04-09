@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Cascader, Modal } from 'antd'
+import { Cascader, Modal, Select, TreeSelect } from 'antd'
 import StartNodeFormConfig from './StartNodeFormConfig'
 import VariableValueInput from './VariableValueInput'
 import CodeEditorField from './CodeEditorField'
 import { createDefaultNodeConfig, ensureNodeConfig } from '../core/node-config'
-import { extractSchemaLeafPaths } from '../core/json-schema'
 import { adaptInputConfigToStartConfig, adaptStartConfigToInputConfig } from '../core/variable-form-adapter'
-import { buildWorkflowVariableOptions, type VariableScope } from '../core/variables'
+import { buildWorkflowVariableOptions, buildWorkflowVariableTreeOptions, type VariableScope } from '../core/variables'
 import {
   BlockEnum,
   type ApiRequestNodeConfig,
@@ -44,6 +43,7 @@ type NodeConfigPanelProps = {
 
 const labelClass = 'block text-xs text-gray-500'
 const inputClass = 'w-full rounded border border-gray-300 px-2 py-1.5 text-sm'
+const antSelectClass = 'w-full'
 const sectionClass = 'space-y-2 rounded border border-gray-200 p-2'
 const mappingCascaderClass = 'w-full min-w-0 [&_.ant-select-selector]:min-w-0 [&_.ant-select-selection-item]:max-w-full [&_.ant-select-selection-item]:truncate'
 
@@ -175,38 +175,6 @@ const extractPathsFromJson = (raw: unknown): string[] => {
 
   visit(raw, '')
   return [...new Set(paths)].filter(Boolean)
-}
-
-const inferSchemaFromJson = (value: unknown): Record<string, unknown> => {
-  const infer = (raw: unknown): Record<string, unknown> => {
-    if (raw === null)
-      return { type: 'null' }
-    if (Array.isArray(raw)) {
-      const first = raw.length > 0 ? raw[0] : null
-      return {
-        type: 'array',
-        items: infer(first),
-      }
-    }
-    switch (typeof raw) {
-      case 'string':
-        return { type: 'string' }
-      case 'number':
-        return { type: 'number' }
-      case 'boolean':
-        return { type: 'boolean' }
-      case 'object': {
-        const properties: Record<string, unknown> = {}
-        Object.entries(raw as Record<string, unknown>).forEach(([key, child]) => {
-          properties[key] = infer(child)
-        })
-        return { type: 'object', properties }
-      }
-      default:
-        return { type: 'string' }
-    }
-  }
-  return infer(value)
 }
 
 const encodeParamValue = (value: unknown) => {
@@ -740,6 +708,10 @@ export default function NodeConfigPanel({
     () => variableOptions.filter(option => option.nodeId === 'workflow' || option.nodeId === 'global'),
     [variableOptions],
   )
+  const variableTreeOptions = useMemo(
+    () => buildWorkflowVariableTreeOptions(variableOptions),
+    [variableOptions],
+  )
   const mappingTargetCascaderOptions = useMemo(
     () => buildMappingCascaderOptions(mappingTargetOptions),
     [mappingTargetOptions],
@@ -1092,11 +1064,15 @@ export default function NodeConfigPanel({
         <div className="grid grid-cols-12 gap-2">
           <div className="col-span-12 md:col-span-4">
             <div className="mb-1 text-[11px] text-gray-600">配对模式</div>
-            <select
-              className={inputClass}
+            <Select
+              className={antSelectClass}
               value={draft.mappingType}
-              onChange={(event) => {
-                const mappingType = event.target.value === 'object' ? 'object' as const : 'array' as const
+              options={[
+                { value: 'array', label: '数组对象映射（a[] → b[]）' },
+                { value: 'object', label: '对象映射（a → b）' },
+              ]}
+              onChange={(value) => {
+                const mappingType = value === 'object' ? 'object' as const : 'array' as const
                 setArrayDraft(owner, prev => ({
                   ...prev,
                   mappingType,
@@ -1106,10 +1082,7 @@ export default function NodeConfigPanel({
                 }))
                 setArrayDraftError(owner, '')
               }}
-            >
-              <option value="array">数组对象映射（a[] → b[]）</option>
-              <option value="object">对象映射（a → b）</option>
-            </select>
+            />
           </div>
         </div>
         <div className="grid grid-cols-12 gap-2">
@@ -1155,43 +1128,35 @@ export default function NodeConfigPanel({
           {draft.pairs.map((pair, index) => (
             <div key={`${ownerKey}-pair-${index}`} className="grid grid-cols-12 gap-2">
               <div className="col-span-12 md:col-span-5">
-                <select
-                  className={inputClass}
+                <Select
+                  className={antSelectClass}
                   value={pair.sourceField}
-                  onChange={(event) => {
-                    const value = event.target.value
+                  placeholder="源字段"
+                  options={sourceFieldPaths.map(field => ({ value: field, label: field }))}
+                  onChange={(value) => {
                     setArrayDraft(owner, (prev) => {
                       const nextPairs = prev.pairs.slice()
                       nextPairs[index] = { ...nextPairs[index], sourceField: value }
                       return { ...prev, pairs: nextPairs }
                     })
                   }}
-                >
-                  <option value="">源字段</option>
-                  {sourceFieldPaths.map(field => (
-                    <option key={`${ownerKey}-source-${field}`} value={field}>{field}</option>
-                  ))}
-                </select>
+                />
               </div>
               <div className="col-span-12 md:col-span-1 text-center text-xs text-gray-400 md:py-2">→</div>
               <div className="col-span-12 md:col-span-5">
-                <select
-                  className={inputClass}
+                <Select
+                  className={antSelectClass}
                   value={pair.targetField}
-                  onChange={(event) => {
-                    const value = event.target.value
+                  placeholder="目标字段"
+                  options={targetFieldPaths.map(field => ({ value: field, label: field }))}
+                  onChange={(value) => {
                     setArrayDraft(owner, (prev) => {
                       const nextPairs = prev.pairs.slice()
                       nextPairs[index] = { ...nextPairs[index], targetField: value }
                       return { ...prev, pairs: nextPairs }
                     })
                   }}
-                >
-                  <option value="">目标字段</option>
-                  {targetFieldPaths.map(field => (
-                    <option key={`${ownerKey}-target-${field}`} value={field}>{field}</option>
-                  ))}
-                </select>
+                />
               </div>
               <button
                 type="button"
@@ -1558,11 +1523,7 @@ export default function NodeConfigPanel({
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">LLM 配置</div>
         <label className={labelClass}>模型</label>
-        <select className={inputClass} value={config.model} onChange={event => updateConfig({ ...config, model: event.target.value })}>
-          {llmModelSelectOptions.map(item => (
-            <option key={item.name} value={item.name}>{item.label || item.name}</option>
-          ))}
-        </select>
+        <Select className={antSelectClass} value={config.model} options={llmModelSelectOptions.map(item => ({ value: item.name, label: item.label || item.name }))} onChange={value => updateConfig({ ...config, model: value })} />
         <label className={labelClass}>温度</label>
         <input className={inputClass} type="number" step="0.1" min="0" max="2" value={config.temperature} onChange={event => updateConfig({ ...config, temperature: Number(event.target.value || 0) })} />
         <label className={labelClass}>最大 Token</label>
@@ -1594,17 +1555,15 @@ export default function NodeConfigPanel({
           启用上下文
         </label>
         <label className={labelClass}>输出结果类型</label>
-        <select
-          className={inputClass}
+        <Select
+          className={antSelectClass}
           value={config.outputType}
-          onChange={(event) => updateConfig({
+          options={[{ value: 'string', label: 'string' }, { value: 'json', label: 'json' }]}
+          onChange={(value) => updateConfig({
             ...config,
-            outputType: event.target.value === 'json' ? 'json' : 'string',
+            outputType: value === 'json' ? 'json' : 'string',
           })}
-        >
-          <option value="string">string</option>
-          <option value="json">json</option>
-        </select>
+        />
         <label className={labelClass}>输出变量名</label>
         <input
           className={inputClass}
@@ -1686,24 +1645,25 @@ export default function NodeConfigPanel({
                 updateConfig({ ...config, conditions: next })
               }}
             />
-            <select
-              className={inputClass}
+            <Select
+              className={antSelectClass}
               value={condition.operator}
-              onChange={(event) => {
+              options={[
+                { value: 'contains', label: '包含' },
+                { value: 'not_contains', label: '不包含' },
+                { value: 'eq', label: '等于' },
+                { value: 'neq', label: '不等于' },
+                { value: 'gt', label: '大于' },
+                { value: 'lt', label: '小于' },
+                { value: 'empty', label: '为空' },
+                { value: 'not_empty', label: '不为空' },
+              ]}
+              onChange={(value) => {
                 const next = [...config.conditions]
-                next[index] = { ...condition, operator: event.target.value as IfElseNodeConfig['conditions'][number]['operator'] }
+                next[index] = { ...condition, operator: value as IfElseNodeConfig['conditions'][number]['operator'] }
                 updateConfig({ ...config, conditions: next })
               }}
-            >
-              <option value="contains">包含</option>
-              <option value="not_contains">不包含</option>
-              <option value="eq">等于</option>
-              <option value="neq">不等于</option>
-              <option value="gt">大于</option>
-              <option value="lt">小于</option>
-              <option value="empty">为空</option>
-              <option value="not_empty">不为空</option>
-            </select>
+            />
             <VariableValueInput
               label="比较值"
               value={condition.right}
@@ -1754,19 +1714,13 @@ export default function NodeConfigPanel({
     const codeScopeKey = `${activeNode.id}.code.content`
     const responseJsonDraft = codeResponseJsonByNode[activeNode.id] ?? ''
     const responseJsonError = codeResponseJsonErrorByNode[activeNode.id] ?? ''
-    const applyResponseJson = (mode: 'schema' | 'mappings') => {
+    const applyResponseJson = () => {
       const parsed = parseJsonAny(responseJsonDraft)
       if (!parsed.ok) {
         setCodeResponseJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: parsed.error }))
         return
       }
       setCodeResponseJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: '' }))
-
-      if (mode === 'schema') {
-        const schema = inferSchemaFromJson(parsed.value)
-        updateConfig({ ...config, outputSchema: stringifyPretty(schema) })
-        return
-      }
 
       const paths = extractPathsFromJson(parsed.value)
       const normalized = paths.map(path => ({
@@ -1776,12 +1730,6 @@ export default function NodeConfigPanel({
       updateConfig({ ...config, writebackMappings: normalized })
     }
 
-    const schemaPaths = (() => {
-      const parsed = extractSchemaLeafPaths(config.outputSchema ?? '')
-      if (!parsed.ok)
-        return [] as string[]
-      return parsed.paths
-    })()
     const responseJsonPaths = (() => {
       const parsed = parseJsonAny(responseJsonDraft)
       if (!parsed.ok)
@@ -1790,7 +1738,6 @@ export default function NodeConfigPanel({
     })()
     const suggestedSourcePaths = [...new Set([
       '$',
-      ...schemaPaths,
       ...responseJsonPaths,
     ])]
     const sourcePathCascaderOptions = buildSourcePathCascaderOptions(suggestedSourcePaths)
@@ -1799,7 +1746,7 @@ export default function NodeConfigPanel({
         {renderArrayMappingBuilder('code', config.writebackMappings, next => updateConfig({ ...config, writebackMappings: next }), suggestedSourcePaths)}
         {config.writebackMappings.length === 0 && (
           <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
-            请先配置输出 Schema/JSON 并点击“生成映射”。
+            可粘贴输出 JSON 后点击“按 JSON 生成映射”，或直接手工配置映射。
           </div>
         )}
         <div className="flex items-center justify-between gap-2">
@@ -1896,14 +1843,12 @@ export default function NodeConfigPanel({
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">代码节点</div>
         <label className={labelClass}>语言</label>
-        <select
-          className={inputClass}
+        <Select
+          className={antSelectClass}
           value={config.language}
-          onChange={event => updateConfig({ ...config, language: event.target.value as CodeNodeConfig['language'] })}
-        >
-          <option value="javascript">JavaScript</option>
-          <option value="python3">Python3</option>
-        </select>
+          options={[{ value: 'javascript', label: 'JavaScript' }, { value: 'python3', label: 'Python3' }]}
+          onChange={value => updateConfig({ ...config, language: value as CodeNodeConfig['language'] })}
+        />
         <label className={labelClass}>代码</label>
         <CodeEditorField
           value={config.code}
@@ -1923,34 +1868,6 @@ export default function NodeConfigPanel({
      
         <div className="space-y-2 rounded border border-gray-200 p-2">
           <div className="text-xs font-semibold text-gray-700">输出写入参数</div>
-          <label className={labelClass}>输出 JSON Schema（可选）</label>
-          <textarea
-            className="h-28 w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
-            placeholder={`{\n  "type": "object",\n  "properties": {\n    "result": { "type": "string" }\n  }\n}`}
-            value={config.outputSchema ?? ''}
-            onChange={event => updateConfig({ ...config, outputSchema: event.target.value })}
-          />
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
-              onClick={() => {
-                const parsed = extractSchemaLeafPaths(config.outputSchema ?? '')
-                if (!parsed.ok)
-                  return
-                const generated = parsed.paths.map(path => ({
-                  expression: path,
-                  targetPath: '',
-                }))
-                updateConfig({
-                  ...config,
-                  writebackMappings: generated,
-                })
-              }}
-            >
-              按 Schema 生成映射
-            </button>
-          </div>
           <label className={labelClass}>输出 JSON（导入，可选）</label>
           <textarea
             className="h-28 w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
@@ -1965,14 +1882,7 @@ export default function NodeConfigPanel({
             <button
               type="button"
               className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
-              onClick={() => applyResponseJson('schema')}
-            >
-              从 JSON 生成 Schema
-            </button>
-            <button
-              type="button"
-              className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
-              onClick={() => applyResponseJson('mappings')}
+              onClick={applyResponseJson}
             >
               按 JSON 生成映射
             </button>
@@ -2117,15 +2027,16 @@ export default function NodeConfigPanel({
           </>
         )}
         <label className={labelClass}>错误处理方式</label>
-        <select
-          className={inputClass}
+        <Select
+          className={antSelectClass}
           value={config.errorHandleMode}
-          onChange={event => updateConfig({ ...config, errorHandleMode: event.target.value as IterationNodeConfig['errorHandleMode'] })}
-        >
-          <option value="terminated">终止执行</option>
-          <option value="continue-on-error">遇错继续</option>
-          <option value="remove-abnormal-output">移除异常输出</option>
-        </select>
+          options={[
+            { value: 'terminated', label: '终止执行' },
+            { value: 'continue-on-error', label: '遇错继续' },
+            { value: 'remove-abnormal-output', label: '移除异常输出' },
+          ]}
+          onChange={value => updateConfig({ ...config, errorHandleMode: value as IterationNodeConfig['errorHandleMode'] })}
+        />
         <label className="flex items-center gap-1 text-xs text-gray-600">
           <input
             type="checkbox"
@@ -2185,19 +2096,13 @@ export default function NodeConfigPanel({
 
     const responseJsonDraft = httpResponseJsonByNode[activeNode.id] ?? ''
     const responseJsonError = httpResponseJsonErrorByNode[activeNode.id] ?? ''
-    const applyResponseJson = (mode: 'schema' | 'mappings') => {
+    const applyResponseJson = () => {
       const parsed = parseJsonAny(responseJsonDraft)
       if (!parsed.ok) {
         setHttpResponseJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: parsed.error }))
         return
       }
       setHttpResponseJsonErrorByNode(prev => ({ ...prev, [activeNode.id]: '' }))
-
-      if (mode === 'schema') {
-        const schema = inferSchemaFromJson(parsed.value)
-        updateConfig({ ...config, outputSchema: stringifyPretty(schema) })
-        return
-      }
 
       const paths = extractPathsFromJson(parsed.value)
       const normalized = paths.map(path => ({
@@ -2207,12 +2112,6 @@ export default function NodeConfigPanel({
       updateConfig({ ...config, writebackMappings: normalized })
     }
 
-    const schemaPaths = (() => {
-      const parsed = extractSchemaLeafPaths(config.outputSchema ?? '')
-      if (!parsed.ok)
-        return [] as string[]
-      return parsed.paths
-    })()
     const responseJsonPaths = (() => {
       const parsed = parseJsonAny(responseJsonDraft)
       if (!parsed.ok)
@@ -2225,7 +2124,6 @@ export default function NodeConfigPanel({
       'ok',
       'body',
       'raw',
-      ...schemaPaths,
       ...responseJsonPaths,
     ])]
     const sourcePathCascaderOptions = buildSourcePathCascaderOptions(suggestedSourcePaths)
@@ -2234,7 +2132,7 @@ export default function NodeConfigPanel({
         {renderArrayMappingBuilder('http', config.writebackMappings, next => updateConfig({ ...config, writebackMappings: next }), suggestedSourcePaths)}
         {config.writebackMappings.length === 0 && (
           <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
-            请先配置响应 Schema 并点击“按 Schema 生成映射”。
+            可粘贴响应 JSON 后点击“按 JSON 生成映射”，或直接手工配置映射。
           </div>
         )}
         <div className="flex items-center justify-between gap-2">
@@ -2331,17 +2229,12 @@ export default function NodeConfigPanel({
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">HTTP 请求</div>
         <label className={labelClass}>Method</label>
-        <select
-          className={inputClass}
+        <Select
+          className={antSelectClass}
           value={config.method}
-          onChange={event => updateConfig({ ...config, method: event.target.value as HttpNodeConfig['method'] })}
-        >
-          <option value="GET">GET</option>
-          <option value="POST">POST</option>
-          <option value="PUT">PUT</option>
-          <option value="PATCH">PATCH</option>
-          <option value="DELETE">DELETE</option>
-        </select>
+          options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(item => ({ value: item, label: item }))}
+          onChange={value => updateConfig({ ...config, method: value as HttpNodeConfig['method'] })}
+        />
         <VariableValueInput
           label="URL"
           value={config.url}
@@ -2420,18 +2313,19 @@ export default function NodeConfigPanel({
           </button>
         </div>
         <label className={labelClass}>认证类型</label>
-        <select
-          className={inputClass}
+        <Select
+          className={antSelectClass}
           value={config.authorization.type}
-          onChange={event => updateConfig({
+          options={[
+            { value: 'none', label: 'None' },
+            { value: 'bearer', label: 'Bearer' },
+            { value: 'api-key', label: 'API Key' },
+          ]}
+          onChange={value => updateConfig({
             ...config,
-            authorization: { ...config.authorization, type: event.target.value as HttpNodeConfig['authorization']['type'] },
+            authorization: { ...config.authorization, type: value as HttpNodeConfig['authorization']['type'] },
           })}
-        >
-          <option value="none">None</option>
-          <option value="bearer">Bearer</option>
-          <option value="api-key">API Key</option>
-        </select>
+        />
         {config.authorization.type !== 'none' && (
           <div className="space-y-2">
             <VariableValueInput
@@ -2459,17 +2353,18 @@ export default function NodeConfigPanel({
           </div>
         )}
         <label className={labelClass}>Body 类型</label>
-        <select
-          className={inputClass}
+        <Select
+          className={antSelectClass}
           value={config.bodyType}
-          onChange={event => updateConfig({ ...config, bodyType: event.target.value as HttpNodeConfig['bodyType'] })}
-        >
-          <option value="none">None</option>
-          <option value="json">JSON</option>
-          <option value="x-www-form-urlencoded">x-www-form-urlencoded</option>
-          <option value="form-data">form-data</option>
-          <option value="raw">Raw Text</option>
-        </select>
+          options={[
+            { value: 'none', label: 'None' },
+            { value: 'json', label: 'JSON' },
+            { value: 'x-www-form-urlencoded', label: 'x-www-form-urlencoded' },
+            { value: 'form-data', label: 'form-data' },
+            { value: 'raw', label: 'Raw Text' },
+          ]}
+          onChange={value => updateConfig({ ...config, bodyType: value as HttpNodeConfig['bodyType'] })}
+        />
         {config.bodyType !== 'none' && (
           <VariableValueInput
             value={config.body}
@@ -2500,35 +2395,6 @@ export default function NodeConfigPanel({
         />
         <div className="space-y-2 rounded border border-gray-200 p-2">
           <div className="text-xs font-semibold text-gray-700">响应写入参数</div>
-          <label className={labelClass}>响应 JSON Schema（可选）</label>
-          <textarea
-            className="h-28 w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
-            placeholder={`{\n  "type": "object",\n  "properties": {\n    "data": { "type": "object" }\n  }\n}`}
-            value={config.outputSchema ?? ''}
-            onChange={event => updateConfig({ ...config, outputSchema: event.target.value })}
-          />
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
-              onClick={() => {
-                const parsed = extractSchemaLeafPaths(config.outputSchema ?? '')
-                if (!parsed.ok)
-                  return
-                const generated = parsed.paths.map(path => ({
-                  expression: path,
-                  targetPath: '',
-                }))
-                updateConfig({
-                  ...config,
-                  writebackMappings: generated,
-                })
-              }}
-            >
-              按 Schema 生成映射
-            </button>
-          </div>
-
           <label className={labelClass}>响应 JSON（导入，可选）</label>
           <textarea
             className="h-28 w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
@@ -2543,14 +2409,7 @@ export default function NodeConfigPanel({
             <button
               type="button"
               className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
-              onClick={() => applyResponseJson('schema')}
-            >
-              从 JSON 生成 Schema
-            </button>
-            <button
-              type="button"
-              className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
-              onClick={() => applyResponseJson('mappings')}
+              onClick={applyResponseJson}
             >
               按 JSON 生成映射
             </button>
@@ -2798,22 +2657,23 @@ export default function NodeConfigPanel({
           )}
           <div className="text-[11px] text-gray-400">可用字段：{allowedKeys.join('、')}</div>
           <div className="grid grid-cols-12 gap-2">
-            <select
-              className="col-span-10 rounded border border-gray-300 px-2 py-1.5 text-xs"
-              value={selectedInsertKey}
-              onChange={event => setApiJsonInsertKeyByNode(prev => ({
+            <TreeSelect
+              className="col-span-10 w-full"
+              value={selectedInsertKey || undefined}
+              placeholder="选择参数（插入到 JSON）"
+              showSearch
+              treeData={variableTreeOptions}
+              treeDefaultExpandAll
+              popupMatchSelectWidth={false}
+              filterTreeNode={(input, treeNode) => String(treeNode.title || '').toLowerCase().includes(input.toLowerCase())}
+              onChange={value => setApiJsonInsertKeyByNode(prev => ({
                 ...prev,
                 [activeNode.id]: {
                   ...(prev[activeNode.id] ?? {}),
-                  [location]: event.target.value,
+                  [location]: String(value || ''),
                 },
               }))}
-            >
-              <option value="">选择参数（插入到 JSON）</option>
-              {variableOptions.map(option => (
-                <option key={`api-json-insert-${location}-${option.key}`} value={option.key}>{option.displayLabel}</option>
-              ))}
-            </select>
+            />
             <button
               type="button"
               className="col-span-2 rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"
@@ -2881,7 +2741,7 @@ export default function NodeConfigPanel({
     ])]
     const sourcePathCascaderOptions = buildSourcePathCascaderOptions(suggestedSourcePaths)
     const renderWritebackMappings = (showZoomButton: boolean) => (
-      <>
+      <div className="space-y-2">
         {renderArrayMappingBuilder('api', config.writebackMappings, next => updateConfig({ ...config, writebackMappings: next }), suggestedSourcePaths)}
         {config.writebackMappings.length === 0 && (
           <div className="rounded border border-dashed border-gray-300 px-2 py-2 text-xs text-gray-500">
@@ -2975,7 +2835,7 @@ export default function NodeConfigPanel({
           </div>
         ))}
         {!showZoomButton && renderMappingTester('api', config.writebackMappings)}
-      </>
+      </div>
     )
 
     return (
@@ -2989,44 +2849,38 @@ export default function NodeConfigPanel({
         <div className="grid grid-cols-12 gap-2">
           <div className="col-span-4">
             <label className={labelClass}>分组</label>
-            <select
-              className={inputClass}
+            <Select
+              className={antSelectClass}
               value={selectedGroup}
-              onChange={(event) => {
-                const nextGroup = event.target.value
+              placeholder="选择分组"
+              options={groupOptions.map(group => ({ value: group, label: group }))}
+              onChange={(nextGroup) => {
                 const nextRoutes = apiRoutes.filter(route => resolveAPIGroupKey(route.path) === nextGroup)
                 const next = nextRoutes[0] ?? null
                 upsertRoute(next)
               }}
               disabled={apiRoutes.length === 0}
-            >
-              <option value="">选择分组</option>
-              {groupOptions.map(group => (
-                <option key={`api-group-${group}`} value={group}>{group}</option>
-              ))}
-            </select>
+            />
           </div>
           <div className="col-span-8">
             <label className={labelClass}>路由</label>
-            <select
-              className={inputClass}
+            <Select
+              className={antSelectClass}
               value={`${config.route.method} ${config.route.path}`.trim()}
-              onChange={(event) => {
-                const raw = event.target.value
+              placeholder="选择路由"
+              showSearch
+              options={filteredRoutes.map(route => ({
+                value: `${route.method} ${route.path}`,
+                label: `${route.method} ${route.path}${route.summary ? ` · ${route.summary}` : ''}`,
+              }))}
+              onChange={(raw) => {
                 const [nextMethod, ...rest] = raw.split(' ')
                 const nextPath = rest.join(' ').trim()
                 const matched = apiRoutes.find(route => route.method === nextMethod && route.path === nextPath) ?? null
                 upsertRoute(matched)
               }}
               disabled={apiRoutes.length === 0}
-            >
-              <option value="">选择路由</option>
-              {filteredRoutes.map(route => (
-                <option key={`api-route-${route.method}-${route.path}`} value={`${route.method} ${route.path}`}>
-                  {route.method} {route.path}{route.summary ? ` · ${route.summary}` : ''}
-                </option>
-              ))}
-            </select>
+            />
           </div>
         </div>
 
@@ -3079,24 +2933,22 @@ export default function NodeConfigPanel({
           <div className="flex items-center justify-between gap-2">
             <div className="text-xs font-semibold text-gray-700">响应写入参数</div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <select
-                className="max-w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700"
-                value=""
-                onChange={(event) => {
-                  const value = String(event.target.value || '').trim()
-                  if (!value)
+              <Select
+                className="max-w-full min-w-[180px]"
+                size="small"
+                value={undefined}
+                placeholder="快捷添加表达式"
+                options={suggestedSourcePaths.map(item => ({ value: item, label: item }))}
+                onChange={(value) => {
+                  const trimmed = String(value || '').trim()
+                  if (!trimmed)
                     return
                   updateConfig({
                     ...config,
-                    writebackMappings: [...config.writebackMappings, { expression: value, targetPath: '' }],
+                    writebackMappings: [...config.writebackMappings, { expression: trimmed, targetPath: '' }],
                   })
                 }}
-              >
-                <option value="">快捷添加表达式</option>
-                {suggestedSourcePaths.map(item => (
-                  <option key={`api-source-${item}`} value={item}>{item}</option>
-                ))}
-              </select>
+              />
               <button
                 type="button"
                 className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
@@ -3128,9 +2980,7 @@ export default function NodeConfigPanel({
           style={{ maxWidth: 1400 }}
         >
           <div className="max-h-[70vh] overflow-y-auto pr-1">
-            <div className="space-y-2">
-              {renderWritebackMappings(false)}
-            </div>
+            {renderWritebackMappings(false)}
           </div>
         </Modal>
       </div>
@@ -3145,19 +2995,17 @@ export default function NodeConfigPanel({
         <div className="text-xs font-semibold text-gray-700">结束节点输出</div>
         <div className="space-y-1 rounded border border-gray-200 p-2">
           <div className="text-xs text-gray-600">模板（可选，用于渲染结束页 HTML）</div>
-          <select
-            className={inputClass}
+          <Select
+            className={antSelectClass}
             value={config.templateId ? String(config.templateId) : ''}
-            onChange={(event) => {
-              const next = event.target.value ? Number(event.target.value) : undefined
+            placeholder="不使用模板"
+            options={templateOptions.map(option => ({ value: String(option.value), label: option.label }))}
+            allowClear
+            onChange={(value) => {
+              const next = value ? Number(value) : undefined
               updateConfig({ ...config, templateId: Number.isFinite(next as number) && (next as number) > 0 ? (next as number) : undefined })
             }}
-          >
-            <option value="">不使用模板</option>
-            {templateOptions.map(option => (
-              <option key={`end-template-${option.value}`} value={String(option.value)}>{option.label}</option>
-            ))}
-          </select>
+          />
           {!templateOptions.length && <div className="text-[11px] text-gray-400">暂无模板（请先在“模板配置”中创建）。</div>}
         </div>
         {config.outputs.map((item, index) => (
@@ -3233,22 +3081,23 @@ export default function NodeConfigPanel({
     return (
       <div className="space-y-1 rounded border border-gray-200 p-2">
         <div className="text-xs text-gray-600">多入边汇聚策略</div>
-        <select
-          className={inputClass}
+        <Select
+          className={antSelectClass}
           value={current}
-          onChange={(event) => {
+          options={[
+            { value: 'all', label: '等待全部上游（all）' },
+            { value: 'any', label: '任一上游到达即执行（any）' },
+          ]}
+          onChange={(value) => {
             const base = ensureNodeConfig(activeNode.data.type as never, activeNode.data.config as never) as Record<string, unknown>
             updateBase({
               config: {
                 ...base,
-                joinMode: event.target.value === 'any' ? 'any' : 'all',
+                joinMode: value === 'any' ? 'any' : 'all',
               } as never,
             })
           }}
-        >
-          <option value="all">等待全部上游（all）</option>
-          <option value="any">任一上游到达即执行（any）</option>
-        </select>
+        />
 
       </div>
     )
@@ -3264,22 +3113,23 @@ export default function NodeConfigPanel({
     return (
       <div className="space-y-1 rounded border border-gray-200 p-2">
         <div className="text-xs text-gray-600">多后续执行策略</div>
-        <select
-          className={inputClass}
+        <Select
+          className={antSelectClass}
           value={current}
-          onChange={(event) => {
+          options={[
+            { value: 'sequential', label: '顺序执行（sequential）' },
+            { value: 'parallel', label: '并行执行（parallel）' },
+          ]}
+          onChange={(value) => {
             const base = ensureNodeConfig(activeNode.data.type as never, activeNode.data.config as never) as Record<string, unknown>
             updateBase({
               config: {
                 ...base,
-                fanOutMode: event.target.value === 'parallel' ? 'parallel' : 'sequential',
+                fanOutMode: value === 'parallel' ? 'parallel' : 'sequential',
               } as never,
             })
           }}
-        >
-          <option value="sequential">顺序执行（sequential）</option>
-          <option value="parallel">并行执行（parallel）</option>
-        </select>
+        />
        
       </div>
     )

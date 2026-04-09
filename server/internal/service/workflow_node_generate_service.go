@@ -121,10 +121,14 @@ func (service *workflowNodeGenerateService) Generate(ctx context.Context, userID
 		BaseURL: baseURL,
 		APIKey:  apiKey,
 		Model:   normalized.Model,
-		Messages: []ai.ChatMessage{
-			{Role: "system", Content: buildWorkflowNodeGenerateSystemPrompt()},
-			{Role: "user", Content: buildWorkflowNodeGenerateUserPrompt(normalized)},
-		},
+		Messages: buildWorkflowAIMessages(
+			buildWorkflowNodeGenerateSystemPrompt(),
+			[]workflowAIPromptSection{
+				{Title: "任务信息", Body: buildWorkflowNodeGenerateTaskInfo(normalized)},
+				{Title: "用户描述", Body: normalized.Description},
+			},
+			"请直接输出 JSON。",
+		),
 		Temperature: 0.2,
 		Timeout:     60 * time.Second,
 	})
@@ -242,80 +246,77 @@ func buildWorkflowNodeGenerateSystemPrompt() string {
 	return "你是工作流节点配置生成器。必须严格输出 JSON 对象，禁止 Markdown、禁止解释。输出格式固定：{\"config\":{...},\"title\":\"...\",\"desc\":\"...\"}。其中 config 必须是对象。"
 }
 
-func buildWorkflowNodeGenerateUserPrompt(request WorkflowNodeGenerateRequest) string {
-	var builder strings.Builder
-	builder.WriteString("请按以下信息生成单个节点配置。\n")
-	builder.WriteString(fmt.Sprintf("- nodeType: %s\n", request.NodeType))
+func buildWorkflowNodeGenerateTaskInfo(request WorkflowNodeGenerateRequest) string {
+	var taskBuilder strings.Builder
+	taskBuilder.WriteString("请按以下信息生成单个节点配置。\n")
+	taskBuilder.WriteString(fmt.Sprintf("- nodeType: %s\n", request.NodeType))
 	if request.Context.ActiveNodeType != "" {
-		builder.WriteString(fmt.Sprintf("- activeNodeType: %s\n", request.Context.ActiveNodeType))
+		taskBuilder.WriteString(fmt.Sprintf("- activeNodeType: %s\n", request.Context.ActiveNodeType))
 	}
-	builder.WriteString("- 生成目标：只生成该节点的 config，不生成工作流 DSL，不生成 nodes/edges。\n")
+	taskBuilder.WriteString("- 生成目标：只生成该节点的 config，不生成工作流 DSL，不生成 nodes/edges。\n")
 	constraintText := buildNodeTypeConstraintText(request)
 	if constraintText != "" {
-		builder.WriteString("- 节点类型约束：\n")
-		builder.WriteString(constraintText)
+		taskBuilder.WriteString("- 节点类型补充约束：\n")
+		taskBuilder.WriteString(constraintText)
 	}
 	if request.NodeType == "api-request" && request.Context.SelectedAPI != nil {
 		selectedAPI := request.Context.SelectedAPI
-		builder.WriteString("- API 请求节点约束：生成配置必须严格基于已选接口，不得切换方法或路径。\n")
-		builder.WriteString(fmt.Sprintf("- 已选接口: %s %s\n", selectedAPI.Method, selectedAPI.Path))
+		taskBuilder.WriteString("- API 请求节点约束：生成配置必须严格基于已选接口，不得切换方法或路径。\n")
+		taskBuilder.WriteString(fmt.Sprintf("- 已选接口: %s %s\n", selectedAPI.Method, selectedAPI.Path))
 		if selectedAPI.Summary != "" {
-			builder.WriteString(fmt.Sprintf("- 接口说明: %s\n", selectedAPI.Summary))
+			taskBuilder.WriteString(fmt.Sprintf("- 接口说明: %s\n", selectedAPI.Summary))
 		}
 		if selectedAPI.Auth != "" {
-			builder.WriteString(fmt.Sprintf("- 鉴权要求: %s\n", selectedAPI.Auth))
+			taskBuilder.WriteString(fmt.Sprintf("- 鉴权要求: %s\n", selectedAPI.Auth))
 		}
 		if len(selectedAPI.Params) > 0 {
-			builder.WriteString("- 接口参数:\n")
+			taskBuilder.WriteString("- 接口参数:\n")
 			for _, param := range selectedAPI.Params {
-				builder.WriteString(fmt.Sprintf("  - %s (%s, %s)", param.Name, param.In, param.Type))
+				taskBuilder.WriteString(fmt.Sprintf("  - %s (%s, %s)", param.Name, param.In, param.Type))
 				if param.Description != "" {
-					builder.WriteString(fmt.Sprintf(" - %s", param.Description))
+					taskBuilder.WriteString(fmt.Sprintf(" - %s", param.Description))
 				}
 				if param.Validation.Required {
-					builder.WriteString(" [required]")
+					taskBuilder.WriteString(" [required]")
 				}
 				if len(param.Validation.Enum) > 0 {
-					builder.WriteString(fmt.Sprintf(" [enum=%s]", strings.Join(param.Validation.Enum, ",")))
+					taskBuilder.WriteString(fmt.Sprintf(" [enum=%s]", strings.Join(param.Validation.Enum, ",")))
 				}
 				if param.Validation.Min != nil {
-					builder.WriteString(fmt.Sprintf(" [min=%v]", *param.Validation.Min))
+					taskBuilder.WriteString(fmt.Sprintf(" [min=%v]", *param.Validation.Min))
 				}
 				if param.Validation.Max != nil {
-					builder.WriteString(fmt.Sprintf(" [max=%v]", *param.Validation.Max))
+					taskBuilder.WriteString(fmt.Sprintf(" [max=%v]", *param.Validation.Max))
 				}
 				if param.Validation.Pattern != "" {
-					builder.WriteString(fmt.Sprintf(" [pattern=%s]", param.Validation.Pattern))
+					taskBuilder.WriteString(fmt.Sprintf(" [pattern=%s]", param.Validation.Pattern))
 				}
-				builder.WriteString("\n")
+				taskBuilder.WriteString("\n")
 			}
 		}
 		if len(selectedAPI.Responses) > 0 {
-			builder.WriteString("- 接口响应:\n")
+			taskBuilder.WriteString("- 接口响应:\n")
 			for _, resp := range selectedAPI.Responses {
-				builder.WriteString(fmt.Sprintf("  - HTTP %d, code=%s", resp.HTTPStatus, resp.Code))
+				taskBuilder.WriteString(fmt.Sprintf("  - HTTP %d, code=%s", resp.HTTPStatus, resp.Code))
 				if resp.ContentType != "" {
-					builder.WriteString(fmt.Sprintf(", contentType=%s", resp.ContentType))
+					taskBuilder.WriteString(fmt.Sprintf(", contentType=%s", resp.ContentType))
 				}
 				if resp.Description != "" {
-					builder.WriteString(fmt.Sprintf(", description=%s", resp.Description))
+					taskBuilder.WriteString(fmt.Sprintf(", description=%s", resp.Description))
 				}
 				if resp.DataShape != "" {
-					builder.WriteString(fmt.Sprintf(", dataShape=%s", resp.DataShape))
+					taskBuilder.WriteString(fmt.Sprintf(", dataShape=%s", resp.DataShape))
 				}
-				builder.WriteString("\n")
+				taskBuilder.WriteString("\n")
 				if len(resp.Example) > 0 {
-					builder.WriteString("    example: ")
-					builder.Write(resp.Example)
-					builder.WriteString("\n")
+					taskBuilder.WriteString("    example: ")
+					taskBuilder.Write(resp.Example)
+					taskBuilder.WriteString("\n")
 				}
 			}
 		}
 	}
-	builder.WriteString("\n用户描述：\n")
-	builder.WriteString(request.Description)
-	builder.WriteString("\n\n请直接输出 JSON。")
-	return builder.String()
+	return taskBuilder.String()
 }
 
 func buildNodeTypeConstraintText(request WorkflowNodeGenerateRequest) string {

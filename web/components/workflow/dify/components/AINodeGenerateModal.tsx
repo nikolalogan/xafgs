@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Select, TreeSelect } from 'antd'
 import { requestAINodeGenerate, type AINodeGenerateNodeType } from '../core/ai-node-generate'
 import { BlockEnum, type ApiRequestNodeConfig, type DifyNodeConfig } from '../core/types'
-import type { WorkflowVariableOption } from '../core/variables'
+import { buildWorkflowVariableTreeOptions, type WorkflowVariableOption } from '../core/variables'
 
 type AINodeGenerateResult = {
   nodeType: AINodeGenerateNodeType
@@ -280,6 +281,10 @@ export default function AINodeGenerateModal({
   const [selectedAPIRouteKey, setSelectedAPIRouteKey] = useState('')
   const [selectedInsertVariableKey, setSelectedInsertVariableKey] = useState('')
   const descriptionRef = useRef<HTMLTextAreaElement | null>(null)
+  const variableTreeOptions = useMemo(
+    () => buildWorkflowVariableTreeOptions(variableOptions),
+    [variableOptions],
+  )
 
   useEffect(() => {
     if (!open)
@@ -410,26 +415,20 @@ export default function AINodeGenerateModal({
 
         <div className="space-y-2">
           <label className="block text-xs text-gray-500">模型</label>
-          <select
-            className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+          <Select
+            className="w-full"
             value={model}
-            onChange={event => setModel(event.target.value)}
-          >
-            {safeModelOptions.map(item => (
-              <option key={item.name} value={item.name}>{item.label || item.name}</option>
-            ))}
-          </select>
+            options={safeModelOptions.map(item => ({ value: item.name, label: item.label || item.name }))}
+            onChange={setModel}
+          />
 
           <label className="block text-xs text-gray-500">节点类型</label>
-          <select
-            className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+          <Select
+            className="w-full"
             value={nodeType}
-            onChange={event => setNodeType(event.target.value as AINodeGenerateNodeType)}
-          >
-            {nodeTypeOptions.map(item => (
-              <option key={item.value} value={item.value}>{item.label}</option>
-            ))}
-          </select>
+            options={nodeTypeOptions}
+            onChange={value => setNodeType(value as AINodeGenerateNodeType)}
+          />
 
           {nodeType === BlockEnum.ApiRequest && (
             <div className="space-y-2 rounded border border-gray-200 p-2">
@@ -440,33 +439,28 @@ export default function AINodeGenerateModal({
                 </div>
               )}
               <label className="block text-xs text-gray-500">分组</label>
-              <select
-                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+              <Select
+                className="w-full"
                 value={selectedAPIGroup}
-                onChange={(event) => {
-                  const nextGroup = event.target.value
+                placeholder="选择分组"
+                options={apiGroups.map(group => ({ value: group, label: group }))}
+                onChange={(nextGroup) => {
                   setSelectedAPIGroup(nextGroup)
                   setSelectedAPIRouteKey('')
                 }}
-              >
-                <option value="">选择分组</option>
-                {apiGroups.map(group => (
-                  <option key={`ai-node-api-group-${group}`} value={group}>{group}</option>
-                ))}
-              </select>
+              />
               <label className="block text-xs text-gray-500">接口</label>
-              <select
-                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+              <Select
+                className="w-full"
                 value={selectedAPIRouteKey}
-                onChange={event => setSelectedAPIRouteKey(event.target.value)}
-              >
-                <option value="">选择接口</option>
-                {filteredAPIRoutes.map(route => (
-                  <option key={`ai-node-api-route-${route.method}-${route.path}`} value={`${route.method} ${route.path}`}>
-                    {route.method} {route.path}{route.summary ? ` · ${route.summary}` : ''}
-                  </option>
-                ))}
-              </select>
+                placeholder="选择接口"
+                showSearch
+                options={filteredAPIRoutes.map(route => ({
+                  value: `${route.method} ${route.path}`,
+                  label: `${route.method} ${route.path}${route.summary ? ` · ${route.summary}` : ''}`,
+                }))}
+                onChange={setSelectedAPIRouteKey}
+              />
             </div>
           )}
 
@@ -477,16 +471,17 @@ export default function AINodeGenerateModal({
             </div>
           )}
           <div className="grid grid-cols-12 gap-2">
-            <select
-              className="col-span-10 rounded border border-gray-300 px-2 py-1.5 text-xs"
-              value={selectedInsertVariableKey}
-              onChange={event => setSelectedInsertVariableKey(event.target.value)}
-            >
-              <option value="">选择参数（插入到描述）</option>
-              {variableOptions.map(option => (
-                <option key={`ai-node-insert-variable-${option.key}`} value={option.key}>{option.displayLabel}</option>
-              ))}
-            </select>
+            <TreeSelect
+              className="col-span-10 w-full"
+              value={selectedInsertVariableKey || undefined}
+              placeholder="选择参数（插入到描述）"
+              showSearch
+              treeData={variableTreeOptions}
+              treeDefaultExpandAll
+              popupMatchSelectWidth={false}
+              filterTreeNode={(input, treeNode) => String(treeNode.title || '').toLowerCase().includes(input.toLowerCase())}
+              onChange={value => setSelectedInsertVariableKey(String(value || ''))}
+            />
             <button
               type="button"
               className="col-span-2 rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"

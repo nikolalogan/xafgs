@@ -94,10 +94,11 @@ func (service *workflowCodeGenerateService) Generate(ctx context.Context, userID
 		BaseURL: baseURL,
 		APIKey:  apiKey,
 		Model:   normalized.Model,
-		Messages: []ai.ChatMessage{
-			{Role: "system", Content: buildSystemPrompt(normalized)},
-			{Role: "user", Content: buildUserPrompt(normalized)},
-		},
+		Messages: buildWorkflowAIMessages(
+			buildSystemPrompt(normalized),
+			buildWorkflowCodeGenerateSections(normalized),
+			"请直接输出最终代码文本。",
+		),
 		Temperature: 0.2,
 		Timeout:     60 * time.Second,
 	})
@@ -182,44 +183,44 @@ func buildSystemPrompt(request WorkflowCodeGenerateRequest) string {
 	return "你是工作流规则代码生成器。严格只输出 JavaScript 规则代码，不要 Markdown、不要解释。代码必须返回布尔值。"
 }
 
-func buildUserPrompt(request WorkflowCodeGenerateRequest) string {
-	var builder strings.Builder
-	builder.WriteString("请根据下面信息生成代码：\n")
-	builder.WriteString(fmt.Sprintf("- targetType: %s\n", request.TargetType))
-	builder.WriteString(fmt.Sprintf("- nodeType: %s\n", request.NodeType))
+func buildWorkflowCodeGenerateSections(request WorkflowCodeGenerateRequest) []workflowAIPromptSection {
+	var taskBuilder strings.Builder
+	taskBuilder.WriteString("请根据下面信息生成代码：\n")
+	taskBuilder.WriteString(fmt.Sprintf("- targetType: %s\n", request.TargetType))
+	taskBuilder.WriteString(fmt.Sprintf("- nodeType: %s\n", request.NodeType))
 	if request.TargetType == "code" {
-		builder.WriteString(fmt.Sprintf("- language: %s\n", request.Language))
+		taskBuilder.WriteString(fmt.Sprintf("- language: %s\n", request.Language))
 	}
 	if request.Context.NodeID != "" {
-		builder.WriteString(fmt.Sprintf("- nodeId: %s\n", request.Context.NodeID))
+		taskBuilder.WriteString(fmt.Sprintf("- nodeId: %s\n", request.Context.NodeID))
 	}
 	if request.Context.FieldName != "" {
-		builder.WriteString(fmt.Sprintf("- fieldName: %s\n", request.Context.FieldName))
+		taskBuilder.WriteString(fmt.Sprintf("- fieldName: %s\n", request.Context.FieldName))
 	}
-	builder.WriteString("\n规则约束：\n")
-	builder.WriteString(buildRuleConstraints(request))
-	builder.WriteString("\n\n用户需求：\n")
-	builder.WriteString(request.Description)
+	taskBuilder.WriteString("\n规则约束：\n")
+	taskBuilder.WriteString(buildRuleConstraints(request))
 
+	var sections []workflowAIPromptSection
+	sections = append(sections,
+		workflowAIPromptSection{Title: "任务信息", Body: taskBuilder.String()},
+		workflowAIPromptSection{Title: "用户需求", Body: request.Description},
+	)
 	if len(request.SelectedVariables) > 0 {
-		builder.WriteString("\n\n可引用变量（按需使用）：\n")
+		var variablesBuilder strings.Builder
 		for _, item := range request.SelectedVariables {
 			line := fmt.Sprintf("- %s", item.Placeholder)
 			if item.ValueType != "" {
 				line += fmt.Sprintf(" (%s)", item.ValueType)
 			}
-			builder.WriteString(line)
-			builder.WriteString("\n")
+			variablesBuilder.WriteString(line)
+			variablesBuilder.WriteString("\n")
 		}
+		sections = append(sections, workflowAIPromptSection{Title: "可引用变量（按需使用）", Body: variablesBuilder.String()})
 	}
-
 	if request.CurrentCode != "" {
-		builder.WriteString("\n当前代码（如无必要请保留语义一致性）：\n")
-		builder.WriteString(request.CurrentCode)
+		sections = append(sections, workflowAIPromptSection{Title: "当前代码（如无必要请保留语义一致性）", Body: request.CurrentCode})
 	}
-
-	builder.WriteString("\n\n请直接输出最终代码文本。")
-	return builder.String()
+	return sections
 }
 
 func buildRuleConstraints(request WorkflowCodeGenerateRequest) string {

@@ -1,10 +1,5 @@
-import { redirect } from 'next/navigation'
+import AuthLoginPanel from '@/components/auth/AuthLoginPanel'
 
-export default async function LoginPage(props: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
-  const searchParams = await props.searchParams
-  const raw = searchParams?.redirect
-  const target = Array.isArray(raw) ? raw[0] : raw
-  if (target)
-    redirect(`/?redirect=${encodeURIComponent(target)}`)
-  redirect('/')
+export default function LoginPage() {
+  return <AuthLoginPanel title="西安分公司" layout="split" titlePlacement="center" defaultRedirect="/app" />
 }

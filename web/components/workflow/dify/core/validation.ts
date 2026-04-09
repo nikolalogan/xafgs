@@ -1,7 +1,7 @@
 import { ensureNodeConfig } from './node-config'
 import { BlockEnum, type DifyEdge, type DifyNode, type WorkflowParameter } from './types'
 import { buildIfElseBranchHandleId, IF_ELSE_FALLBACK_HANDLE } from '@/lib/workflow-ifelse'
-import { extractSchemaLeafPaths, validateParameterJsonDefault } from './json-schema'
+import { validateParameterJsonDefault } from './json-schema'
 
 export type WorkflowIssue = {
   id: string
@@ -748,18 +748,6 @@ export const validateWorkflow = (
           message: '代码节点输出变量名称不能重复。',
         })
       }
-      if (config.outputSchema?.trim()) {
-        const schemaCheck = extractSchemaLeafPaths(config.outputSchema)
-        if (!schemaCheck.ok) {
-          issues.push({
-            id: `${prefix}-code-output-schema`,
-            nodeId: node.id,
-            level: 'error',
-            title: `${node.data.title} 输出 Schema 非法`,
-            message: `代码节点输出 Schema 解析失败：${schemaCheck.error}`,
-          })
-        }
-      }
       issues.push(...validateJsonataWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings as any))
     }
 
@@ -800,18 +788,6 @@ export const validateWorkflow = (
           title: `${node.data.title} Header 参数无键名`,
           message: 'Header 参数填写值时必须填写 key。',
         })
-      }
-      if (config.outputSchema?.trim()) {
-        const schemaCheck = extractSchemaLeafPaths(config.outputSchema)
-        if (!schemaCheck.ok) {
-          issues.push({
-            id: `${prefix}-http-output-schema`,
-            nodeId: node.id,
-            level: 'error',
-            title: `${node.data.title} 响应 Schema 非法`,
-            message: `HTTP 节点响应 Schema 解析失败：${schemaCheck.error}`,
-          })
-        }
       }
       issues.push(...validateJsonataWritebackMappings(prefix, node.id, node.data.title, config.writebackMappings as any))
     }

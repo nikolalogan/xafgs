@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Select } from 'antd'
 import { validateParameterJsonDefault } from '../core/json-schema'
 import type { WorkflowParameter } from '../core/types'
 
@@ -49,23 +50,24 @@ export default function WorkflowParamsPanel({
               onChange={event => updateItem(index, { label: event.target.value })}
             />
             <div className="flex items-center gap-2">
-              <select
-                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+              <Select
+                className="w-full"
                 value={item.valueType}
-                onChange={(event) => {
-                  const nextType = event.target.value as WorkflowParameter['valueType']
+                options={[
+                  { value: 'string', label: 'string' },
+                  { value: 'number', label: 'number' },
+                  { value: 'boolean', label: 'boolean' },
+                  { value: 'array', label: 'array' },
+                  { value: 'object', label: 'object' },
+                ]}
+                onChange={(nextValue) => {
+                  const nextType = nextValue as WorkflowParameter['valueType']
                   updateItem(index, {
                     valueType: nextType,
                     defaultValue: nextType === 'array' ? '[]' : nextType === 'object' ? '{}' : item.defaultValue,
                   })
                 }}
-              >
-                <option value="string">string</option>
-                <option value="number">number</option>
-                <option value="boolean">boolean</option>
-                <option value="array">array</option>
-                <option value="object">object</option>
-              </select>
+              />
             </div>
             {(item.valueType === 'array' || item.valueType === 'object')
               ? (
