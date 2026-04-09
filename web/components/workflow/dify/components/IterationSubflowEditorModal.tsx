@@ -23,6 +23,7 @@ import VariableValueInput from './VariableValueInput'
 import { buildWorkflowVariableOptions } from '../core/variables'
 import {
   BlockEnum,
+  type ApiRequestNodeConfig,
   type CodeNodeConfig,
   type DifyNode,
   type DifyNodeConfig,
@@ -214,6 +215,8 @@ function IterationSubflowEditorInner({
           <input className={inputClass} type="number" step="0.1" min="0" max="2" value={config.temperature} onChange={event => updateActiveNodeConfig({ ...config, temperature: Number(event.target.value || 0) })} />
           <label className={labelClass}>最大 Token</label>
           <input className={inputClass} type="number" min="1" value={config.maxTokens} onChange={event => updateActiveNodeConfig({ ...config, maxTokens: Number(event.target.value || 1) })} />
+          <label className={labelClass}>重试次数</label>
+          <input className={inputClass} type="number" min="0" step="1" value={config.retryCount ?? 0} onChange={event => updateActiveNodeConfig({ ...config, retryCount: Math.max(0, Math.floor(Number(event.target.value || 0))) })} />
           <label className={labelClass}>System Prompt</label>
           <textarea className="h-20 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={config.systemPrompt} onChange={event => updateActiveNodeConfig({ ...config, systemPrompt: event.target.value })} />
           <label className={labelClass}>User Prompt</label>
@@ -268,8 +271,32 @@ function IterationSubflowEditorInner({
           </select>
           <label className={labelClass}>URL</label>
           <input className={inputClass} value={config.url} onChange={event => updateActiveNodeConfig({ ...config, url: event.target.value })} />
+          <label className={labelClass}>重试次数</label>
+          <input className={inputClass} type="number" min="0" step="1" value={config.retryCount ?? 0} onChange={event => updateActiveNodeConfig({ ...config, retryCount: Math.max(0, Math.floor(Number(event.target.value || 0))) })} />
           <label className={labelClass}>Body</label>
           <textarea className="h-24 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={config.body} onChange={event => updateActiveNodeConfig({ ...config, body: event.target.value })} />
+        </div>
+      )
+    }
+
+    if (activeNode.data.type === BlockEnum.ApiRequest) {
+      const config = ensureNodeConfig(BlockEnum.ApiRequest, activeNode.data.config) as ApiRequestNodeConfig
+      return (
+        <div className="space-y-2">
+          <label className={labelClass}>Method</label>
+          <select className={inputClass} value={config.route.method} onChange={event => updateActiveNodeConfig({ ...config, route: { ...config.route, method: event.target.value as ApiRequestNodeConfig['route']['method'] } })}>
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+          <label className={labelClass}>路径</label>
+          <input className={inputClass} value={config.route.path} onChange={event => updateActiveNodeConfig({ ...config, route: { ...config.route, path: event.target.value } })} />
+          <label className={labelClass}>超时（秒）</label>
+          <input className={inputClass} type="number" min="1" value={config.timeout} onChange={event => updateActiveNodeConfig({ ...config, timeout: Math.max(1, Number(event.target.value || 1)) })} />
+          <label className={labelClass}>重试次数</label>
+          <input className={inputClass} type="number" min="0" step="1" value={config.retryCount ?? 0} onChange={event => updateActiveNodeConfig({ ...config, retryCount: Math.max(0, Math.floor(Number(event.target.value || 0))) })} />
         </div>
       )
     }

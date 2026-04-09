@@ -23,6 +23,12 @@ const normalizeHandleId = (value?: string | null) => {
   return normalized || '__default__'
 }
 
+const isValidRetryCount = (value: number | undefined) => {
+  if (value === undefined)
+    return true
+  return Number.isInteger(value) && value >= 0
+}
+
 const buildIfElseHandleLabels = (node: DifyNode) => {
   const labels = new Map<string, string>()
   const config = ensureNodeConfig(BlockEnum.IfElse, node.data.config)
@@ -551,6 +557,15 @@ export const validateWorkflow = (
 
     if (node.data.type === BlockEnum.LLM) {
       const config = ensureNodeConfig(BlockEnum.LLM, node.data.config)
+      if (!isValidRetryCount(config.retryCount)) {
+        issues.push({
+          id: `${prefix}-llm-retry-count`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 重试次数非法`,
+          message: 'LLM 节点重试次数必须为大于等于 0 的整数。',
+        })
+      }
       if (!trim(config.model)) {
         issues.push({
           id: `${prefix}-llm-model`,
@@ -750,6 +765,15 @@ export const validateWorkflow = (
 
     if (node.data.type === BlockEnum.HttpRequest) {
       const config = ensureNodeConfig(BlockEnum.HttpRequest, node.data.config)
+      if (!isValidRetryCount(config.retryCount)) {
+        issues.push({
+          id: `${prefix}-http-retry-count`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 重试次数非法`,
+          message: 'HTTP 节点重试次数必须为大于等于 0 的整数。',
+        })
+      }
       if (!trim(config.url)) {
         issues.push({
           id: `${prefix}-http-url`,
@@ -794,6 +818,15 @@ export const validateWorkflow = (
 
     if (node.data.type === BlockEnum.ApiRequest) {
       const config = ensureNodeConfig(BlockEnum.ApiRequest, node.data.config)
+      if (!isValidRetryCount(config.retryCount)) {
+        issues.push({
+          id: `${prefix}-api-retry-count`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 重试次数非法`,
+          message: 'API 请求节点重试次数必须为大于等于 0 的整数。',
+        })
+      }
       if (!trim(config.route.path)) {
         issues.push({
           id: `${prefix}-api-route`,

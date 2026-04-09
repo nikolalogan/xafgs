@@ -440,6 +440,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const [activeNodeId, setActiveNodeId] = useState('')
   const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({})
   const [visibleNodeIds, setVisibleNodeIds] = useState<string[]>([])
+  const [historyGroupExpanded, setHistoryGroupExpanded] = useState(false)
   const [pendingPlaybackEvents, setPendingPlaybackEvents] = useState<WorkflowExecutionEvent[]>([])
   const executionRef = useRef<WorkflowExecution | null>(null)
   const visibleNodeIdsRef = useRef<string[]>([])
@@ -456,6 +457,9 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const waitingFormRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const startFormRef = useRef<HTMLDivElement | null>(null)
   const runScrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const historyGroupHeaderRef = useRef<HTMLButtonElement | null>(null)
+  const historyNodeIdsRef = useRef<string[]>([])
+  const historyGroupExpandedRef = useRef(false)
   const scrollRetryTimerRef = useRef<number | null>(null)
   const scrollRequestTokenRef = useRef(0)
   const startFields = useMemo(() => normalizeStartFields(nodes), [nodes])
@@ -532,11 +536,14 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     activeNodeIdRef.current = ''
     openPanelsRef.current = {}
     autoOpenedNodeIdsRef.current = new Set()
+    historyNodeIdsRef.current = []
+    historyGroupExpandedRef.current = false
     setPendingPlaybackEvents([])
     setVisibleNodeIds([])
     setFocusedNodeId('')
     setActiveNodeId('')
     setOpenPanels({})
+    setHistoryGroupExpanded(false)
   }
 
   const stopExecutionStream = () => {
@@ -611,7 +618,9 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const scrollNodeCardIntoView = (nodeId: string, requestToken = ++scrollRequestTokenRef.current) => {
     if (typeof window === 'undefined')
       return
-    const titleElement = nodeHeaderRefs.current[nodeId] || nodeCardRefs.current[nodeId]
+    const titleElement = nodeId === '__history_group__'
+      ? historyGroupHeaderRef.current
+      : (nodeHeaderRefs.current[nodeId] || nodeCardRefs.current[nodeId])
     if (!titleElement) {
       if (scrollRetryTimerRef.current !== null)
         window.clearTimeout(scrollRetryTimerRef.current)
@@ -793,33 +802,8 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   }, [openPanels])
 
   useEffect(() => {
-    if (!currentDisplayNodeId)
-      return
-    if (typeof window === 'undefined')
-      return
-    scheduleNodeScrollIntoView(currentDisplayNodeId)
-  }, [currentDisplayNodeId, nodes, visibleNodeIds])
-
-  useEffect(() => {
-    if (typeof window === 'undefined')
-      return
-    if (!currentDisplayNodeId)
-      return
-    const element = nodeCardRefs.current[currentDisplayNodeId]
-    if (!element || typeof ResizeObserver === 'undefined')
-      return
-    const observer = new ResizeObserver(() => {
-      scheduleNodeScrollIntoView(currentDisplayNodeId)
-    })
-    observer.observe(element)
-    return () => {
-      try {
-        observer.disconnect()
-      }
-      catch {
-      }
-    }
-  }, [currentDisplayNodeId])
+    historyGroupExpandedRef.current = historyGroupExpanded
+  }, [historyGroupExpanded])
 
   useEffect(() => {
     if (!execution?.waitingInput?.nodeId)
@@ -889,6 +873,41 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const nodeMap = useMemo(() => {
     return new Map(nodes.map(node => [node.id, node]))
   }, [nodes])
+  const historyNodeIds = useMemo(() => {
+    return visibleNodeIds.filter((nodeId) => {
+      const node = nodeMap.get(nodeId)
+      return !!node
+        && node.data.type !== BlockEnum.End
+        && nodeId !== execution?.waitingInput?.nodeId
+    })
+  }, [execution?.waitingInput?.nodeId, nodeMap, visibleNodeIds])
+  const endNodeIds = useMemo(() => {
+    return visibleNodeIds.filter((nodeId) => {
+      const node = nodeMap.get(nodeId)
+      return !!node && node.data.type === BlockEnum.End
+    })
+  }, [nodeMap, visibleNodeIds])
+  const waitingInputNodeId = useMemo(() => {
+    const nodeId = execution?.waitingInput?.nodeId || ''
+    if (!nodeId)
+      return ''
+    const node = nodeMap.get(nodeId)
+    if (!node || node.data.type === BlockEnum.End)
+      return ''
+    return nodeId
+  }, [execution?.waitingInput?.nodeId, nodeMap])
+  const currentHistoryNodeId = useMemo(() => {
+    if (currentDisplayNodeId) {
+      const currentNode = nodeMap.get(currentDisplayNodeId)
+      if (currentNode && currentNode.data.type !== BlockEnum.End)
+        return currentDisplayNodeId
+    }
+    for (let i = historyNodeIds.length - 1; i >= 0; i -= 1) {
+      if (historyNodeIds[i])
+        return historyNodeIds[i]
+    }
+    return ''
+  }, [currentDisplayNodeId, historyNodeIds, nodeMap])
 
   const executionEventCount = execution?.events?.length ?? 0
   const isBootstrappingExecution = Boolean(
@@ -909,6 +928,54 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       return 'bootstrapping'
     return 'playing'
   }, [execution, isBootstrappingExecution, submitPhase])
+  const currentHistoryNode = currentHistoryNodeId ? nodeMap.get(currentHistoryNodeId) : undefined
+  const currentHistoryNodeState = currentHistoryNodeId
+    ? (
+        execution?.nodeStates?.[currentHistoryNodeId]
+        || (executionViewPhase === 'bootstrapping' && currentHistoryNode?.id === startNodeId
+          ? {
+              nodeId: currentHistoryNode.id,
+              status: 'running' as RuntimeNodeStatus,
+            }
+          : undefined)
+      )
+    : undefined
+
+  useEffect(() => {
+    historyNodeIdsRef.current = historyNodeIds
+  }, [historyNodeIds])
+
+  useEffect(() => {
+    const scrollTargetId = currentDisplayNodeId && currentHistoryNodeId === currentDisplayNodeId && !historyGroupExpanded
+      ? '__history_group__'
+      : currentDisplayNodeId
+    if (!scrollTargetId)
+      return
+    if (typeof window === 'undefined')
+      return
+    scheduleNodeScrollIntoView(scrollTargetId)
+  }, [currentDisplayNodeId, currentHistoryNodeId, historyGroupExpanded, nodes, visibleNodeIds])
+
+  useEffect(() => {
+    if (typeof window === 'undefined')
+      return
+    if (!currentDisplayNodeId || (currentHistoryNodeId === currentDisplayNodeId && !historyGroupExpanded))
+      return
+    const element = nodeCardRefs.current[currentDisplayNodeId]
+    if (!element || typeof ResizeObserver === 'undefined')
+      return
+    const observer = new ResizeObserver(() => {
+      scheduleNodeScrollIntoView(currentDisplayNodeId)
+    })
+    observer.observe(element)
+    return () => {
+      try {
+        observer.disconnect()
+      }
+      catch {
+      }
+    }
+  }, [currentDisplayNodeId, currentHistoryNodeId, historyGroupExpanded])
 
   useEffect(() => {
     if (!execution)
@@ -1002,6 +1069,8 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
             if (nextAutoOpenedNodeIds.has(nodeId)) {
               nextAutoOpenedNodeIds.delete(nodeId)
             }
+            if (currentNode?.data.type !== BlockEnum.End)
+              setHistoryGroupExpanded(false)
             window.setTimeout(() => {
               scheduleNodeScrollIntoView(nodeId)
             }, 0)
@@ -1054,10 +1123,17 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       setFocusedNodeId(nextFocusedNodeId)
       setActiveNodeId(nextActiveNodeId)
       setOpenPanels(nextOpenPanels)
+      const shouldExpandHistoryGroup = currentEvent.type === 'node.finished'
+        && (typeof currentEvent.payload?.status === 'string'
+          && currentEvent.payload.status === 'failed')
+      if (shouldExpandHistoryGroup)
+        setHistoryGroupExpanded(true)
       const scrollTargetNodeId = nextActiveNodeId || nextFocusedNodeId
       if (scrollTargetNodeId) {
         window.setTimeout(() => {
-          scheduleNodeScrollIntoView(scrollTargetNodeId)
+          const targetNode = nodeMap.get(scrollTargetNodeId)
+          const shouldScrollGroupHeader = !!targetNode && targetNode.data.type !== BlockEnum.End && !historyGroupExpandedRef.current
+          scheduleNodeScrollIntoView(shouldScrollGroupHeader ? '__history_group__' : scrollTargetNodeId)
         }, 0)
       }
       setPendingPlaybackEvents(prev => prev.slice(1))
@@ -2026,6 +2102,264 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     }
   }
 
+  const renderWorkflowNodeCard = (nodeId: string, options?: { forceOpen?: boolean, externalWaiting?: boolean }) => {
+    if (!execution)
+      return null
+    const node = nodeMap.get(nodeId)
+    const state = node ? execution.nodeStates[node.id] : undefined
+    const runtimeState = state || (
+      executionViewPhase === 'bootstrapping' && node?.id === startNodeId
+        ? {
+            nodeId: node.id,
+            status: 'running' as RuntimeNodeStatus,
+          }
+        : undefined
+    )
+    if (!node || !runtimeState)
+      return null
+    if (runtimeState.status === 'skipped')
+      return null
+    const panelOpen = options?.forceOpen || (openPanels[node.id] ?? false)
+    const status = runtimeState.status
+    const rawNodeOutput = execution.variables[node.id]
+    const nodeOutput = node.data.type === BlockEnum.End
+      ? buildEndConfiguredOutput(node, execution.variables, rawNodeOutput)
+      : rawNodeOutput
+    const isWaitingCurrent = execution.waitingInput?.nodeId === node.id && status === 'waiting_input'
+    const showRunningIcon = shouldShowRunningIcon(node.data.type, status, activeNodeId, node.id)
+    const nodeConfig: Record<string, unknown> = isObject(node.data.config) ? node.data.config : {}
+    const hasEndTemplate = node.data.type === BlockEnum.End && Number(nodeConfig.templateId ?? 0) > 0
+    const waitingPrompt = (() => {
+      if (!isWaitingCurrent)
+        return ''
+      const schemaPromptRaw = execution.waitingInput?.schema?.['prompt']
+      const schemaPrompt = typeof schemaPromptRaw === 'string'
+        ? schemaPromptRaw
+        : ''
+      const nodePrompt = typeof nodeConfig.prompt === 'string' ? nodeConfig.prompt : ''
+      const rawPrompt = schemaPrompt || nodePrompt
+      if (!rawPrompt.trim())
+        return ''
+      return renderRuntimeTemplate(rawPrompt, execution.variables ?? {})
+    })()
+
+    return (
+      <div
+        key={node.id}
+        ref={el => bindNodeCardRef(node.id, el)}
+        className={`rounded border ${options?.externalWaiting ? 'border-blue-200' : 'border-gray-200'}`}
+      >
+        <button
+          ref={el => bindNodeHeaderRef(node.id, el)}
+          type="button"
+          onClick={() => {
+            if (options?.externalWaiting)
+              return
+            autoOpenedNodeIdsRef.current.delete(node.id)
+            setOpenPanels((prev) => {
+              const nextOpen = !(prev[node.id] ?? false)
+              const nextPanels = Object.keys(prev).reduce<Record<string, boolean>>((acc, key) => {
+                if (key !== node.id && prev[key])
+                  acc[key] = false
+                return acc
+              }, {})
+              nextPanels[node.id] = nextOpen
+              openPanelsRef.current = nextPanels
+              return nextPanels
+            })
+            focusCurrentNode(node.id)
+          }}
+          className={`flex w-full items-center justify-between px-3 py-2 text-left ${options?.externalWaiting ? '' : 'hover:bg-gray-50'}`}
+        >
+          <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-gray-800">
+            {showRunningIcon && (
+              <span className="inline-flex h-4 w-4 items-center justify-center text-blue-600" aria-label="运行中">
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              </span>
+            )}
+            <span className="shrink-0">{node.data.title}</span>
+            {runtimeState.error && (
+              <span className="min-w-0 truncate text-xs font-normal text-rose-600" title={runtimeState.error}>
+                {runtimeState.error}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`rounded px-2 py-0.5 text-xs ${statusClassMap[status]}`}>{statusTextMap[status]}</span>
+            {!options?.externalWaiting && (
+              <span className="text-xs text-gray-500">{panelOpen ? '收起' : '展开'}</span>
+            )}
+          </div>
+        </button>
+
+        {panelOpen && (
+          <div className="space-y-2 border-t border-gray-200 px-3 py-3">
+            {node.data.type === 'http-request' && (
+              <>
+                <div className="text-xs text-gray-500">请求配置</div>
+                <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">{renderJson(renderHttpConfigForLog(nodeConfig, execution?.variables))}</pre>
+              </>
+            )}
+
+            {isWaitingCurrent && (
+              <div ref={(el) => { waitingFormRefs.current[node.id] = el }} className="space-y-2 rounded border border-gray-200 bg-white p-2">
+                <div className="text-xs font-medium text-gray-800">节点等待输入，请提交后继续</div>
+                {!!submitPhase && submitPhase === 'submitting_waiting_input' && (
+                  <div className="rounded border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-700">
+                    正在提交当前输入并继续执行，请稍候。
+                  </div>
+                )}
+                {!!waitingPrompt && (
+                  <div className="whitespace-pre-wrap rounded border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-800">
+                    {waitingPrompt}
+                  </div>
+                )}
+                <DynamicForm fieldStates={waitingFieldStates} values={waitingInput} onChange={setWaitingInput} />
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={submitWaitingInput}
+                    disabled={loading}
+                    className="rounded bg-blue-600 px-4 py-2 text-xs text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                  >
+                    {getWaitingSubmitButtonText()}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {node.data.type === BlockEnum.End && hasEndTemplate && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs text-gray-500">模板渲染</div>
+                  {endRendered[node.id] && (
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => exportRenderedToPdf(node.id)} className="rounded border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50">导出 PDF（可复制）</button>
+                      <button type="button" onClick={() => exportRenderedToHtml(node.id)} className="rounded border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50">导出 HTML</button>
+                    </div>
+                  )}
+                </div>
+                {endRenderLoading[node.id] && <div className="rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600">渲染中...</div>}
+                {endRenderError[node.id] && <div className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700">{endRenderError[node.id]}</div>}
+                {endRendered[node.id] && (
+                  <div className="rounded border border-gray-200 bg-white p-2">
+                    <div className="mb-2 text-[11px] text-gray-500">模板：{endRendered[node.id].templateName}</div>
+                    {endRendered[node.id].outputType === 'html'
+                      ? (
+                          <iframe
+                            title={`end-template-${node.id}`}
+                            sandbox="allow-same-origin"
+                            scrolling="no"
+                            srcDoc={endRendered[node.id].html}
+                            onLoad={(event) => {
+                              const iframe = event.currentTarget
+                              try {
+                                const doc = iframe.contentWindow?.document
+                                if (!doc)
+                                  return
+                                const body = doc.body
+                                const docEl = doc.documentElement
+                                const computeHeight = () => {
+                                  let maxBottom = 0
+                                  try {
+                                    const elements = body?.querySelectorAll?.('*') ?? []
+                                    const cap = Math.min(elements.length, 4000)
+                                    for (let i = 0; i < cap; i += 1) {
+                                      const el = elements[i] as Element
+                                      const rect = (el as HTMLElement).getBoundingClientRect?.()
+                                      if (!rect)
+                                        continue
+                                      if (Number.isFinite(rect.bottom))
+                                        maxBottom = Math.max(maxBottom, rect.bottom)
+                                    }
+                                  } catch {}
+                                  const bodyRect = body?.getBoundingClientRect()
+                                  const docRect = docEl?.getBoundingClientRect()
+                                  const height = Math.max(
+                                    body?.scrollHeight ?? 0,
+                                    body?.offsetHeight ?? 0,
+                                    Math.ceil(bodyRect?.height ?? 0),
+                                    docEl?.scrollHeight ?? 0,
+                                    docEl?.offsetHeight ?? 0,
+                                    Math.ceil(docRect?.height ?? 0),
+                                    Math.ceil(maxBottom),
+                                  )
+                                  if (height > 0) {
+                                    const next = Math.min(Math.max(height + 8, 240), 20000)
+                                    setEndRenderedHeights(prev => ({ ...prev, [node.id]: next }))
+                                  }
+                                }
+                                computeHeight()
+                                window.setTimeout(computeHeight, 60)
+                                window.setTimeout(computeHeight, 240)
+                                const existing = iframeResizeObserversRef.current[node.id]
+                                if (existing) {
+                                  try { existing.disconnect() } catch {}
+                                }
+                                if (typeof ResizeObserver !== 'undefined') {
+                                  const observer = new ResizeObserver(() => computeHeight())
+                                  iframeResizeObserversRef.current[node.id] = observer
+                                  observer.observe(docEl)
+                                }
+                              } catch {}
+                            }}
+                            className="w-full rounded border border-gray-200 bg-white"
+                            style={{ height: `${endRenderedHeights[node.id] || 520}px`, display: 'block' }}
+                          />
+                        )
+                      : (
+                          <pre className="w-full rounded border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-700 whitespace-pre-wrap">
+                            {endRendered[node.id].html}
+                          </pre>
+                        )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <Collapse
+              size="small"
+              bordered={false}
+              className="rounded border border-gray-200 bg-white"
+              activeKey={nodeOutputExpandedById[node.id] ? ['output'] : []}
+              onChange={(keys) => {
+                const list = Array.isArray(keys) ? keys : [keys]
+                const expanded = list.includes('output')
+                setNodeOutputExpandedById(prev => ({ ...prev, [node.id]: expanded }))
+              }}
+              items={[
+                {
+                  key: 'output',
+                  label: (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-gray-600">节点输出（JSON）</span>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          void copyNodeOutputJson(nodeOutput)
+                        }}
+                        className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
+                      >
+                        复制
+                      </button>
+                    </div>
+                  ),
+                  children: (
+                    <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">
+                      {renderJson(nodeOutput)}
+                    </pre>
+                  ),
+                },
+              ]}
+            />
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-full flex-col gap-3">
       <Modal
@@ -2181,287 +2515,47 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
 
         {execution && (
           <div className="space-y-2">
-            {visibleNodeIds.map((nodeId) => {
-              const node = nodeMap.get(nodeId)
-              const state = node ? execution.nodeStates[node.id] : undefined
-              const runtimeState = state || (
-                executionViewPhase === 'bootstrapping' && node?.id === startNodeId
-                  ? {
-                      nodeId: node.id,
-                      status: 'running' as RuntimeNodeStatus,
-                    }
-                  : undefined
-              )
-              if (!node || !runtimeState)
-                return null
-              if (runtimeState.status === 'skipped')
-                return null
-              const panelOpen = openPanels[node.id] ?? false
-              const status = runtimeState.status
-              const rawNodeOutput = execution.variables[node.id]
-              const nodeOutput = node.data.type === BlockEnum.End
-                ? buildEndConfiguredOutput(node, execution.variables, rawNodeOutput)
-                : rawNodeOutput
-              const isWaitingCurrent = execution.waitingInput?.nodeId === node.id && status === 'waiting_input'
-              const showRunningIcon = shouldShowRunningIcon(node.data.type, status, activeNodeId, node.id)
-              const nodeConfig: Record<string, unknown> = isObject(node.data.config) ? node.data.config : {}
-              const waitingPrompt = (() => {
-                if (!isWaitingCurrent)
-                  return ''
-                const schemaPromptRaw = execution.waitingInput?.schema?.['prompt']
-                const schemaPrompt = typeof schemaPromptRaw === 'string'
-                  ? schemaPromptRaw
-                  : ''
-                const nodePrompt = typeof nodeConfig.prompt === 'string' ? nodeConfig.prompt : ''
-                const rawPrompt = schemaPrompt || nodePrompt
-                if (!rawPrompt.trim())
-                  return ''
-                return renderRuntimeTemplate(rawPrompt, execution.variables ?? {})
-              })()
+            {historyNodeIds.length > 0 && (
+              <div className="rounded border border-gray-200">
+                <button
+                  ref={historyGroupHeaderRef}
+                  type="button"
+                  onClick={() => setHistoryGroupExpanded(prev => !prev)}
+                  className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-gray-50"
+                >
+                  <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-gray-800">
+                    {currentHistoryNodeId && currentHistoryNode && currentHistoryNodeState && shouldShowRunningIcon(currentHistoryNode.data.type, currentHistoryNodeState.status, activeNodeId, currentHistoryNodeId) && (
+                      <span className="inline-flex h-4 w-4 items-center justify-center text-blue-600" aria-label="运行中">
+                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                      </span>
+                    )}
+                    <span className="shrink-0">{currentHistoryNode?.data.title || '暂无执行节点'}</span>
+                    {currentHistoryNodeState?.error && (
+                      <span className="min-w-0 truncate text-xs font-normal text-rose-600" title={currentHistoryNodeState.error}>
+                        {currentHistoryNodeState.error}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {currentHistoryNodeState && (
+                      <span className={`rounded px-2 py-0.5 text-xs ${statusClassMap[currentHistoryNodeState.status]}`}>{statusTextMap[currentHistoryNodeState.status]}</span>
+                    )}
+                    <span className="text-xs text-gray-500">{historyGroupExpanded ? '收起历史节点' : '展开历史节点'}</span>
+                  </div>
+                </button>
+                {historyGroupExpanded && (
+                  <div className="space-y-2 border-t border-gray-200 px-3 py-3">
+                    {historyNodeIds.map(nodeId => renderWorkflowNodeCard(nodeId))}
+                  </div>
+                )}
+              </div>
+            )}
 
-              return (
-                <div key={node.id} ref={el => bindNodeCardRef(node.id, el)} className="rounded border border-gray-200">
-                  <button
-                    ref={el => bindNodeHeaderRef(node.id, el)}
-                    type="button"
-                    onClick={() => {
-                      autoOpenedNodeIdsRef.current.delete(node.id)
-                      setOpenPanels((prev) => {
-                        const nextOpen = !(prev[node.id] ?? false)
-                        const nextPanels = Object.keys(prev).reduce<Record<string, boolean>>((acc, key) => {
-                          if (key !== node.id && prev[key])
-                            acc[key] = false
-                          return acc
-                        }, {})
-                        nextPanels[node.id] = nextOpen
-                        openPanelsRef.current = nextPanels
-                        return nextPanels
-                      })
-                      focusCurrentNode(node.id)
-                    }}
-                    className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-gray-50"
-                  >
-                    <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-gray-800">
-                      {showRunningIcon && (
-                        <span className="inline-flex h-4 w-4 items-center justify-center text-blue-600" aria-label="运行中">
-                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                        </span>
-                      )}
-                      <span className="shrink-0">{node.data.title}</span>
-                      {runtimeState.error && (
-                        <span
-                          className="min-w-0 truncate text-xs font-normal text-rose-600"
-                          title={runtimeState.error}
-                        >
-                          {runtimeState.error}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`rounded px-2 py-0.5 text-xs ${statusClassMap[status]}`}>{statusTextMap[status]}</span>
-                      <span className="text-xs text-gray-500">{panelOpen ? '收起' : '展开'}</span>
-                    </div>
-                  </button>
+            {!!waitingInputNodeId && (
+              renderWorkflowNodeCard(waitingInputNodeId, { forceOpen: true, externalWaiting: true })
+            )}
 
-	              {panelOpen && (
-	                    <div className="space-y-2 border-t border-gray-200 px-3 py-3">
-
-                      {node.data.type === 'http-request' && (
-                        <>
-                          <div className="text-xs text-gray-500">请求配置</div>
-                          <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">{renderJson(renderHttpConfigForLog(nodeConfig, execution?.variables))}</pre>
-                        </>
-                      )}
-
-                  {isWaitingCurrent && (
-                        <div ref={(el) => { waitingFormRefs.current[node.id] = el }} className="space-y-2 rounded border border-gray-200 bg-white p-2">
-                          <div className="text-xs font-medium text-gray-800">节点等待输入，请提交后继续</div>
-                          {!!submitPhase && submitPhase === 'submitting_waiting_input' && (
-                            <div className="rounded border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-700">
-                              正在提交当前输入并继续执行，请稍候。
-                            </div>
-                          )}
-                          {!!waitingPrompt && (
-                            <div className="whitespace-pre-wrap rounded border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-800">
-                              {waitingPrompt}
-                            </div>
-                          )}
-                          <DynamicForm fieldStates={waitingFieldStates} values={waitingInput} onChange={setWaitingInput} />
-                          <div className="flex justify-end pt-1">
-                            <button
-                              type="button"
-                              onClick={submitWaitingInput}
-                              disabled={loading}
-                              className="rounded bg-blue-600 px-4 py-2 text-xs text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-                            >
-                              {getWaitingSubmitButtonText()}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-	                      {node.data.type === BlockEnum.End && (
-	                        <div className="space-y-2">
-	                          <div className="flex items-center justify-between gap-2">
-	                            <div className="text-xs text-gray-500">模板渲染</div>
-	                            {endRendered[node.id] && (
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => exportRenderedToPdf(node.id)}
-                                    className="rounded border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
-                                  >
-                                    导出 PDF（可复制）
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => exportRenderedToHtml(node.id)}
-                                    className="rounded border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
-                                  >
-                                    导出 HTML
-                                  </button>
-                                </div>
-	                            )}
-	                          </div>
-	                          {endRenderLoading[node.id] && (
-	                            <div className="rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600">渲染中...</div>
-	                          )}
-	                          {endRenderError[node.id] && (
-	                            <div className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700">{endRenderError[node.id]}</div>
-	                          )}
-	                          {endRendered[node.id] && (
-	                            <div className="rounded border border-gray-200 bg-white p-2">
-	                              <div className="mb-2 text-[11px] text-gray-500">模板：{endRendered[node.id].templateName}</div>
-	                              {endRendered[node.id].outputType === 'html'
-	                                ? (
-	                                    <iframe
-	                                      title={`end-template-${node.id}`}
-	                                      sandbox="allow-same-origin"
-	                                      scrolling="no"
-	                                      srcDoc={endRendered[node.id].html}
-	                                      onLoad={(event) => {
-	                                        const iframe = event.currentTarget
-	                                        try {
-	                                        const doc = iframe.contentWindow?.document
-	                                        if (!doc)
-	                                          return
-	                                        const body = doc.body
-	                                        const docEl = doc.documentElement
-
-	                                        const computeHeight = () => {
-	                                          let maxBottom = 0
-	                                          try {
-	                                            const elements = body?.querySelectorAll?.('*') ?? []
-	                                            const cap = Math.min(elements.length, 4000)
-	                                            for (let i = 0; i < cap; i += 1) {
-	                                              const el = elements[i] as Element
-	                                              const rect = (el as HTMLElement).getBoundingClientRect?.()
-	                                              if (!rect)
-	                                                continue
-	                                              if (Number.isFinite(rect.bottom))
-	                                                maxBottom = Math.max(maxBottom, rect.bottom)
-	                                            }
-	                                          }
-	                                          catch {
-	                                          }
-
-	                                            const bodyRect = body?.getBoundingClientRect()
-	                                            const docRect = docEl?.getBoundingClientRect()
-	                                            const height = Math.max(
-	                                              body?.scrollHeight ?? 0,
-	                                              body?.offsetHeight ?? 0,
-	                                              Math.ceil(bodyRect?.height ?? 0),
-	                                              docEl?.scrollHeight ?? 0,
-	                                              docEl?.offsetHeight ?? 0,
-	                                              Math.ceil(docRect?.height ?? 0),
-	                                              Math.ceil(maxBottom),
-	                                            )
-	                                            if (height > 0) {
-	                                              const next = Math.min(Math.max(height + 8, 240), 20000)
-	                                              setEndRenderedHeights(prev => ({ ...prev, [node.id]: next }))
-	                                            }
-	                                          }
-
-	                                          computeHeight()
-	                                          window.setTimeout(computeHeight, 60)
-	                                          window.setTimeout(computeHeight, 240)
-
-	                                          const existing = iframeResizeObserversRef.current[node.id]
-	                                          if (existing) {
-	                                            try {
-	                                              existing.disconnect()
-	                                            }
-	                                            catch {
-	                                            }
-	                                          }
-	                                          if (typeof ResizeObserver !== 'undefined') {
-	                                            const observer = new ResizeObserver(() => computeHeight())
-	                                            iframeResizeObserversRef.current[node.id] = observer
-	                                            observer.observe(docEl)
-	                                          }
-	                                        }
-	                                        catch {
-	                                        }
-	                                      }}
-	                                      className="w-full rounded border border-gray-200 bg-white"
-	                                      style={{ height: `${endRenderedHeights[node.id] || 520}px`, display: 'block' }}
-	                                    />
-	                                  )
-	                                : (
-	                                    <pre className="w-full rounded border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-700 whitespace-pre-wrap">
-	                                      {endRendered[node.id].html}
-	                                    </pre>
-	                                  )}
-	                            </div>
-	                          )}
-	                          {!endRendered[node.id] && !endRenderLoading[node.id] && !endRenderError[node.id] && (
-	                            <div className="text-[11px] text-gray-400">未配置模板或尚未完成执行。</div>
-	                          )}
-	                        </div>
-	                      )}
-
-	                      <Collapse
-	                        size="small"
-	                        bordered={false}
-	                        className="rounded border border-gray-200 bg-white"
-	                        activeKey={nodeOutputExpandedById[node.id] ? ['output'] : []}
-	                        onChange={(keys) => {
-	                          const list = Array.isArray(keys) ? keys : [keys]
-	                          const expanded = list.includes('output')
-	                          setNodeOutputExpandedById(prev => ({ ...prev, [node.id]: expanded }))
-	                        }}
-	                        items={[
-	                          {
-	                            key: 'output',
-	                            label: (
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-xs text-gray-600">节点输出（JSON）</span>
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.preventDefault()
-                                      event.stopPropagation()
-                                      void copyNodeOutputJson(nodeOutput)
-                                    }}
-                                    className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
-                                  >
-                                    复制
-                                  </button>
-                                </div>
-                              ),
-	                            children: (
-	                              <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">
-	                                {renderJson(nodeOutput)}
-	                              </pre>
-	                            ),
-	                          },
-	                        ]}
-	                      />
-	                    </div>
-	                  )}
-	                </div>
-	              )
-	            })}
+            {endNodeIds.map(nodeId => renderWorkflowNodeCard(nodeId))}
           </div>
         )}
       </div>

@@ -125,6 +125,13 @@ const stringifyPretty = (value: unknown) => {
   }
 }
 
+const normalizeRetryCountInput = (value: string) => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0)
+    return 0
+  return Math.floor(parsed)
+}
+
 const extractPathsFromJson = (raw: unknown): string[] => {
   const paths: string[] = []
   const visit = (value: unknown, prefix: string) => {
@@ -1560,6 +1567,8 @@ export default function NodeConfigPanel({
         <input className={inputClass} type="number" step="0.1" min="0" max="2" value={config.temperature} onChange={event => updateConfig({ ...config, temperature: Number(event.target.value || 0) })} />
         <label className={labelClass}>最大 Token</label>
         <input className={inputClass} type="number" min="1" value={config.maxTokens} onChange={event => updateConfig({ ...config, maxTokens: Number(event.target.value || 1) })} />
+        <label className={labelClass}>重试次数</label>
+        <input className={inputClass} type="number" min="0" step="1" value={config.retryCount ?? 0} onChange={event => updateConfig({ ...config, retryCount: normalizeRetryCountInput(event.target.value) })} />
         <VariableValueInput
           label="System Prompt"
           value={config.systemPrompt}
@@ -2480,6 +2489,15 @@ export default function NodeConfigPanel({
           value={config.timeout}
           onChange={event => updateConfig({ ...config, timeout: Number(event.target.value || 1) })}
         />
+        <label className={labelClass}>重试次数</label>
+        <input
+          className={inputClass}
+          type="number"
+          min="0"
+          step="1"
+          value={config.retryCount ?? 0}
+          onChange={event => updateConfig({ ...config, retryCount: normalizeRetryCountInput(event.target.value) })}
+        />
         <div className="space-y-2 rounded border border-gray-200 p-2">
           <div className="text-xs font-semibold text-gray-700">响应写入参数</div>
           <label className={labelClass}>响应 JSON Schema（可选）</label>
@@ -3042,6 +3060,17 @@ export default function NodeConfigPanel({
               min="1"
               value={config.timeout}
               onChange={event => updateConfig({ ...config, timeout: Number(event.target.value || 30) })}
+            />
+          </div>
+          <div className="col-span-6">
+            <label className={labelClass}>重试次数</label>
+            <input
+              className={inputClass}
+              type="number"
+              min="0"
+              step="1"
+              value={config.retryCount ?? 0}
+              onChange={event => updateConfig({ ...config, retryCount: normalizeRetryCountInput(event.target.value) })}
             />
           </div>
         </div>

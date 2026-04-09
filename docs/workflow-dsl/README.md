@@ -602,6 +602,7 @@
       "method": "POST",                    // HTTP 方法（必填）
       "url": "https://api.example.com/query", // 请求 URL（必填，支持变量）
       "timeout": 30,                       // 超时时间（秒，默认 30）
+      "retryCount": 0,                     // 失败后额外重试次数（默认 0）
       "authorization": {                   // 认证配置（可选）
         "type": "bearer",                  // 认证类型
         "apiKey": "{{apiToken}}",          // API Key（支持变量）
@@ -654,6 +655,13 @@
   - 必填：否
   - 默认值：30
   - 单位：秒
+
+  retryCount（重试次数）
+
+  - 类型：number
+  - 必填：否
+  - 默认值：0
+  - 说明：节点失败后的额外重试次数；未配置时按 0 处理
 
   authorization（认证配置）
 
@@ -752,6 +760,7 @@
         "method": "POST",
         "url": "https://api.example.com/city/query",
         "timeout": 30,
+        "retryCount": 0,
         "authorization": {
           "type": "bearer",
           "apiKey": "{{apiToken}}",
@@ -1081,6 +1090,7 @@
       "model": "gpt-4",                   // 模型名称（必填）
       "temperature": 0.7,                 // 温度参数（0-2）
       "maxTokens": 2000,                  // 最大 Token 数
+      "retryCount": 0,                    // 失败后额外重试次数（默认 0）
       "systemPrompt": "你是一个专业的分析师", // 系统提示词
       "userPrompt": "分析{{city}}的预算情况", // 用户提示词（支持变量）
       "contextEnabled": true,             // 是否启用上下文
@@ -1110,6 +1120,12 @@
   - 类型：number
   - 默认值：2000
   - 说明：限制输出长度
+
+  retryCount（重试次数）
+
+  - 类型：number
+  - 默认值：0
+  - 说明：节点失败后的额外重试次数；未配置时按 0 处理
 
   systemPrompt（系统提示词）
 
@@ -1184,6 +1200,7 @@
         "model": "gpt-4",
         "temperature": 0.7,
         "maxTokens": 2000,
+        "retryCount": 0,
         "systemPrompt": "你是一个专业的财务分析师，擅长分析城市预算数据。请用专业、客观的语言进行分析。",
         "userPrompt": "请分析{{city}}的预算情况：\n- 一般预算收入：{{budget}}亿元\n- 人口：{{population}}万人\n- 上年同期：{{lastYearBudget}}亿元\n\n请给出风险评估和建议。",
         "contextEnabled": false,
@@ -1240,6 +1257,7 @@
         }
       ],
       "timeout": 30,                      // 超时时间（秒）
+      "retryCount": 0,                    // 失败后额外重试次数（默认 0）
       "successStatusCode": 200,           // 成功状态码
       "writebackMappings": [              // 写回映射（可选）
         {
@@ -1326,6 +1344,7 @@
           }
         ],
         "timeout": 30,
+        "retryCount": 0,
         "successStatusCode": 200,
         "writebackMappings": [
           {

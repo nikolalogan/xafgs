@@ -79,6 +79,7 @@ export type EndNodeConfig = {
 export type LLMNodeConfig = {
   joinMode?: 'all' | 'any'
   fanOutMode?: FanOutMode
+  retryCount?: number
   model: string
   temperature: number
   maxTokens: number
@@ -151,6 +152,7 @@ export type IterationNodeConfig = {
 export type HttpNodeConfig = {
   joinMode?: 'all' | 'any'
   fanOutMode?: FanOutMode
+  retryCount?: number
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   url: string
   query: Array<{ key: string; value: string }>
@@ -192,6 +194,7 @@ export type ApiRequestParamValue = {
 export type ApiRequestNodeConfig = {
   joinMode?: 'all' | 'any'
   fanOutMode?: FanOutMode
+  retryCount?: number
   route: {
     method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
     path: string

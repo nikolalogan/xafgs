@@ -22,6 +22,7 @@
 - `node.started`：节点进入 `running`
 - `node.waiting_input`：节点进入 `waiting_input`
 - `node.resumed`：waiting_input 节点在 `resume` 后再次开始执行
+- `node.retrying`：节点失败后准备再次执行（仅 `llm` / `http-request` / `api-request` 且 `retryCount > 0`）
 - `node.succeeded`：节点成功完成
 - `node.failed`：节点失败
 - `node.finished`：节点本轮生命周期结束，`payload.status` 为 `succeeded | failed | waiting_input`
@@ -42,6 +43,13 @@
 - `status`
 - `endedAt`
 - `error`（仅失败时存在）
+
+`node.retrying.payload` 约定包含：
+
+- `nodeId`
+- `attempt`：即将开始的第几次尝试
+- `maxAttempts`：最大尝试次数（`1 + retryCount`）
+- `error`：上一次失败原因
 
 ## 3. waiting_input 的表单渲染与校验
 
@@ -71,6 +79,7 @@
 
 - `type = "workflow_log"`
 - `event`：如 `node.started`、`node.succeeded`、`execution.resumed` 等
+- `attempt/maxAttempts`：重试节点的尝试次数信息（适用于 `node.retrying`、`node.succeeded`、`node.failed`）
 - `requestId/executionId/nodeId`：尽可能补齐
 - `durationMs`：节点耗时（仅 succeeded/failed）
 

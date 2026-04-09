@@ -140,6 +140,13 @@ const normalizeWritebackMappings = (raw: unknown): WritebackMapping[] => {
   })
 }
 
+const normalizeRetryCount = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0)
+    return 0
+  return Math.floor(parsed)
+}
+
 const defaultStartConfig = (): StartNodeConfig => ({
   fanOutMode: 'sequential',
   variables: [
@@ -158,6 +165,7 @@ const defaultEndConfig = (): EndNodeConfig => ({
 const defaultLLMConfig = (): LLMNodeConfig => ({
   joinMode: 'all',
   fanOutMode: 'sequential',
+  retryCount: 0,
   model: 'gpt-4o-mini',
   temperature: 0.7,
   maxTokens: 1024,
@@ -224,6 +232,7 @@ const defaultIterationConfig = (): IterationNodeConfig => ({
 const defaultHttpConfig = (): HttpNodeConfig => ({
   joinMode: 'all',
   fanOutMode: 'sequential',
+  retryCount: 0,
   method: 'GET',
   url: '',
   query: [],
@@ -243,6 +252,7 @@ const defaultHttpConfig = (): HttpNodeConfig => ({
 const defaultApiRequestConfig = (): ApiRequestNodeConfig => ({
   joinMode: 'all',
   fanOutMode: 'sequential',
+  retryCount: 0,
   route: {
     method: 'GET',
     path: '',
@@ -438,6 +448,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       ...llm,
       joinMode: normalizeJoinMode(llm.joinMode),
       fanOutMode: normalizeFanOutMode(llm.fanOutMode),
+      retryCount: normalizeRetryCount(llm.retryCount),
       outputType: llm.outputType === 'json' ? 'json' : 'string',
       outputVar: typeof llm.outputVar === 'string' && llm.outputVar.trim() ? llm.outputVar : fallback.outputVar,
       writebackMappings: normalizeWritebackMappings(llm.writebackMappings),
@@ -527,6 +538,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       ...http,
       joinMode: normalizeJoinMode(http.joinMode),
       fanOutMode: normalizeFanOutMode(http.fanOutMode),
+      retryCount: normalizeRetryCount(http.retryCount),
       bodyType,
       query: normalizeHttpKeyValueArray(http.query),
       headers: normalizeHttpKeyValueArray(http.headers),
@@ -551,6 +563,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       ...api,
       joinMode: normalizeJoinMode(api.joinMode),
       fanOutMode: normalizeFanOutMode(api.fanOutMode),
+      retryCount: normalizeRetryCount(api.retryCount),
       route: {
         ...fallback.route,
         ...route,

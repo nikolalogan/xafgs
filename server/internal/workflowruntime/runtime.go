@@ -351,6 +351,34 @@ type runOptions struct {
 	ResumedInput  map[string]any
 }
 
+func supportsNodeRetry(nodeType string) bool {
+	switch nodeType {
+	case "llm", "http-request", "api-request":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseNodeRetryCount(node WorkflowNode) int {
+	if !supportsNodeRetry(strings.TrimSpace(node.Data.Type)) {
+		return 0
+	}
+	config := node.Data.Config
+	if config == nil {
+		return 0
+	}
+	raw, ok := config["retryCount"]
+	if !ok {
+		return 0
+	}
+	value, err := toNumber(raw)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return int(math.Floor(value))
+}
+
 func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution WorkflowExecution, options runOptions) WorkflowExecution {
 	nodeMap := map[string]WorkflowNode{}
 	for _, node := range execution.WorkflowDSL.Nodes {
@@ -583,11 +611,52 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 		// 防御：确保保留根对象结构与默认值存在，避免 HTTP 节点渲染 {{workflow.xxx}} 时丢参
 		ensureReservedVariableRoots(next.Variables, next.WorkflowDSL)
 
-		result, _ := executor.Execute(ctx, NodeExecutorContext{
-			Node:      node,
-			Variables: next.Variables,
-			NodeInput: nodeInput,
-		})
+		retryCount := parseNodeRetryCount(node)
+		maxAttempts := retryCount + 1
+		attempt := 0
+		var result NodeExecutorResult
+		for {
+			attempt++
+			executed, executeErr := executor.Execute(ctx, NodeExecutorContext{
+				Node:      node,
+				Variables: next.Variables,
+				NodeInput: nodeInput,
+			})
+			if executeErr != nil {
+				executed = NodeExecutorResult{
+					Type:  NodeExecutorResultFailed,
+					Error: executeErr.Error(),
+				}
+			}
+			result = executed
+			if result.Type != NodeExecutorResultFailed || attempt >= maxAttempts {
+				break
+			}
+
+			next.Events = append(next.Events, ExecutionEvent{
+				ID:   uuid.NewString(),
+				Type: "node.retrying",
+				At:   NowISO(),
+				Payload: map[string]any{
+					"nodeId":      nodeID,
+					"attempt":     attempt + 1,
+					"maxAttempts": maxAttempts,
+					"error":       result.Error,
+				},
+			})
+			runtime.log(ctx, map[string]any{
+				"event":       "node.retrying",
+				"requestId":   requestIDFromContext(ctx),
+				"executionId": next.ID,
+				"nodeId":      nodeID,
+				"nodeType":    node.Data.Type,
+				"attempt":     attempt + 1,
+				"maxAttempts": maxAttempts,
+				"error":       result.Error,
+			})
+			next.UpdatedAt = NowISO()
+			persistProgress()
+		}
 
 		switch result.Type {
 			case NodeExecutorResultWaitingInput:
@@ -671,8 +740,10 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 				Type: "node.failed",
 				At:   NowISO(),
 				Payload: map[string]any{
-					"nodeId": nodeID,
-					"error":  result.Error,
+					"nodeId":      nodeID,
+					"error":       result.Error,
+					"attempts":    attempt,
+					"maxAttempts": maxAttempts,
 				},
 				})
 				runtime.log(ctx, map[string]any{
@@ -681,6 +752,8 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"executionId": next.ID,
 					"nodeId":      nodeID,
 					"error":       result.Error,
+					"attempts":    attempt,
+					"maxAttempts": maxAttempts,
 					"durationMs":  nodeDurationMs(state.StartedAt, failedState.EndedAt),
 				})
 				appendNodeFinishedEvent(nodeID, failedState.Status, failedState.EndedAt, result.Error)
@@ -755,7 +828,9 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 				Type: "node.succeeded",
 				At:   NowISO(),
 				Payload: map[string]any{
-					"nodeId": nodeID,
+					"nodeId":      nodeID,
+					"attempts":    attempt,
+					"maxAttempts": maxAttempts,
 				},
 				})
 				runtime.log(ctx, map[string]any{
@@ -763,6 +838,8 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"requestId":   requestIDFromContext(ctx),
 					"executionId": next.ID,
 					"nodeId":      nodeID,
+					"attempts":    attempt,
+					"maxAttempts": maxAttempts,
 					"durationMs":  nodeDurationMs(state.StartedAt, succeededState.EndedAt),
 				})
 				appendNodeFinishedEvent(nodeID, succeededState.Status, succeededState.EndedAt, "")
