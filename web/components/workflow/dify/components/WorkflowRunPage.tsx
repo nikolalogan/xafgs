@@ -150,6 +150,14 @@ const shouldShowRunningIcon = (nodeType: string, status: RuntimeNodeStatus, acti
   return nodeType === BlockEnum.HttpRequest || nodeType === BlockEnum.ApiRequest || nodeType === BlockEnum.LLM
 }
 
+const shouldAutoOpenNode = (nodeType: string, status: RuntimeNodeStatus) => {
+  if (nodeType === BlockEnum.Start || nodeType === BlockEnum.End)
+    return true
+  if (status === 'waiting_input' || status === 'failed')
+    return true
+  return false
+}
+
 const getNodePreviewStyle = (status: RuntimeNodeStatus | undefined) => {
   if (status === 'succeeded')
     return { border: '1.5px solid #10b981', background: '#ecfdf5' }
@@ -447,6 +455,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const nodeHeaderRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const waitingFormRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const startFormRef = useRef<HTMLDivElement | null>(null)
+  const runScrollContainerRef = useRef<HTMLDivElement | null>(null)
   const scrollRetryTimerRef = useRef<number | null>(null)
   const scrollRequestTokenRef = useRef(0)
   const startFields = useMemo(() => normalizeStartFields(nodes), [nodes])
@@ -599,19 +608,26 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     })
   }
 
-  const scrollNodeCardIntoView = (nodeId: string) => {
+  const scrollNodeCardIntoView = (nodeId: string, requestToken = ++scrollRequestTokenRef.current) => {
     if (typeof window === 'undefined')
       return
     const titleElement = nodeHeaderRefs.current[nodeId] || nodeCardRefs.current[nodeId]
-    if (!titleElement)
+    if (!titleElement) {
+      if (scrollRetryTimerRef.current !== null)
+        window.clearTimeout(scrollRetryTimerRef.current)
+      scrollRetryTimerRef.current = window.setTimeout(() => {
+        if (scrollRequestTokenRef.current !== requestToken)
+          return
+        scrollNodeCardIntoView(nodeId, requestToken)
+      }, 60)
       return
+    }
 
-    const requestToken = ++scrollRequestTokenRef.current
     const alignTitleIntoView = (behavior: ScrollBehavior) => {
       if (scrollRequestTokenRef.current !== requestToken)
         return false
       try {
-        const container = titleElement.closest('.workflow-run-scroll') as HTMLDivElement | null
+        const container = runScrollContainerRef.current
         if (!container) {
           titleElement.scrollIntoView({ behavior, block: 'start' })
           return true
@@ -654,6 +670,49 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         })
       }, 90)
     })
+  }
+
+  const scheduleNodeScrollIntoView = (nodeId: string) => {
+    if (typeof window === 'undefined' || !nodeId)
+      return
+    const requestToken = ++scrollRequestTokenRef.current
+    const delays = [0, 80, 180, 320]
+    const runAttempt = (attemptIndex: number) => {
+      if (scrollRequestTokenRef.current !== requestToken)
+        return
+      scrollNodeCardIntoView(nodeId, requestToken)
+      const nextAttemptIndex = attemptIndex + 1
+      if (nextAttemptIndex >= delays.length)
+        return
+      if (scrollRetryTimerRef.current !== null)
+        window.clearTimeout(scrollRetryTimerRef.current)
+      scrollRetryTimerRef.current = window.setTimeout(() => {
+        runAttempt(nextAttemptIndex)
+      }, delays[nextAttemptIndex])
+    }
+    runAttempt(0)
+  }
+
+  const bindNodeCardRef = (nodeId: string, element: HTMLDivElement | null) => {
+    nodeCardRefs.current[nodeId] = element
+    if (!element)
+      return
+    if (activeNodeIdRef.current !== nodeId && focusedNodeIdRef.current !== nodeId)
+      return
+    window.setTimeout(() => {
+      scheduleNodeScrollIntoView(nodeId)
+    }, 0)
+  }
+
+  const bindNodeHeaderRef = (nodeId: string, element: HTMLButtonElement | null) => {
+    nodeHeaderRefs.current[nodeId] = element
+    if (!element)
+      return
+    if (activeNodeIdRef.current !== nodeId && focusedNodeIdRef.current !== nodeId)
+      return
+    window.setTimeout(() => {
+      scheduleNodeScrollIntoView(nodeId)
+    }, 0)
   }
 
   const focusCurrentNode = (nodeId: string, options?: { open?: boolean }) => {
@@ -738,8 +797,8 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       return
     if (typeof window === 'undefined')
       return
-    scrollNodeCardIntoView(currentDisplayNodeId)
-  }, [currentDisplayNodeId, nodes, openPanels])
+    scheduleNodeScrollIntoView(currentDisplayNodeId)
+  }, [currentDisplayNodeId, nodes, visibleNodeIds])
 
   useEffect(() => {
     if (typeof window === 'undefined')
@@ -750,7 +809,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     if (!element || typeof ResizeObserver === 'undefined')
       return
     const observer = new ResizeObserver(() => {
-      scrollNodeCardIntoView(currentDisplayNodeId)
+      scheduleNodeScrollIntoView(currentDisplayNodeId)
     })
     observer.observe(element)
     return () => {
@@ -933,14 +992,19 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
               waitingResumeNodeIdRef.current = ''
             nextActiveNodeId = nodeId
             nextFocusedNodeId = nodeId
+            const currentNode = nodeMap.get(nodeId)
+            const autoOpenStartedNode = shouldAutoOpenNode(String(currentNode?.data.type || ''), 'running')
             Object.keys(nextOpenPanels).forEach((key) => {
-              if (nextOpenPanels[key])
+              if (nextOpenPanels[key] && key !== nodeId)
                 nextOpenPanels[key] = false
             })
-            nextOpenPanels[nodeId] = true
+            nextOpenPanels[nodeId] = autoOpenStartedNode
             if (nextAutoOpenedNodeIds.has(nodeId)) {
               nextAutoOpenedNodeIds.delete(nodeId)
             }
+            window.setTimeout(() => {
+              scheduleNodeScrollIntoView(nodeId)
+            }, 0)
           } else if (currentEvent.type === 'node.finished') {
             const finishedStatus = typeof currentEvent.payload?.status === 'string' ? currentEvent.payload.status : ''
             const node = nodeMap.get(nodeId)
@@ -972,6 +1036,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                   nextOpenPanels[key] = false
               })
               nextOpenPanels[nodeId] = true
+              nextAutoOpenedNodeIds.add(nodeId)
             } else if (nextAutoOpenedNodeIds.has(nodeId)) {
               nextOpenPanels[nodeId] = false
               nextAutoOpenedNodeIds.delete(nodeId)
@@ -989,6 +1054,12 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       setFocusedNodeId(nextFocusedNodeId)
       setActiveNodeId(nextActiveNodeId)
       setOpenPanels(nextOpenPanels)
+      const scrollTargetNodeId = nextActiveNodeId || nextFocusedNodeId
+      if (scrollTargetNodeId) {
+        window.setTimeout(() => {
+          scheduleNodeScrollIntoView(scrollTargetNodeId)
+        }, 0)
+      }
       setPendingPlaybackEvents(prev => prev.slice(1))
     }, delay)
 
@@ -2038,7 +2109,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         )}
       </div>
 
-      <div className="workflow-run-scroll min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 bg-white p-3">
+      <div ref={runScrollContainerRef} className="workflow-run-scroll min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 bg-white p-3">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-gray-900">
             <span className="shrink-0">流程执行</span>
@@ -2149,9 +2220,9 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
               })()
 
               return (
-                <div key={node.id} ref={(el) => { nodeCardRefs.current[node.id] = el }} className="rounded border border-gray-200">
+                <div key={node.id} ref={el => bindNodeCardRef(node.id, el)} className="rounded border border-gray-200">
                   <button
-                    ref={(el) => { nodeHeaderRefs.current[node.id] = el }}
+                    ref={el => bindNodeHeaderRef(node.id, el)}
                     type="button"
                     onClick={() => {
                       autoOpenedNodeIdsRef.current.delete(node.id)
