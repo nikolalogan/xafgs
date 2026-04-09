@@ -440,6 +440,31 @@ export default function WorkflowTasksPage() {
     downloadBlob(blob, filename)
   }
 
+  const onDownloadExecutionSnapshotJSON = () => {
+    if (!selectedExecution)
+      return
+    const snapshot = {
+      id: selectedExecution.id,
+      workflowId: selectedExecution.workflowId,
+      workflowName: selectedExecution.workflowName,
+      menuKey: selectedExecution.menuKey,
+      starterUserId: selectedExecution.starterUserId,
+      status: selectedExecution.status,
+      waitingInput: selectedExecution.waitingInput ?? null,
+      variables: selectedExecution.variables ?? {},
+      outputs: selectedExecution.outputs ?? {},
+      nodeStates: selectedExecution.nodeStates ?? {},
+      error: selectedExecution.error ?? '',
+      createdAt: selectedExecution.createdAt,
+      updatedAt: selectedExecution.updatedAt,
+      exportedAt: new Date().toISOString(),
+    }
+    const content = JSON.stringify(snapshot, null, 2)
+    const blob = new Blob([content], { type: 'application/json;charset=utf-8' })
+    const filename = `${ensureExportFileName(selectedExecution.workflowName || 'workflow')}-${selectedExecution.id}-snapshot.json`
+    downloadBlob(blob, filename)
+  }
+
   const onDownloadTemplateHTML = () => {
     if (!templatePreview)
       return
@@ -776,15 +801,13 @@ export default function WorkflowTasksPage() {
               </div>
             )}
 
-            <details className="rounded border border-gray-200 p-3">
-              <summary className="cursor-pointer text-sm font-semibold text-gray-900">输出结果</summary>
-              <div className="mt-3 space-y-2">
-                <div className="flex justify-end">
-                  <Button size="small" onClick={onDownloadOutputJSON}>下载输出 JSON</Button>
-                </div>
-                <pre className="max-h-72 overflow-auto rounded bg-gray-50 p-3 text-xs text-gray-700">{JSON.stringify(selectedExecution.outputs ?? {}, null, 2)}</pre>
-              </div>
-            </details>
+            <div className="rounded border border-gray-200 p-3">
+              <div className="mb-2 text-sm font-semibold text-gray-900">输出结果</div>
+              <Space>
+                <Button size="small" onClick={onDownloadOutputJSON}>下载输出结果</Button>
+                <Button size="small" onClick={onDownloadExecutionSnapshotJSON}>下载执行快照</Button>
+              </Space>
+            </div>
 
             <div className="rounded border border-gray-200 p-3">
               <div className="mb-2 text-sm font-semibold text-gray-900">报错信息</div>

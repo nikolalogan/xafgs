@@ -62,7 +62,7 @@ export default function WorkflowRunRoutePage() {
   }, [])
 
   useEffect(() => {
-    if (currentRole === 'guest' || currentRole === 'user')
+    if (currentRole === 'guest')
       return
     if (!Number.isFinite(workflowIDValue) || workflowIDValue <= 0)
       return
@@ -114,18 +114,6 @@ export default function WorkflowRunRoutePage() {
         <div className="rounded-xl border border-gray-200 bg-white p-6">
           <div className="text-base font-semibold text-gray-900">无权限访问</div>
           <div className="mt-2 text-sm text-gray-500">请先登录后再运行工作流。</div>
-        </div>
-      </div>
-    )
-  }
-
-  if (currentRole !== 'admin') {
-    return (
-      <div className="space-y-3">
-        {contextHolder}
-        <div className="rounded-xl border border-gray-200 bg-white p-6">
-          <div className="text-base font-semibold text-gray-900">无权限访问</div>
-          <div className="mt-2 text-sm text-gray-500">工作流运行仅管理员可访问。</div>
         </div>
       </div>
     )

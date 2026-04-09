@@ -32,12 +32,12 @@ type ApiResponse<T> = {
 
 const menuItems: MenuItem[] = [
   { key: 'home', label: '控制台', href: '/app', roles: ['admin', 'user', 'guest'] as ConsoleRole[] },
-  { key: 'chat', label: 'AI 对话', href: '/app/chat', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'chat', label: 'AI 对话', href: '/app/chat', roles: ['admin'] as ConsoleRole[] },
   { key: 'workflow-tasks', label: '任务中心', href: '/app/workflow-tasks', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'workflow-config', label: '工作流配置', href: '/app/workflows', roles: ['admin'] as ConsoleRole[] },
-  { key: 'reserve', label: '储备', href: '/app/workflows?menuKey=reserve', roles: ['admin'] as ConsoleRole[] },
-  { key: 'review', label: '评审', href: '/app/workflows?menuKey=review', roles: ['admin'] as ConsoleRole[] },
-  { key: 'postloan', label: '保后', href: '/app/workflows?menuKey=postloan', roles: ['admin'] as ConsoleRole[] },
+  { key: 'reserve', label: '储备', href: '/app/workflows?menuKey=reserve', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'review', label: '评审', href: '/app/workflows?menuKey=review', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'postloan', label: '保后', href: '/app/workflows?menuKey=postloan', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'templates', label: '模板配置', href: '/app/templates', roles: ['admin'] as ConsoleRole[] },
   { key: 'files', label: '文件管理', href: '/app/files', roles: ['admin'] as ConsoleRole[] },
   { key: 'enterprises', label: '企业管理', href: '/app/enterprises', roles: ['admin', 'user'] as ConsoleRole[] },
@@ -119,7 +119,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pageTitle = getPageTitle(pathname, search)
   const visibleMenuItems = useMemo(() => {
     const base = menuItems.filter(item => item.roles.includes(role))
-    if (role !== 'admin')
+    if (role === 'guest')
       return base
 
     const safeWorkflows = Array.isArray(workflows) ? workflows : []
@@ -136,7 +136,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         key: `workflow-run-${workflow.id}`,
         label: `· ${workflow.name}`,
         href: `/app/workflows/${workflow.id}/run?auto=1`,
-        roles: ['admin'],
+        roles: ['admin', 'user'],
         indent: true,
       })
     }
@@ -213,12 +213,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (role !== 'admin') {
+    if (role === 'guest') {
       setWorkflows([])
       return
     }
-    if (pathname.startsWith('/app/workflows'))
-      return
 
     const token = (window.localStorage.getItem('sxfg_access_token')
       || window.localStorage.getItem('access_token')
@@ -251,7 +249,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       }
     }
     run()
-  }, [role, pathname])
+  }, [role])
 
   const workflowChildren = useMemo(() => {
     const safeWorkflows = Array.isArray(workflows) ? workflows : []
@@ -283,7 +281,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       pushIfVisible('workflow-tasks')
       pushIfVisible('workflow-config')
 
-    if (role === 'admin') {
+    if (role === 'admin' || role === 'user') {
       const buildSubMenu = (menuKey: Exclude<WorkflowMenuKey, ''>, title: string) => {
         const children: MenuProps['items'] = [
           ...(workflowChildren[menuKey] ?? []).map(w => ({
@@ -421,7 +419,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         >
           <div style={{ height: 56, display: 'flex', alignItems: 'center', paddingInline: 16, borderBottom: '1px solid #f0f0f0' }}>
             <Typography.Text strong ellipsis style={{ width: '100%' }}>
-              SXFG Console
+              系统
             </Typography.Text>
           </div>
           <div style={{ padding: 8 }}>

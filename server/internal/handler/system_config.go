@@ -40,12 +40,12 @@ func (handler *SystemConfigHandler) Register(router fiber.Router, adminMiddlewar
 		SuccessDataExample: apimeta.ExampleFromType[model.SystemConfigDTO](),
 	}, handler.Get)
 
-	adminGroup := router.Group("", adminMiddleware)
-	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[updateSystemConfigRequest]{
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[updateSystemConfigRequest]{
 		Method:             fiber.MethodPut,
 		Path:               "/system-config",
 		Summary:            "更新系统配置",
 		Auth:               "admin",
+		Middlewares:        []fiber.Handler{adminMiddleware},
 		SuccessDataExample: apimeta.ExampleFromType[model.SystemConfigDTO](),
 	}, handler.Update)
 }

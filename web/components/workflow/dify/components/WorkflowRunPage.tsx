@@ -402,6 +402,44 @@ const userConfigFields = [
 
 type UserConfigFieldKey = typeof userConfigFields[number]['key']
 
+const normalizeUserConfigFieldName = (raw: string) => String(raw || '')
+  .replace(/[:：]/g, '')
+  .replace(/[\s_-]+/g, '')
+  .toLowerCase()
+
+const resolveUserConfigFieldKey = (raw: string): UserConfigFieldKey | '' => {
+  const normalized = normalizeUserConfigFieldName(raw)
+  if (!normalized)
+    return ''
+  if (normalized === 'warningaccount' || normalized === '预警通账号')
+    return 'warningAccount'
+  if (normalized === 'warningpassword' || normalized === '预警通密码')
+    return 'warningPassword'
+  if (normalized === 'aibaseurl' || normalized === 'aiserviceprovideraddress' || normalized === 'ai服务商地址')
+    return 'aiBaseUrl'
+  if (normalized === 'aiapikey')
+    return 'aiApiKey'
+  return ''
+}
+
+const parseMissingUserConfigKeysFromMessage = (rawMessage: string): UserConfigFieldKey[] => {
+  const message = String(rawMessage || '').trim()
+  if (!message)
+    return []
+  const missingPrefixIndex = message.indexOf('缺少用户配置')
+  const content = missingPrefixIndex >= 0
+    ? message.slice(missingPrefixIndex).replace(/^缺少用户配置[:：]?/, '')
+    : message
+  const parts = content.split(/[、,，;；]/g).map(item => item.trim()).filter(Boolean)
+  const keys = parts
+    .map(resolveUserConfigFieldKey)
+    .filter((key): key is UserConfigFieldKey => Boolean(key))
+  if (keys.length === 0)
+    return []
+  const keySet = new Set<UserConfigFieldKey>(keys)
+  return userConfigFields.filter(field => keySet.has(field.key)).map(field => field.key)
+}
+
 const detectRequiredUserConfigKeys = (dsl: unknown): UserConfigFieldKey[] => {
   let raw = ''
   try {
@@ -1540,6 +1578,25 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       || '').trim()
   }
 
+  const promptMissingUserConfig = (missing: UserConfigFieldKey[]) => {
+    if (missing.length === 0)
+      return
+    const missingLabels = missing
+      .map(key => userConfigFields.find(item => item.key === key)?.label || key)
+      .join('、')
+    const first = missing[0]
+    const targetHash = userConfigFields.find(item => item.key === first)?.hash || ''
+    Modal.confirm({
+      title: '缺少用户配置',
+      content: `当前流程运行需要先配置：${missingLabels}`,
+      okText: '去配置',
+      cancelText: '取消',
+      onOk: () => {
+        router.push(`/app/user-config${targetHash}`)
+      },
+    })
+  }
+
   const renderEndTemplateIfNeeded = async (node: DifyNode, output: unknown) => {
     if (!execution)
       return
@@ -1655,20 +1712,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         const config = payload.data || { warningAccount: '', warningPassword: '', aiBaseUrl: '', aiApiKey: '' }
         const missing = requiredKeys.filter((key) => String((config as any)[key] ?? '').trim() === '')
         if (missing.length > 0) {
-          const missingLabels = missing
-            .map((key) => userConfigFields.find(item => item.key === key)?.label || key)
-            .join('、')
-          const first = missing[0]
-          const targetHash = userConfigFields.find(item => item.key === first)?.hash || ''
-          Modal.confirm({
-            title: '缺少用户配置',
-            content: `当前流程运行需要先配置：${missingLabels}`,
-            okText: '去配置',
-            cancelText: '取消',
-            onOk: () => {
-              router.push(`/app/user-config${targetHash}`)
-            },
-          })
+          promptMissingUserConfig(missing)
           setSubmitPhase('')
           return
         }
@@ -1707,8 +1751,16 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         router.push('/?redirect=/app/workflow')
         return
       }
-      if (!response.ok || !payload.data)
-        throw new Error(payload.error || payload.message || '运行失败')
+      if (!response.ok || !payload.data) {
+        const backendMessage = payload.error || payload.message || '运行失败'
+        const missing = parseMissingUserConfigKeysFromMessage(backendMessage)
+        if (missing.length > 0) {
+          setSubmitPhase('')
+          promptMissingUserConfig(missing)
+          return
+        }
+        throw new Error(backendMessage)
+      }
       const executionData = payload.data
       resetPlaybackState()
       if ((executionData.events?.length ?? 0) === 0)

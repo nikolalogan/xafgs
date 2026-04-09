@@ -10,11 +10,12 @@ import (
 )
 
 type RouteSpec[T any] struct {
-	Method    string
-	Path      string
-	Summary   string
-	Auth      string
-	Responses []APIResponseSchema
+	Method             string
+	Path               string
+	Summary            string
+	Auth               string
+	Middlewares        []fiber.Handler
+	Responses          []APIResponseSchema
 	SuccessDataExample any
 }
 
@@ -130,13 +131,17 @@ func Register[T any](router fiber.Router, registry *Registry, spec RouteSpec[T],
 		registry.Upsert(doc)
 	}
 
-	router.Add(method, path, func(c *fiber.Ctx) error {
+	finalHandler := func(c *fiber.Ctx) error {
 		var request T
 		if err := BindAndValidate(c, &request); err != nil {
 			return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, toClientMessage(err))
 		}
 		return handler(c, &request)
-	})
+	}
+	handlers := make([]fiber.Handler, 0, len(spec.Middlewares)+1)
+	handlers = append(handlers, spec.Middlewares...)
+	handlers = append(handlers, finalHandler)
+	router.Add(method, path, handlers...)
 }
 
 func withPrefix(prefix, path string) string {

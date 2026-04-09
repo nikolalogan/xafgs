@@ -33,22 +33,24 @@ func NewAPIMetaHandler(registry *apimeta.Registry, traceStore *apimeta.TraceStor
 }
 
 func (handler *APIMetaHandler) Register(router fiber.Router, adminMiddleware fiber.Handler) {
-	group := router.Group("", adminMiddleware)
-	apimeta.Register(group, handler.registry, apimeta.RouteSpec[listRoutesRequest]{
-		Method:  fiber.MethodGet,
-		Path:    "/meta/routes",
-		Summary: "查询 API 列表与参数校验",
-		Auth:    "admin",
+	adminMiddlewares := []fiber.Handler{adminMiddleware}
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[listRoutesRequest]{
+		Method:      fiber.MethodGet,
+		Path:        "/meta/routes",
+		Summary:     "查询 API 列表与参数校验",
+		Auth:        "admin",
+		Middlewares: adminMiddlewares,
 		SuccessDataExample: map[string]any{
 			"count":  1,
 			"routes": []any{apimeta.ExampleFromType[apimeta.APIRouteDoc]()},
 		},
 	}, handler.ListRoutes)
-	apimeta.Register(group, handler.registry, apimeta.RouteSpec[listTracesRequest]{
-		Method:  fiber.MethodGet,
-		Path:    "/meta/traces",
-		Summary: "查询最近请求/响应样例",
-		Auth:    "admin",
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[listTracesRequest]{
+		Method:      fiber.MethodGet,
+		Path:        "/meta/traces",
+		Summary:     "查询最近请求/响应样例",
+		Auth:        "admin",
+		Middlewares: adminMiddlewares,
 		SuccessDataExample: map[string]any{
 			"count":  1,
 			"traces": []any{apimeta.ExampleFromType[apimeta.Trace]()},

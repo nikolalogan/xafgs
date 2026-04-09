@@ -51,40 +51,45 @@ func (handler *UserHandler) Register(router fiber.Router, adminMiddleware fiber.
 		SuccessDataExample: apimeta.ExampleFromType[model.UserDTO](),
 	}, handler.GetCurrentUser)
 
-	adminGroup := router.Group("", adminMiddleware)
-	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[struct{}]{
+	adminMiddlewares := []fiber.Handler{adminMiddleware}
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[struct{}]{
 		Method:             fiber.MethodGet,
 		Path:               "/users",
 		Summary:            "获取用户列表",
 		Auth:               "admin",
+		Middlewares:        adminMiddlewares,
 		SuccessDataExample: apimeta.ExampleFromType[[]model.UserDTO](),
 	}, handler.ListUsers)
-	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[userIDPathRequest]{
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[userIDPathRequest]{
 		Method:             fiber.MethodGet,
 		Path:               "/users/:userId",
 		Summary:            "获取用户详情",
 		Auth:               "admin",
+		Middlewares:        adminMiddlewares,
 		SuccessDataExample: apimeta.ExampleFromType[model.UserDTO](),
 	}, handler.GetUserByID)
-	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[createUserRequest]{
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[createUserRequest]{
 		Method:             fiber.MethodPost,
 		Path:               "/users",
 		Summary:            "创建用户",
 		Auth:               "admin",
+		Middlewares:        adminMiddlewares,
 		SuccessDataExample: apimeta.ExampleFromType[model.UserDTO](),
 	}, handler.CreateUser)
-	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[updateUserRequest]{
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[updateUserRequest]{
 		Method:             fiber.MethodPut,
 		Path:               "/users/:userId",
 		Summary:            "更新用户",
 		Auth:               "admin",
+		Middlewares:        adminMiddlewares,
 		SuccessDataExample: apimeta.ExampleFromType[model.UserDTO](),
 	}, handler.UpdateUser)
-	apimeta.Register(adminGroup, handler.registry, apimeta.RouteSpec[userIDPathRequest]{
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[userIDPathRequest]{
 		Method:             fiber.MethodDelete,
 		Path:               "/users/:userId",
 		Summary:            "删除用户",
 		Auth:               "admin",
+		Middlewares:        adminMiddlewares,
 		SuccessDataExample: apimeta.ExampleFromType[bool](),
 	}, handler.DeleteUser)
 }
