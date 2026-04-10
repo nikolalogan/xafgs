@@ -117,7 +117,6 @@ export type IterationNodeConfig = {
   joinMode?: 'all' | 'any'
   fanOutMode?: FanOutMode
   iteratorSource: string
-  outputSource: string
   outputVar: string
   itemVar: string
   indexVar: string

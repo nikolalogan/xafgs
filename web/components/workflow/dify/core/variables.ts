@@ -1,5 +1,5 @@
 import { ensureNodeConfig } from './node-config'
-import { extractJsonLeafPaths } from './json-schema'
+import { extractJsonLeafPaths, extractSchemaLeafPaths } from './json-schema'
 import { BlockEnum, type DifyNode, type WorkflowGlobalVariable, type WorkflowParameter, type WorkflowVariableScope } from './types'
 
 export type VariableScope = WorkflowVariableScope
@@ -136,6 +136,21 @@ const parseStructuredLeafPathsFromJson = (rawJson?: string): string[] => {
   return parsed.paths
 }
 
+const parseStructuredLeafPathsFromSchema = (rawSchema?: string): string[] => {
+  if (!rawSchema?.trim())
+    return []
+  const parsed = extractSchemaLeafPaths(rawSchema)
+  if (!parsed.ok)
+    return []
+  return parsed.paths
+    .map((path) => {
+      if (!path || path === '$')
+        return ''
+      return path.replace(/^\$\./, '').replace(/^\$/, '')
+    })
+    .filter(Boolean)
+}
+
 const joinBaseAndChildPath = (baseParam: string, childPath: string) => {
   if (!childPath)
     return baseParam
@@ -154,6 +169,89 @@ const isIterationEntryStartNode = (node: DifyNode) => {
   return node.data.type === BlockEnum.Start
     && Boolean(node.data.parentIterationId)
     && Boolean(node.data.isIterationEntry)
+}
+
+const normalizeDynamicPath = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed)
+    return ''
+  const directMatch = trimmed.match(/^\{\{\s*([^{}]+?)\s*\}\}$/)
+  if (directMatch)
+    return directMatch[1].trim()
+  return trimmed
+}
+
+const buildPathVariants = (value: string) => {
+  const normalized = normalizeDynamicPath(value)
+  if (!normalized)
+    return []
+  return [...new Set([
+    normalized,
+    normalized.replace(/\[\]/g, ''),
+  ].filter(Boolean))]
+}
+
+const inferScopeFromPath = (path: string): VariableScope => {
+  if (path.includes('[]'))
+    return 'array'
+  return 'all'
+}
+
+const collectIterationItemDerivedOptions = (
+  options: WorkflowVariableOption[],
+  parentId: string,
+  parentTitle: string,
+  iteratorSource: string,
+  itemVar: string,
+): WorkflowVariableOption[] => {
+  const sourceOptions = new Map(options.map(option => [option.key, option]))
+  const derived: WorkflowVariableOption[] = []
+  const iterationGroupNodeId = `${parentId}::__iteration_context__`
+  const itemNodeTitle = `${parentTitle}·循环项`
+
+  buildPathVariants(iteratorSource).forEach((sourcePath) => {
+    const sourceOption = sourceOptions.get(sourcePath)
+    if (!sourceOption)
+      return
+
+    const sourceParam = sourceOption.param
+    const prefixes = [...new Set([
+      `${sourceParam}[]`,
+      `${sourceParam}[].`,
+      sourceParam.endsWith('[]') ? sourceParam : '',
+      sourceParam.endsWith('[]') ? `${sourceParam}.` : '',
+    ].filter(Boolean))]
+
+    options.forEach((option) => {
+      if (option.key === sourceOption.key)
+        return
+
+      const matchedPrefix = prefixes.find((prefix) => {
+        const normalizedPrefix = prefix.endsWith('.') ? prefix.slice(0, -1) : prefix
+        return option.param === normalizedPrefix || option.param.startsWith(prefix)
+      })
+      if (!matchedPrefix)
+        return
+
+      const normalizedPrefix = matchedPrefix.endsWith('.') ? matchedPrefix.slice(0, -1) : matchedPrefix
+      const rawSuffix = option.param === normalizedPrefix
+        ? ''
+        : option.param.slice(matchedPrefix.length)
+      const suffix = rawSuffix.replace(/^\./, '')
+      const nextParam = suffix ? joinBaseAndChildPath(itemVar, suffix) : itemVar
+      derived.push({
+        key: `${parentId}.${nextParam}`,
+        nodeId: iterationGroupNodeId,
+        nodeTitle: itemNodeTitle,
+        param: nextParam,
+        valueType: option.valueType === 'object' || option.valueType === 'array' ? option.valueType : inferScopeFromPath(suffix),
+        placeholder: `{{${parentId}.${nextParam}}}`,
+        displayLabel: nextParam,
+      })
+    })
+  })
+
+  return derived
 }
 
 export const buildWorkflowVariableOptions = (
@@ -181,6 +279,7 @@ export const buildWorkflowVariableOptions = (
   }
 
   ;[
+    { name: 'username', scope: 'string' as const },
     { name: 'warningAccount', scope: 'string' as const },
     { name: 'warningPassword', scope: 'string' as const },
     { name: 'aiBaseUrl', scope: 'string' as const },
@@ -250,6 +349,25 @@ export const buildWorkflowVariableOptions = (
           placeholder: `{{${nodeId}.${item.name}}}`,
           displayLabel: `${nodeTitle}.${item.name}`,
         })
+        if (item.type === 'json_object') {
+          const schemaPaths = parseStructuredLeafPathsFromSchema(item.jsonSchema)
+          const defaultPaths = typeof item.defaultValue === 'string'
+            ? parseStructuredLeafPathsFromDefault(item.defaultValue)
+            : []
+          const childPaths = schemaPaths.length ? schemaPaths : defaultPaths
+          childPaths.forEach((childPath) => {
+            const fullPath = joinBaseAndChildPath(item.name, childPath)
+            options.push({
+              key: `${nodeId}.${fullPath}`,
+              nodeId,
+              nodeTitle,
+              param: fullPath,
+              valueType: inferScopeFromPath(childPath),
+              placeholder: `{{${nodeId}.${fullPath}}}`,
+              displayLabel: `${nodeTitle}.${fullPath}`,
+            })
+          })
+        }
       })
       return
     }
@@ -288,6 +406,18 @@ export const buildWorkflowVariableOptions = (
           displayLabel: `${nodeTitle}.${outputName}`,
         })
       })
+      const outputSchemaPaths = parseStructuredLeafPathsFromSchema(config.outputSchema)
+      outputSchemaPaths.forEach((childPath) => {
+        options.push({
+          key: `${nodeId}.${childPath}`,
+          nodeId,
+          nodeTitle,
+          param: childPath,
+          valueType: inferScopeFromPath(childPath),
+          placeholder: `{{${nodeId}.${childPath}}}`,
+          displayLabel: `${nodeTitle}.${childPath}`,
+        })
+      })
       return
     }
 
@@ -315,7 +445,7 @@ export const buildWorkflowVariableOptions = (
           nodeId,
           nodeTitle,
           param: config.outputVar,
-          valueType: config.flattenOutput ? 'all' : 'array',
+          valueType: 'object',
           placeholder: `{{${nodeId}.${config.outputVar}}}`,
           displayLabel: `${nodeTitle}.${config.outputVar}`,
         })
@@ -350,6 +480,22 @@ export const buildWorkflowVariableOptions = (
       if (mainOutput !== 'text')
         pushVariableOption(nodeId, nodeTitle, 'text', mainScope)
       return
+    }
+
+    if (type === BlockEnum.HttpRequest) {
+      const config = ensureNodeConfig(BlockEnum.HttpRequest, node.data.config)
+      const outputSchemaPaths = parseStructuredLeafPathsFromSchema(config.outputSchema)
+      outputSchemaPaths.forEach((childPath) => {
+        options.push({
+          key: `${nodeId}.${childPath}`,
+          nodeId,
+          nodeTitle,
+          param: childPath,
+          valueType: inferScopeFromPath(childPath),
+          placeholder: `{{${nodeId}.${childPath}}}`,
+          displayLabel: `${nodeTitle}.${childPath}`,
+        })
+      })
     }
 
     const defaultOutputs = ['text']
@@ -389,6 +535,13 @@ export const buildWorkflowVariableOptions = (
         placeholder: `{{${parentId}.${itemVar}}}`,
         displayLabel: itemVar,
       })
+      collectIterationItemDerivedOptions(
+        merged,
+        parentId,
+        parentNode.data.title || parentId,
+        config.iteratorSource || '',
+        itemVar,
+      ).forEach(item => merged.push(item))
       merged.push({
         key: `${parentId}.${indexVar}`,
         nodeId: `${parentId}::__iteration_context__`,
@@ -397,6 +550,15 @@ export const buildWorkflowVariableOptions = (
         valueType: 'number',
         placeholder: `{{${parentId}.${indexVar}}}`,
         displayLabel: indexVar,
+      })
+      merged.push({
+        key: `${parentId}.state`,
+        nodeId: `${parentId}::__iteration_context__`,
+        nodeTitle: `${parentNode.data.title || parentId}·循环状态`,
+        param: 'state',
+        valueType: 'object',
+        placeholder: `{{${parentId}.state}}`,
+        displayLabel: 'state',
       })
     }
   }

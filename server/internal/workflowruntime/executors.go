@@ -430,6 +430,7 @@ func (httpNodeExecutor) Execute(ctx context.Context, input NodeExecutorContext) 
 		"ok":     resp.StatusCode >= 200 && resp.StatusCode < 300,
 		"body":   parsed,
 		"raw":    text,
+		"text":   text,
 	}
 
 	writebacks := buildHTTPWritebacks(input.Node.Data.Config["writebackMappings"], parsed, output)
@@ -629,16 +630,16 @@ func (apiRequestExecutor) Execute(ctx context.Context, input NodeExecutorContext
 	}
 
 	output := map[string]any{
-		"httpStatus": resp.StatusCode,
-		"statusCode": statusCode,
-		"ok":         ok,
-		"message":    message,
-		"response":   responsePayload,
-		"result":     responsePayload,
+		"httpStatus":  resp.StatusCode,
+		"statusCode":  statusCode,
+		"ok":          ok,
+		"message":     message,
+		"response":    responsePayload,
+		"result":      responsePayload,
 		"rawResponse": parsed,
-		"data":       data,
-		"url":        finalURL,
-		"method":     method,
+		"data":        data,
+		"url":         finalURL,
+		"method":      method,
 	}
 
 	if !ok {

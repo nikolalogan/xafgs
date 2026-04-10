@@ -64,7 +64,7 @@ func (handler *AdminDivisionHandler) Register(router fiber.Router, adminMiddlewa
 		Summary:            "按编码查询行政区划所有父级节点",
 		Auth:               "admin",
 		Middlewares:        adminMiddlewares,
-		SuccessDataExample: apimeta.ExampleFromType[[]model.AdminDivisionAncestorNode](),
+		SuccessDataExample: apimeta.ExampleFromType[model.AdminDivisionAncestorsResult](),
 	}, handler.GetAncestors)
 }
 

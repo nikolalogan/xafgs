@@ -175,4 +175,18 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
   )
 }
 
-export default memo(CustomNode)
+const areEqual = (prev: Readonly<NodeProps<DifyNodeData>>, next: Readonly<NodeProps<DifyNodeData>>) => {
+  return prev.selected === next.selected
+    && prev.data.type === next.data.type
+    && prev.data.title === next.data.title
+    && prev.data.desc === next.data.desc
+    && prev.data.config === next.data.config
+    && prev.data.parentIterationId === next.data.parentIterationId
+    && prev.data._iterationCollapsed === next.data._iterationCollapsed
+    && prev.data._iterationCanvasWidth === next.data._iterationCanvasWidth
+    && prev.data._iterationCanvasHeight === next.data._iterationCanvasHeight
+    && prev.data._onToggleIterationCollapse === next.data._onToggleIterationCollapse
+    && prev.data._onResizeIterationCanvas === next.data._onResizeIterationCanvas
+}
+
+export default memo(CustomNode, areEqual)

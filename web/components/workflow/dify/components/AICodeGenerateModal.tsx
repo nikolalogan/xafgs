@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Select, TreeSelect } from 'antd'
 import { requestAICodeGenerate, type AICodeGenerateNodeType, type AICodeGenerateTargetType } from '../core/ai-code-generate'
 import { buildWorkflowVariableTreeOptions, type WorkflowVariableOption } from '../core/variables'
@@ -47,10 +47,11 @@ export default function AICodeGenerateModal({
 
   const [model, setModel] = useState(defaultModel)
   const [description, setDescription] = useState('')
-  const [selectedKeys, setSelectedKeys] = useState<string[]>([])
+  const [selectedKey, setSelectedKey] = useState<string>()
   const [generatedCode, setGeneratedCode] = useState('')
   const [errorText, setErrorText] = useState('')
   const [loading, setLoading] = useState(false)
+  const descriptionRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
     if (!open)
@@ -60,19 +61,40 @@ export default function AICodeGenerateModal({
     const nextModel = allowed.has(defaultModel) ? defaultModel : fallbackModel
     setModel(nextModel)
     setDescription('')
-    setSelectedKeys([])
+    setSelectedKey(undefined)
     setGeneratedCode('')
     setErrorText('')
   }, [defaultModel, open, safeModelOptions])
 
-  const selectedVariables = useMemo(
-    () => variableOptions.filter(item => selectedKeys.includes(item.key)),
-    [selectedKeys, variableOptions],
+  const selectedVariable = useMemo(
+    () => variableOptions.find(item => item.key === selectedKey),
+    [selectedKey, variableOptions],
   )
   const variableTreeOptions = useMemo(
     () => buildWorkflowVariableTreeOptions(variableOptions),
     [variableOptions],
   )
+
+  const insertSelectedVariable = () => {
+    if (!selectedVariable)
+      return
+
+    const textarea = descriptionRef.current
+    const insertText = selectedVariable.placeholder
+    const start = textarea?.selectionStart ?? description.length
+    const end = textarea?.selectionEnd ?? start
+    const nextDescription = `${description.slice(0, start)}${insertText}${description.slice(end)}`
+    const nextCursor = start + insertText.length
+
+    setDescription(nextDescription)
+    requestAnimationFrame(() => {
+      const currentTextarea = descriptionRef.current
+      if (!currentTextarea)
+        return
+      currentTextarea.focus()
+      currentTextarea.setSelectionRange(nextCursor, nextCursor)
+    })
+  }
 
   if (!open || !context)
     return null
@@ -96,21 +118,32 @@ export default function AICodeGenerateModal({
             onChange={setModel}
           />
 
-          <label className="block text-xs text-gray-500">引入参数（多选）</label>
-          <TreeSelect
-            className="w-full"
-            multiple
-            value={selectedKeys}
-            showSearch
-            treeData={variableTreeOptions}
-            treeDefaultExpandAll
-            popupMatchSelectWidth={false}
-            filterTreeNode={(input, treeNode) => String(treeNode.title || '').toLowerCase().includes(input.toLowerCase())}
-            onChange={value => setSelectedKeys((value as string[]) || [])}
-          />
+          <label className="block text-xs text-gray-500">引入参数</label>
+          <div className="flex items-center gap-2">
+            <TreeSelect
+              className="min-w-0 flex-1"
+              value={selectedKey}
+              showSearch
+              allowClear
+              treeData={variableTreeOptions}
+              treeDefaultExpandAll
+              popupMatchSelectWidth={false}
+              filterTreeNode={(input, treeNode) => String(treeNode.title || '').toLowerCase().includes(input.toLowerCase())}
+              onChange={value => setSelectedKey(value as string | undefined)}
+            />
+            <button
+              type="button"
+              className="rounded bg-gray-100 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:text-gray-400"
+              disabled={!selectedVariable}
+              onClick={insertSelectedVariable}
+            >
+              引入
+            </button>
+          </div>
 
           <label className="block text-xs text-gray-500">需求描述</label>
           <textarea
+            ref={descriptionRef}
             className="h-24 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
             placeholder="请描述你要生成的代码逻辑"
             value={description}
@@ -139,11 +172,7 @@ export default function AICodeGenerateModal({
                     nodeType: context.nodeType,
                     language: context.language,
                     description: trimmedDescription,
-                    selectedVariables: selectedVariables.map(item => ({
-                      key: item.key,
-                      placeholder: item.placeholder,
-                      valueType: item.valueType,
-                    })),
+                    selectedVariables: [],
                     currentCode: context.currentCode,
                     context: {
                       nodeId: context.nodeId,

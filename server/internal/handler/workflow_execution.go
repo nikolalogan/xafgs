@@ -189,7 +189,9 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 		}
 		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "缺少用户配置："+strings.Join(labels, "、"))
 	}
+	authUser, _ := c.Locals(middleware.LocalAuthUser).(model.User)
 	input["user"] = map[string]any{
+		"username":        strings.TrimSpace(authUser.Username),
 		"warningAccount":  userConfig.WarningAccount,
 		"warningPassword": userConfig.WarningPassword,
 		"aiBaseUrl":       userConfig.AIBaseURL,

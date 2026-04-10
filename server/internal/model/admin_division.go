@@ -31,8 +31,21 @@ type AdminDivisionAncestorNode struct {
 	Level string `json:"level"`
 }
 
+type AdminDivisionCurrentNode struct {
+	Code       string `json:"code"`
+	Area       string `json:"area"`
+	Level      string `json:"level"`
+	ParentCode string `json:"parentCode"`
+	ParentArea string `json:"parentArea"`
+}
+
+type AdminDivisionAncestorsResult struct {
+	Current   AdminDivisionCurrentNode    `json:"current"`
+	Ancestors []AdminDivisionAncestorNode `json:"ancestors"`
+}
+
 type AdminDivisionByCodeResult struct {
-	Current     AdminDivisionDTO       `json:"current"`
+	Current     AdminDivisionDTO         `json:"current"`
 	ParentChain []AdminDivisionChainNode `json:"parentChain"`
 }
 

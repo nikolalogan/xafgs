@@ -10,6 +10,7 @@ import ReactFlow, {
   type NodeChange,
   type NodeTypes,
 } from 'reactflow'
+import { memo, useMemo } from 'react'
 import EdgeContextMenu from './EdgeContextMenu'
 import GlobalVariablePanel from './GlobalVariablePanel'
 import NodeContextMenu from './NodeContextMenu'
@@ -23,11 +24,10 @@ import type { DifyEdge, DifyNode } from '../core/types'
 import type { WorkflowGlobalVariable } from '../core/types'
 import type { WorkflowParameter } from '../core/types'
 import type { AlignDirection } from '../hooks/useSelectionLayout'
+import { edgeTypes, nodeTypes } from '../config/workflowPreset'
 
 type WorkflowEditorProps = {
   canvasContainerRef: React.RefObject<HTMLDivElement | null>
-  nodeTypes: NodeTypes
-  edgeTypes: EdgeTypes
   nodes: DifyNode[]
   edges: DifyEdge[]
   nodeMenu?: NodeMenuState
@@ -92,10 +92,8 @@ type WorkflowEditorProps = {
   }
 }
 
-export default function WorkflowEditor({
+function WorkflowEditor({
   canvasContainerRef,
-  nodeTypes,
-  edgeTypes,
   nodes,
   edges,
   nodeMenu,
@@ -108,6 +106,8 @@ export default function WorkflowEditor({
   actions,
 }: WorkflowEditorProps) {
   const { quickPanel } = actions
+  const stableNodeTypes = useMemo<NodeTypes>(() => nodeTypes, [])
+  const stableEdgeTypes = useMemo<EdgeTypes>(() => edgeTypes, [])
 
   return (
     <div ref={canvasContainerRef} className="relative col-span-9 rounded-xl border border-gray-200 bg-white p-0">
@@ -178,8 +178,8 @@ export default function WorkflowEditor({
       </div>
       <div className="h-[75vh]">
         <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
+          nodeTypes={stableNodeTypes}
+          edgeTypes={stableEdgeTypes}
           nodes={nodes}
           edges={edges}
           onNodesChange={actions.flow.onNodesChange}
@@ -252,3 +252,5 @@ export default function WorkflowEditor({
     </div>
   )
 }
+
+export default memo(WorkflowEditor)

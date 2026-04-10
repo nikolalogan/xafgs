@@ -355,7 +355,7 @@ func buildNodeTypeConstraintText(request WorkflowNodeGenerateRequest) string {
 	case "code":
 		writeLine("config 必须包含 language、code、outputs，可选 outputSchema、writebackMappings。")
 	case "iteration":
-		writeLine("config 必须包含 iteratorSource、outputSource、outputVar、itemVar、indexVar、isParallel、parallelNums、errorHandleMode、flattenOutput。")
+		writeLine("config 必须包含 iteratorSource、outputVar、itemVar、indexVar、isParallel、parallelNums、errorHandleMode、flattenOutput。")
 		writeLine("不要输出 children 字段。")
 	case "end":
 		writeLine("config 必须包含 outputs 数组，元素需包含 name 与 source；可选 joinMode（all/any）。")

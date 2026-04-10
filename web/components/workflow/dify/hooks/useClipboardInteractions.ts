@@ -25,6 +25,10 @@ export const useClipboardInteractions = ({
   setClipboard,
   record,
 }: UseClipboardInteractionsParams) => {
+  const getParentIterationId = useCallback((node: DifyNode | null | undefined) => {
+    return node?.data.parentIterationId || node?.parentNode || null
+  }, [])
+
   const protectedNodeIds = useCallback(() => {
     return new Set(nodes.filter(node => node.data.type === 'start' || node.data.type === 'end').map(node => node.id))
   }, [nodes])
@@ -103,9 +107,31 @@ export const useClipboardInteractions = ({
     const protectedIds = protectedNodeIds()
     protectedIds.forEach(id => selectedNodes.delete(id))
 
-    const nextNodes = nodes.filter(node => !selectedNodes.has(node.id))
+    const removedNodeIds = new Set(selectedNodes)
+    let changed = true
+    while (changed) {
+      changed = false
+      nodes.forEach((node) => {
+        const parentIterationId = getParentIterationId(node)
+        if (!parentIterationId || !removedNodeIds.has(parentIterationId) || removedNodeIds.has(node.id))
+          return
+        removedNodeIds.add(node.id)
+        changed = true
+      })
+    }
+
+    const removedIterationIds = new Set(
+      nodes
+        .filter(node => removedNodeIds.has(node.id) && node.data.type === 'iteration')
+        .map(node => node.id),
+    )
+
+    const nextNodes = nodes.filter(node => !removedNodeIds.has(node.id))
     const nextEdges = edges.filter(edge =>
-      !selectedEdges.has(edge.id) && !selectedNodes.has(edge.source) && !selectedNodes.has(edge.target),
+      !selectedEdges.has(edge.id)
+      && !removedNodeIds.has(edge.source)
+      && !removedNodeIds.has(edge.target)
+      && !removedIterationIds.has(edge.data?.parentIterationId || ''),
     )
 
     setNodes(nextNodes)

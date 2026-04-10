@@ -569,11 +569,6 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			continue
 		}
 
-		executor := runtime.executors[node.Data.Type]
-		if executor == nil {
-			executor = runtime.executors["start"]
-		}
-
 		if state.StartedAt == "" {
 			state.StartedAt = NowISO()
 		}
@@ -629,11 +624,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 		var result NodeExecutorResult
 		for {
 			attempt++
-			executed, executeErr := executor.Execute(ctx, NodeExecutorContext{
-				Node:      node,
-				Variables: next.Variables,
-				NodeInput: nodeInput,
-			})
+			executed, executeErr := runtime.executeWorkflowNode(ctx, node, next.Variables, nodeInput)
 			if executeErr != nil {
 				executed = NodeExecutorResult{
 					Type:  NodeExecutorResultFailed,
@@ -671,11 +662,11 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 		}
 
 		switch result.Type {
-			case NodeExecutorResultWaitingInput:
-				waitingState := next.NodeStates[nodeID]
-				waitingState.Status = NodeRunStatusWaitingInput
-				waitingState.EndedAt = NowISO()
-				next.NodeStates[nodeID] = waitingState
+		case NodeExecutorResultWaitingInput:
+			waitingState := next.NodeStates[nodeID]
+			waitingState.Status = NodeRunStatusWaitingInput
+			waitingState.EndedAt = NowISO()
+			next.NodeStates[nodeID] = waitingState
 			next.WaitingInput = &ExecutionWaitingInput{
 				NodeID:    nodeID,
 				NodeTitle: node.Data.Title,
@@ -684,60 +675,60 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			next.LifecycleEvents = append(next.LifecycleEvents, LifecycleEvent{Type: "WAIT_INPUT"})
 			next.Status = StatusFromLifecycleEvents(next.LifecycleEvents)
 			next.UpdatedAt = NowISO()
-				next.Events = append(next.Events, ExecutionEvent{
-					ID:   uuid.NewString(),
-					Type: "node.waiting_input",
-					At:   NowISO(),
-					Payload: map[string]any{
-						"nodeId": nodeID,
-					},
-				})
-				runtime.log(ctx, map[string]any{
-					"event":       "node.waiting_input",
-					"requestId":   requestIDFromContext(ctx),
-					"executionId": next.ID,
-					"nodeId":      nodeID,
-				})
-				appendNodeFinishedEvent(nodeID, waitingState.Status, waitingState.EndedAt, "")
-				persistProgress()
-				return next
+			next.Events = append(next.Events, ExecutionEvent{
+				ID:   uuid.NewString(),
+				Type: "node.waiting_input",
+				At:   NowISO(),
+				Payload: map[string]any{
+					"nodeId": nodeID,
+				},
+			})
+			runtime.log(ctx, map[string]any{
+				"event":       "node.waiting_input",
+				"requestId":   requestIDFromContext(ctx),
+				"executionId": next.ID,
+				"nodeId":      nodeID,
+			})
+			appendNodeFinishedEvent(nodeID, waitingState.Status, waitingState.EndedAt, "")
+			persistProgress()
+			return next
 
-			case NodeExecutorResultBranch:
+		case NodeExecutorResultBranch:
 			succeededState := next.NodeStates[nodeID]
 			succeededState.Status = NodeRunStatusSucceeded
 			succeededState.EndedAt = NowISO()
 			next.NodeStates[nodeID] = succeededState
 			next.Variables[nodeID] = defaultMap(result.Output)
-				next.Events = append(next.Events, ExecutionEvent{
+			next.Events = append(next.Events, ExecutionEvent{
 				ID:   uuid.NewString(),
 				Type: "node.branch",
 				At:   NowISO(),
 				Payload: map[string]any{
-					"nodeId":      nodeID,
-					"handleId":    result.HandleID,
-					"branchName":  result.BranchName,
+					"nodeId":     nodeID,
+					"handleId":   result.HandleID,
+					"branchName": result.BranchName,
 				},
-				})
-				runtime.log(ctx, map[string]any{
-					"event":       "node.branch",
-					"requestId":   requestIDFromContext(ctx),
-					"executionId": next.ID,
-					"nodeId":      nodeID,
-					"handleId":    result.HandleID,
-					"branchName":  result.BranchName,
-				})
-				appendNodeFinishedEvent(nodeID, succeededState.Status, succeededState.EndedAt, "")
-				next.UpdatedAt = NowISO()
-				persistProgress()
-				outgoing := outgoingEdgesMap[nodeID]
-				nextEdges := orderFanOutEdges(node, selectIfElseNextEdges(outgoing, result.HandleID), nodeMap)
-				for _, edge := range nextEdges {
-					markArrived(edge.Target, nodeID)
-					enqueue(edge.Target)
-				}
-				continue
+			})
+			runtime.log(ctx, map[string]any{
+				"event":       "node.branch",
+				"requestId":   requestIDFromContext(ctx),
+				"executionId": next.ID,
+				"nodeId":      nodeID,
+				"handleId":    result.HandleID,
+				"branchName":  result.BranchName,
+			})
+			appendNodeFinishedEvent(nodeID, succeededState.Status, succeededState.EndedAt, "")
+			next.UpdatedAt = NowISO()
+			persistProgress()
+			outgoing := outgoingEdgesMap[nodeID]
+			nextEdges := orderFanOutEdges(node, selectIfElseNextEdges(outgoing, result.HandleID), nodeMap)
+			for _, edge := range nextEdges {
+				markArrived(edge.Target, nodeID)
+				enqueue(edge.Target)
+			}
+			continue
 
-			case NodeExecutorResultFailed:
+		case NodeExecutorResultFailed:
 			failedState := next.NodeStates[nodeID]
 			failedState.Status = NodeRunStatusFailed
 			failedState.EndedAt = NowISO()
@@ -747,7 +738,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			next.LifecycleEvents = append(next.LifecycleEvents, LifecycleEvent{Type: "FAIL"})
 			next.Status = StatusFromLifecycleEvents(next.LifecycleEvents)
 			next.UpdatedAt = NowISO()
-				next.Events = append(next.Events, ExecutionEvent{
+			next.Events = append(next.Events, ExecutionEvent{
 				ID:   uuid.NewString(),
 				Type: "node.failed",
 				At:   NowISO(),
@@ -757,36 +748,36 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"attempts":    attempt,
 					"maxAttempts": maxAttempts,
 				},
-				})
-				runtime.log(ctx, map[string]any{
-					"event":       "node.failed",
-					"requestId":   requestIDFromContext(ctx),
-					"executionId": next.ID,
-					"nodeId":      nodeID,
-					"error":       result.Error,
-					"attempts":    attempt,
-					"maxAttempts": maxAttempts,
-					"durationMs":  nodeDurationMs(state.StartedAt, failedState.EndedAt),
-				})
-				appendNodeFinishedEvent(nodeID, failedState.Status, failedState.EndedAt, result.Error)
-				persistProgress()
-				return next
+			})
+			runtime.log(ctx, map[string]any{
+				"event":       "node.failed",
+				"requestId":   requestIDFromContext(ctx),
+				"executionId": next.ID,
+				"nodeId":      nodeID,
+				"error":       result.Error,
+				"attempts":    attempt,
+				"maxAttempts": maxAttempts,
+				"durationMs":  nodeDurationMs(state.StartedAt, failedState.EndedAt),
+			})
+			appendNodeFinishedEvent(nodeID, failedState.Status, failedState.EndedAt, result.Error)
+			persistProgress()
+			return next
 
-			default:
+		default:
 			succeededState := next.NodeStates[nodeID]
 			succeededState.Status = NodeRunStatusSucceeded
 			succeededState.EndedAt = NowISO()
 			next.NodeStates[nodeID] = succeededState
 			output := defaultMap(result.Output)
 			next.Variables[nodeID] = output
-				for _, mapping := range result.Writebacks {
-					targetPath := strings.TrimSpace(mapping.TargetPath)
-					if targetPath == "" {
-						continue
-					}
+			for _, mapping := range result.Writebacks {
+				targetPath := strings.TrimSpace(mapping.TargetPath)
+				if targetPath == "" {
+					continue
+				}
 				// 保护：避免 writeback 覆盖保留根对象，导致后续变量解析失败
 				// 仅允许写入 workflow.xxx / global.xxx / user.xxx
-					if targetPath == "workflow" || targetPath == "global" || targetPath == "user" {
+				if targetPath == "workflow" || targetPath == "global" || targetPath == "user" {
 					runtime.log(ctx, map[string]any{
 						"event":       "writeback.blocked",
 						"requestId":   requestIDFromContext(ctx),
@@ -794,32 +785,32 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 						"nodeId":      nodeID,
 						"targetPath":  targetPath,
 					})
+					continue
+				}
+				if strings.HasSuffix(targetPath, "[]") {
+					if incoming, ok := mapping.Value.([]any); ok {
+						appendPath := strings.TrimSuffix(targetPath, "[]")
+						appendPath = strings.TrimSuffix(appendPath, ".")
+						existing, found := getByPath(next.Variables, appendPath)
+						switch typed := existing.(type) {
+						case []any:
+							combined := make([]any, 0, len(typed)+len(incoming))
+							combined = append(combined, typed...)
+							combined = append(combined, incoming...)
+							setByPath(next.Variables, appendPath, combined)
+						default:
+							if found {
+								// 已有值但不是数组：按覆盖新数组处理，避免类型冲突造成 append 失败。
+								setByPath(next.Variables, appendPath, incoming)
+							} else {
+								setByPath(next.Variables, appendPath, incoming)
+							}
+						}
 						continue
 					}
-					if strings.HasSuffix(targetPath, "[]") {
-						if incoming, ok := mapping.Value.([]any); ok {
-							appendPath := strings.TrimSuffix(targetPath, "[]")
-							appendPath = strings.TrimSuffix(appendPath, ".")
-							existing, found := getByPath(next.Variables, appendPath)
-							switch typed := existing.(type) {
-							case []any:
-								combined := make([]any, 0, len(typed)+len(incoming))
-								combined = append(combined, typed...)
-								combined = append(combined, incoming...)
-								setByPath(next.Variables, appendPath, combined)
-							default:
-								if found {
-									// 已有值但不是数组：按覆盖新数组处理，避免类型冲突造成 append 失败。
-									setByPath(next.Variables, appendPath, incoming)
-								} else {
-									setByPath(next.Variables, appendPath, incoming)
-								}
-							}
-							continue
-						}
-					}
-					setByPath(next.Variables, targetPath, mapping.Value)
 				}
+				setByPath(next.Variables, targetPath, mapping.Value)
+			}
 			runtime.log(ctx, map[string]any{
 				"event":       "variables.after_writeback",
 				"requestId":   requestIDFromContext(ctx),
@@ -835,7 +826,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 				"nodeId":      nodeID,
 				"workflow":    next.Variables["workflow"],
 			})
-				next.Events = append(next.Events, ExecutionEvent{
+			next.Events = append(next.Events, ExecutionEvent{
 				ID:   uuid.NewString(),
 				Type: "node.succeeded",
 				At:   NowISO(),
@@ -844,26 +835,26 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 					"attempts":    attempt,
 					"maxAttempts": maxAttempts,
 				},
-				})
-				runtime.log(ctx, map[string]any{
-					"event":       "node.succeeded",
-					"requestId":   requestIDFromContext(ctx),
-					"executionId": next.ID,
-					"nodeId":      nodeID,
-					"attempts":    attempt,
-					"maxAttempts": maxAttempts,
-					"durationMs":  nodeDurationMs(state.StartedAt, succeededState.EndedAt),
-				})
-				appendNodeFinishedEvent(nodeID, succeededState.Status, succeededState.EndedAt, "")
-				next.UpdatedAt = NowISO()
-				persistProgress()
-				nextEdges := orderFanOutEdges(node, outgoingEdgesMap[nodeID], nodeMap)
-				for _, edge := range nextEdges {
-					markArrived(edge.Target, nodeID)
-					enqueue(edge.Target)
-				}
+			})
+			runtime.log(ctx, map[string]any{
+				"event":       "node.succeeded",
+				"requestId":   requestIDFromContext(ctx),
+				"executionId": next.ID,
+				"nodeId":      nodeID,
+				"attempts":    attempt,
+				"maxAttempts": maxAttempts,
+				"durationMs":  nodeDurationMs(state.StartedAt, succeededState.EndedAt),
+			})
+			appendNodeFinishedEvent(nodeID, succeededState.Status, succeededState.EndedAt, "")
+			next.UpdatedAt = NowISO()
+			persistProgress()
+			nextEdges := orderFanOutEdges(node, outgoingEdgesMap[nodeID], nodeMap)
+			for _, edge := range nextEdges {
+				markArrived(edge.Target, nodeID)
+				enqueue(edge.Target)
 			}
 		}
+	}
 
 	for nodeID, state := range next.NodeStates {
 		if state.Status == NodeRunStatusPending {

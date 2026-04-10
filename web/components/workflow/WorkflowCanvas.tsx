@@ -18,7 +18,7 @@ import NodeConfigPanel from './dify/components/NodeConfigPanel'
 import WorkflowEditor from './dify/components/WorkflowEditor'
 import WorkflowToolbar from './dify/components/WorkflowToolbar'
 import WorkflowRunModal from './dify/components/WorkflowRunModal'
-import { demoDSL, edgeTypes, nodeTypeLabel, nodeTypes } from './dify/config/workflowPreset'
+import { demoDSL, nodeTypeLabel } from './dify/config/workflowPreset'
 import {
   CUSTOM_EDGE,
   CUSTOM_NODE,
@@ -57,6 +57,29 @@ const NODE_INSERT_X_GAP = 320
 const NODE_INSERT_Y_GAP = 140
 const NODE_COLLISION_X_THRESHOLD = 260
 const NODE_COLLISION_Y_THRESHOLD = 110
+const WORKFLOW_PERF_DEBUG = false
+
+type PerfToken = {
+  label: string
+  startedAt: number
+}
+
+const startPerfMeasure = (label: string): PerfToken | null => {
+  if (!WORKFLOW_PERF_DEBUG || typeof performance === 'undefined')
+    return null
+  return {
+    label,
+    startedAt: performance.now(),
+  }
+}
+
+const endPerfMeasure = (token: PerfToken | null, extra?: Record<string, unknown>) => {
+  if (!token || typeof performance === 'undefined')
+    return
+  const duration = performance.now() - token.startedAt
+  const suffix = extra ? ` ${JSON.stringify(extra)}` : ''
+  console.log(`[workflow-perf] ${token.label}: ${duration.toFixed(2)}ms${suffix}`)
+}
 
 const sortIfElseEdges = (edges: DifyEdge[]) => {
   const order = (edge: DifyEdge) => {
@@ -287,8 +310,24 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
   const latestNodesRef = useRef<DifyNode[]>([])
   const latestEdgesRef = useRef<DifyEdge[]>([])
   const latestWorkflowParametersRef = useRef<WorkflowParameter[]>([])
+  const latestActiveNodeRef = useRef<DifyNode | null>(null)
   const lastReportedDSLRef = useRef('')
   const dragRecordPendingRef = useRef(false)
+  const renderedNodeCacheRef = useRef(new Map<string, {
+    sourceNode: DifyNode
+    parentIterationId: string | null
+    collapsed: boolean
+    width?: number
+    height?: number
+    rendered: DifyNode
+  }>())
+  const renderedEdgeCacheRef = useRef(new Map<string, {
+    sourceEdge: DifyEdge
+    parentIterationId: string | null
+    rendered: DifyEdge
+  }>())
+  const iterationToggleHandlerRef = useRef<Record<string, () => void>>({})
+  const iterationResizeHandlerRef = useRef<Record<string, (size: { width: number; height: number }, finalize?: boolean) => void>>({})
   const {
     parsed,
     nodes,
@@ -320,6 +359,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     setWorkflowParameters,
     setWorkflowVariableScopes,
   } = useWorkflowCanvasState(initialDSL)
+
   const { fitView, setViewport, getViewport } = useReactFlow()
 
   const { canUndo, canRedo, record, undo, redo, resetHistory } = useWorkflowHistoryStore()
@@ -344,7 +384,8 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     latestNodesRef.current = nodes
     latestEdgesRef.current = edges
     latestWorkflowParametersRef.current = workflowParameters
-  }, [edges, nodes, workflowParameters])
+    latestActiveNodeRef.current = activeNode
+  }, [activeNode, edges, nodes, workflowParameters])
 
   useEffect(() => {
     setCollapsedIterationIds((current) => {
@@ -537,9 +578,29 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     deleteSelection: () => deleteSelection(),
     saveWorkflow: onSave,
   })
-  const issues = useMemo(() => validateWorkflow(nodesForPanel, edges, workflowParameters), [edges, nodesForPanel, workflowParameters])
+  const issues = useMemo(() => {
+    const perfToken = startPerfMeasure('validateWorkflow')
+    const result = validateWorkflow(nodesForPanel, edges, workflowParameters)
+    endPerfMeasure(perfToken, {
+      nodeCount: nodesForPanel.length,
+      edgeCount: edges.length,
+      issueCount: result.length,
+    })
+    return result
+  }, [edges, nodesForPanel, workflowParameters])
   const aiVariableOptions = useMemo(
-    () => buildWorkflowVariableOptions(nodesForPanel, workflowParameters, globalVariables, activeNode),
+    () => {
+      const perfToken = startPerfMeasure('buildWorkflowVariableOptions')
+      const result = buildWorkflowVariableOptions(nodesForPanel, workflowParameters, globalVariables, activeNode)
+      endPerfMeasure(perfToken, {
+        nodeCount: nodesForPanel.length,
+        parameterCount: workflowParameters.length,
+        globalCount: globalVariables.length,
+        optionCount: result.length,
+        activeNodeId: activeNode?.id ?? null,
+      })
+      return result
+    },
     [activeNode, globalVariables, nodesForPanel, workflowParameters],
   )
 
@@ -600,42 +661,9 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
   }, [nodes, setNodes])
 
   useEffect(() => {
-    let changed = false
-    const nextNodes = nodes.map((node) => {
-      if (node.data.type !== BlockEnum.Iteration)
-        return node
-      const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
-      const iterationEndNode = nodes.find(item => item.data.parentIterationId === node.id && item.data.type === BlockEnum.End)
-      if (!iterationEndNode)
-        return node
-      const endConfig = ensureNodeConfig(BlockEnum.End, iterationEndNode.data.config)
-      const primaryOutput = endConfig.outputs[0]
-      const nextOutputVar = String(primaryOutput?.name || '').trim()
-      const nextOutputSource = String(primaryOutput?.source || '').trim()
-      if (!nextOutputVar || !nextOutputSource)
-        return node
-      if (config.outputVar === nextOutputVar && config.outputSource === nextOutputSource)
-        return node
-      changed = true
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          config: {
-            ...config,
-            outputVar: nextOutputVar,
-            outputSource: nextOutputSource,
-          },
-        },
-      }
-    })
-    if (changed)
-      setNodes(nextNodes)
-  }, [nodes, setNodes])
-
-  useEffect(() => {
     if (!onDSLChange)
       return
+    const perfToken = startPerfMeasure('serializeWorkflowDSL:onDSLChange')
     const nextDSL = serializeWorkflowDSL({
       nodes,
       edges,
@@ -643,6 +671,10 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
       workflowParameters,
       workflowVariableScopes,
       viewport: getViewport(),
+    })
+    endPerfMeasure(perfToken, {
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
     })
     const serializedDSL = JSON.stringify(nextDSL)
     if (serializedDSL === lastReportedDSLRef.current)
@@ -692,7 +724,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
             },
           },
         }
-        if (activeNode?.id === iterationId)
+        if (latestActiveNodeRef.current?.id === iterationId)
           nextActiveNode = nextNode
         return nextNode
       })
@@ -709,10 +741,44 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
         edges: latestEdgesRef.current,
       })
     })
-  }, [activeNode?.id, record, setActiveNode, setNodes])
+  }, [record, setActiveNode, setNodes])
+
+  const getIterationToggleHandler = useCallback((iterationId: string) => {
+    const existed = iterationToggleHandlerRef.current[iterationId]
+    if (existed)
+      return existed
+    const nextHandler = () => {
+      setCollapsedIterationIds(current => ({
+        ...current,
+        [iterationId]: !current[iterationId],
+      }))
+    }
+    iterationToggleHandlerRef.current[iterationId] = nextHandler
+    return nextHandler
+  }, [])
+
+  const getIterationResizeHandler = useCallback((iterationId: string) => {
+    const existed = iterationResizeHandlerRef.current[iterationId]
+    if (existed)
+      return existed
+    const nextHandler = (size: { width: number; height: number }, finalize?: boolean) => {
+      handleResizeIterationCanvas(iterationId, size, finalize)
+    }
+    iterationResizeHandlerRef.current[iterationId] = nextHandler
+    return nextHandler
+  }, [handleResizeIterationCanvas])
 
   const renderNodes = useMemo(() => {
-    return nodes
+    const perfToken = startPerfMeasure('renderNodes')
+    const nextCache = new Map<string, {
+      sourceNode: DifyNode
+      parentIterationId: string | null
+      collapsed: boolean
+      width?: number
+      height?: number
+      rendered: DifyNode
+    }>()
+    const result = nodes
       .filter((node) => {
         const parentIterationId = getParentIterationId(node)
         if (!parentIterationId)
@@ -720,25 +786,63 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
         return !collapsedIterationIds[parentIterationId]
       })
       .map((node) => {
-        if (node.data.type !== BlockEnum.Iteration)
-          return {
+        const parentIterationId = getParentIterationId(node)
+        const cached = renderedNodeCacheRef.current.get(node.id)
+
+        if (node.data.type !== BlockEnum.Iteration) {
+          if (!parentIterationId) {
+            nextCache.set(node.id, {
+              sourceNode: node,
+              parentIterationId: null,
+              collapsed: false,
+              rendered: node,
+            })
+            return node
+          }
+
+          if (cached && cached.sourceNode === node && cached.parentIterationId === parentIterationId) {
+            nextCache.set(node.id, cached)
+            return cached.rendered
+          }
+
+          const renderedNode = {
             ...node,
-            style: getParentIterationId(node)
-              ? {
-                  ...(node.style ?? {}),
-                  zIndex: ITERATION_CHILDREN_Z_INDEX,
-                }
-              : node.style,
+            style: {
+              ...(node.style ?? {}),
+              zIndex: ITERATION_CHILDREN_Z_INDEX,
+            },
             data: {
               ...node.data,
-              _iterationRole: getParentIterationId(node) ? 'child' as const : undefined,
-              _iterationParentId: getParentIterationId(node) || undefined,
+              _iterationRole: 'child' as const,
+              _iterationParentId: parentIterationId,
               _iterationChildId: node.data.nestedNodeId,
             },
           }
+          nextCache.set(node.id, {
+            sourceNode: node,
+            parentIterationId,
+            collapsed: false,
+            rendered: renderedNode,
+          })
+          return renderedNode
+        }
+
         const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
         const layout = iterationLayouts[node.id] ?? buildIterationContainerLayout(nodes.filter(item => getParentIterationId(item) === node.id), config.canvasSize)
-        return {
+        const collapsed = Boolean(collapsedIterationIds[node.id])
+        if (
+          cached
+          && cached.sourceNode === node
+          && cached.parentIterationId === parentIterationId
+          && cached.collapsed === collapsed
+          && cached.width === layout.width
+          && cached.height === layout.height
+        ) {
+          nextCache.set(node.id, cached)
+          return cached.rendered
+        }
+
+        const renderedNode = {
           ...node,
           style: {
             ...(node.style ?? {}),
@@ -748,24 +852,33 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
           data: {
             ...node.data,
             _iterationRole: 'container' as const,
-            _iterationCollapsed: Boolean(collapsedIterationIds[node.id]),
+            _iterationCollapsed: collapsed,
             _iterationCanvasWidth: layout.width,
             _iterationCanvasHeight: layout.height,
-            _onToggleIterationCollapse: () => {
-              setCollapsedIterationIds(current => ({
-                ...current,
-                [node.id]: !current[node.id],
-              }))
-            },
-            _onResizeIterationCanvas: (size: { width: number; height: number }, finalize?: boolean) => {
-              handleResizeIterationCanvas(node.id, size, finalize)
-            },
+            _onToggleIterationCollapse: getIterationToggleHandler(node.id),
+            _onResizeIterationCanvas: getIterationResizeHandler(node.id),
           },
         }
+        nextCache.set(node.id, {
+          sourceNode: node,
+          parentIterationId,
+          collapsed,
+          width: layout.width,
+          height: layout.height,
+          rendered: renderedNode,
+        })
+        return renderedNode
       })
-  }, [collapsedIterationIds, handleResizeIterationCanvas, iterationLayouts, nodes])
+    renderedNodeCacheRef.current = nextCache
+    endPerfMeasure(perfToken, {
+      sourceNodeCount: nodes.length,
+      renderedNodeCount: result.length,
+    })
+    return result
+  }, [collapsedIterationIds, getIterationResizeHandler, getIterationToggleHandler, iterationLayouts, nodes])
 
   const renderEdges = useMemo(() => {
+    const perfToken = startPerfMeasure('renderEdges')
     const visibleEdges = edges.filter((edge) => {
       const sourceNode = nodes.find(node => node.id === edge.source)
       const targetNode = nodes.find(node => node.id === edge.target)
@@ -774,13 +887,31 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
         return true
       return !collapsedIterationIds[parentIterationId]
     })
-    return [...new Map(visibleEdges.map(edge => [edge.id, edge])).values()].map((edge) => {
+    const nextCache = new Map<string, {
+      sourceEdge: DifyEdge
+      parentIterationId: string | null
+      rendered: DifyEdge
+    }>()
+    const result = [...new Map(visibleEdges.map(edge => [edge.id, edge])).values()].map((edge) => {
       const sourceNode = nodes.find(node => node.id === edge.source)
       const targetNode = nodes.find(node => node.id === edge.target)
       const parentIterationId = edge.data?.parentIterationId || getParentIterationId(sourceNode) || getParentIterationId(targetNode)
       if (!parentIterationId)
+      {
+        nextCache.set(edge.id, {
+          sourceEdge: edge,
+          parentIterationId: null,
+          rendered: edge,
+        })
         return edge
-      return {
+      }
+
+      const cached = renderedEdgeCacheRef.current.get(edge.id)
+      if (cached && cached.sourceEdge === edge && cached.parentIterationId === parentIterationId) {
+        nextCache.set(edge.id, cached)
+        return cached.rendered
+      }
+      const renderedEdge = {
         ...edge,
         zIndex: ITERATION_CHILDREN_Z_INDEX,
         style: {
@@ -788,7 +919,19 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
           zIndex: ITERATION_CHILDREN_Z_INDEX,
         },
       }
+      nextCache.set(edge.id, {
+        sourceEdge: edge,
+        parentIterationId,
+        rendered: renderedEdge,
+      })
+      return renderedEdge
     })
+    renderedEdgeCacheRef.current = nextCache
+    endPerfMeasure(perfToken, {
+      sourceEdgeCount: edges.length,
+      renderedEdgeCount: result.length,
+    })
+    return result
   }, [collapsedIterationIds, edges, nodes])
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -899,7 +1042,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     record({ nodes, edges: nextEdges })
   }, [edges, nodes, record, setEdges])
 
-  const handleLocateNode = (nodeId: string) => {
+  const handleLocateNode = useCallback((nodeId: string) => {
     const node = nodes.find(item => item.id === nodeId)
     if (!node)
       return
@@ -910,7 +1053,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     setActiveNode(node)
     setChecklistOpen(false)
     fitView({ nodes: [{ id: node.id }], duration: 220, padding: 0.28 })
-  }
+  }, [fitView, nodes, setActiveNode, setChecklistOpen])
 
   const handleAddNode = (type: BlockEnum) => {
     const iterationParentId = (() => {
@@ -1103,7 +1246,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
       globalThis.alert('节点已插入，但当前选中节点无法自动连线')
   }, [activeNode, edges, fitView, idRef, nodeTypeLabel, nodes, record, setActiveNode, setEdges, setNodes])
 
-  const handleSaveActiveNode = () => {
+  const handleSaveActiveNode = useCallback(() => {
     if (!activeNode)
       return
     const currentNode = nodes.find(item => item.id === activeNode.id)
@@ -1124,23 +1267,23 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     if (currentPayload === activePayload)
       return
     saveNode()
-  }
+  }, [activeNode, nodes, saveNode])
 
-  const handleFocusIterationRegion = (nodeId: string) => {
+  const handleFocusIterationRegion = useCallback((nodeId: string) => {
     const node = nodes.find(item => item.id === nodeId && item.data.type === BlockEnum.Iteration)
     if (!node)
       return
     setCollapsedIterationIds(current => ({ ...current, [nodeId]: false }))
     setActiveNode(node)
     fitView({ nodes: [{ id: node.id }], duration: 220, padding: 0.28 })
-  }
+  }, [fitView, nodes, setActiveNode])
 
-  const handleAutoLayout = () => {
+  const handleAutoLayout = useCallback(() => {
     const nextNodes = autoLayoutNodes(nodes, edges)
     setNodes(nextNodes)
     record({ nodes: nextNodes, edges })
     fitView({ duration: 260, padding: 0.22 })
-  }
+  }, [edges, fitView, nodes, record, setNodes])
 
   const handleAddIterationChild = (parentId: string, type: BlockEnum) => {
     const parentNode = nodes.find(node => node.id === parentId)
@@ -1154,7 +1297,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     })
   }
 
-  const getEffectiveNodes = () => {
+  const getEffectiveNodes = useCallback(() => {
     if (!activeNode)
       return nodes
     return nodes.map((item) => {
@@ -1168,10 +1311,11 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
         },
       }
     })
-  }
+  }, [activeNode, nodes])
 
-  const getDSL = () => {
-    return serializeWorkflowDSL({
+  const getDSL = useCallback(() => {
+    const perfToken = startPerfMeasure('serializeWorkflowDSL:getDSL')
+    const result = serializeWorkflowDSL({
       nodes: getEffectiveNodes(),
       edges,
       globalVariables,
@@ -1179,7 +1323,94 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
       workflowVariableScopes,
       viewport: getViewport(),
     })
-  }
+    endPerfMeasure(perfToken, {
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+    })
+    return result
+  }, [edges, getEffectiveNodes, getViewport, globalVariables, nodes.length, workflowParameters, workflowVariableScopes])
+
+  const flowActions = useMemo(() => ({
+    onNodesChange,
+    onEdgesChange,
+    onConnect,
+    onNodeDragStop: handleNodeDragStop,
+    onNodeClick: (_: React.MouseEvent, node: DifyNode) => {
+      if (activeNode && activeNode.id !== node.id)
+        handleSaveActiveNode()
+      setActiveNode(node)
+    },
+    onPaneClick: clearMenus,
+    onNodeContextMenu: handleNodeContextMenu,
+    onEdgeContextMenu: handleEdgeContextMenu,
+    onPaneContextMenu: handlePaneContextMenu,
+  }), [activeNode, clearMenus, handleEdgeContextMenu, handleNodeContextMenu, handleNodeDragStop, handlePaneContextMenu, handleSaveActiveNode, onConnect, onEdgesChange, onNodesChange, setActiveNode])
+
+  const nodeMenuActions = useMemo(() => ({
+    onClose: () => setNodeMenu(undefined),
+    onCopy: () => copySelection(nodeMenu ? [nodeMenu.nodeId] : []),
+    onDuplicate: () => duplicateSelection(nodeMenu ? [nodeMenu.nodeId] : []),
+    onDelete: () => deleteSelection(nodeMenu ? [nodeMenu.nodeId] : []),
+  }), [copySelection, deleteSelection, duplicateSelection, nodeMenu, setNodeMenu])
+
+  const edgeMenuActions = useMemo(() => ({
+    onClose: () => setEdgeMenu(undefined),
+    onDelete: () => deleteSelection([], edgeMenu ? [edgeMenu.edgeId] : []),
+  }), [deleteSelection, edgeMenu, setEdgeMenu])
+
+  const panelMenuActions = useMemo(() => ({
+    onClose: () => setPanelMenu(undefined),
+    onPaste: () => pasteClipboard(panelMenu),
+    onExport: exportDSL,
+    onImport: () => setImportOpen(true),
+  }), [exportDSL, panelMenu, pasteClipboard, setImportOpen, setPanelMenu])
+
+  const selectionMenuActions = useMemo(() => ({
+    onClose: () => setSelectionMenu(undefined),
+    onCopy: () => copySelection(),
+    onDuplicate: () => duplicateSelection(),
+    onDelete: () => deleteSelection(),
+    onAlign: (direction: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom' | 'distributeHorizontal' | 'distributeVertical') => alignSelection(direction),
+  }), [alignSelection, copySelection, deleteSelection, duplicateSelection, setSelectionMenu])
+
+  const quickPanelActions = useMemo(() => ({
+    globalVariableOpen,
+    workflowParamsOpen,
+    checklistOpen,
+    issueCount: issues.length,
+    globalVariables,
+    workflowParameters,
+    issues,
+    onOpenGlobalVariables: () => {
+      setWorkflowParamsOpen(false)
+      setChecklistOpen(false)
+      setGlobalVariableOpen(true)
+    },
+    onOpenWorkflowParams: () => {
+      setGlobalVariableOpen(false)
+      setChecklistOpen(false)
+      setWorkflowParamsOpen(true)
+    },
+    onOpenChecklist: () => {
+      setGlobalVariableOpen(false)
+      setWorkflowParamsOpen(false)
+      setChecklistOpen(true)
+    },
+    onCloseGlobalVariables: () => setGlobalVariableOpen(false),
+    onCloseWorkflowParams: () => setWorkflowParamsOpen(false),
+    onChangeWorkflowParams: setWorkflowParameters,
+    onCloseChecklist: () => setChecklistOpen(false),
+    onLocateIssueNode: handleLocateNode,
+  }), [checklistOpen, globalVariableOpen, globalVariables, handleLocateNode, issues, setChecklistOpen, setGlobalVariableOpen, setWorkflowParameters, setWorkflowParamsOpen, workflowParameters, workflowParamsOpen])
+
+  const editorActions = useMemo(() => ({
+    flow: flowActions,
+    nodeMenu: nodeMenuActions,
+    edgeMenu: edgeMenuActions,
+    panelMenu: panelMenuActions,
+    selectionMenu: selectionMenuActions,
+    quickPanel: quickPanelActions,
+  }), [edgeMenuActions, flowActions, nodeMenuActions, panelMenuActions, quickPanelActions, selectionMenuActions])
 
   useImperativeHandle(apiRef, () => ({
     flushActiveNode: () => handleSaveActiveNode(),
@@ -1197,11 +1428,16 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
         onRedo={doRedo}
         onLayout={handleAutoLayout}
         onRun={() => {
+          const perfToken = startPerfMeasure('serializeWorkflowDSL:onRun')
           const serialized = serializeWorkflowDSL({
             nodes,
             edges,
             workflowParameters,
           } as DifyWorkflowDSL)
+          endPerfMeasure(perfToken, {
+            nodeCount: nodes.length,
+            edgeCount: edges.length,
+          })
           setRunSnapshot({
             workflowId,
             nodes: JSON.parse(JSON.stringify(serialized.nodes)) as DifyNode[],
@@ -1237,8 +1473,6 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
         />
         <WorkflowEditor
           canvasContainerRef={canvasContainerRef}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
           nodes={renderNodes}
           edges={renderEdges}
           nodeMenu={nodeMenu}
@@ -1248,75 +1482,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
           canPaste={clipboard.nodes.length > 0}
           connectionLineComponent={CustomConnectionLine}
           connectionLineZIndex={ITERATION_CHILDREN_Z_INDEX}
-          actions={{
-            flow: {
-              onNodesChange,
-              onEdgesChange,
-              onConnect,
-              onNodeDragStop: handleNodeDragStop,
-              onNodeClick: (_, node) => {
-                if (activeNode && activeNode.id !== node.id)
-                  handleSaveActiveNode()
-                setActiveNode(node)
-              },
-              onPaneClick: clearMenus,
-              onNodeContextMenu: handleNodeContextMenu,
-              onEdgeContextMenu: handleEdgeContextMenu,
-              onPaneContextMenu: handlePaneContextMenu,
-            },
-            nodeMenu: {
-              onClose: () => setNodeMenu(undefined),
-              onCopy: () => copySelection(nodeMenu ? [nodeMenu.nodeId] : []),
-              onDuplicate: () => duplicateSelection(nodeMenu ? [nodeMenu.nodeId] : []),
-              onDelete: () => deleteSelection(nodeMenu ? [nodeMenu.nodeId] : []),
-            },
-            edgeMenu: {
-              onClose: () => setEdgeMenu(undefined),
-              onDelete: () => deleteSelection([], edgeMenu ? [edgeMenu.edgeId] : []),
-            },
-            panelMenu: {
-              onClose: () => setPanelMenu(undefined),
-              onPaste: () => pasteClipboard(panelMenu),
-              onExport: exportDSL,
-              onImport: () => setImportOpen(true),
-            },
-            selectionMenu: {
-              onClose: () => setSelectionMenu(undefined),
-              onCopy: () => copySelection(),
-              onDuplicate: () => duplicateSelection(),
-              onDelete: () => deleteSelection(),
-              onAlign: alignSelection,
-            },
-            quickPanel: {
-              globalVariableOpen,
-              workflowParamsOpen,
-              checklistOpen,
-              issueCount: issues.length,
-              globalVariables,
-              workflowParameters,
-              issues,
-              onOpenGlobalVariables: () => {
-                setWorkflowParamsOpen(false)
-                setChecklistOpen(false)
-                setGlobalVariableOpen(true)
-              },
-              onOpenWorkflowParams: () => {
-                setGlobalVariableOpen(false)
-                setChecklistOpen(false)
-                setWorkflowParamsOpen(true)
-              },
-              onOpenChecklist: () => {
-                setGlobalVariableOpen(false)
-                setWorkflowParamsOpen(false)
-                setChecklistOpen(true)
-              },
-              onCloseGlobalVariables: () => setGlobalVariableOpen(false),
-              onCloseWorkflowParams: () => setWorkflowParamsOpen(false),
-              onChangeWorkflowParams: setWorkflowParameters,
-              onCloseChecklist: () => setChecklistOpen(false),
-              onLocateIssueNode: handleLocateNode,
-            },
-          }}
+          actions={editorActions}
         />
       </div>
 

@@ -212,29 +212,8 @@ const createDefaultIterationChildren = (): IterationNodeConfig['children'] => ({
         },
       },
     },
-    {
-      id: 'iter-end',
-      type: 'childNode',
-      position: { x: 560, y: 40 },
-      data: {
-        title: '迭代结束',
-        desc: '迭代子流程收口',
-        type: BlockEnum.End,
-        config: {
-          outputs: [
-            { name: 'result', source: '' },
-          ],
-        },
-      },
-    },
   ],
-  edges: [
-    {
-      id: 'iter-edge-start-end',
-      source: 'iter-start',
-      target: 'iter-end',
-    },
-  ],
+  edges: [],
   viewport: { x: 0, y: 0, zoom: 1 },
 })
 
@@ -242,7 +221,6 @@ const defaultIterationConfig = (): IterationNodeConfig => ({
   joinMode: 'all',
   fanOutMode: 'sequential',
   iteratorSource: '',
-  outputSource: '',
   outputVar: 'results',
   itemVar: 'item',
   indexVar: 'index',
@@ -539,9 +517,9 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       normalizedChildren.nodes = defaultChildren.nodes
     if (!normalizedChildren.nodes.some(node => node.data?.type === BlockEnum.Start))
       normalizedChildren.nodes = [defaultChildren.nodes[0], ...normalizedChildren.nodes]
-    if (!normalizedChildren.nodes.some(node => node.data?.type === BlockEnum.End))
-      normalizedChildren.nodes = [...normalizedChildren.nodes, defaultChildren.nodes[1]]
-    if (normalizedChildren.edges.length === 0 && normalizedChildren.nodes.length <= 2)
+    const validChildNodeIDs = new Set(normalizedChildren.nodes.map(node => node.id))
+    normalizedChildren.edges = normalizedChildren.edges.filter(edge => validChildNodeIDs.has(edge.source) && validChildNodeIDs.has(edge.target))
+    if (normalizedChildren.edges.length === 0 && normalizedChildren.nodes.length <= 1)
       normalizedChildren.edges = defaultChildren.edges
 
     return {
@@ -551,6 +529,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       fanOutMode: normalizeFanOutMode(iteration.fanOutMode),
       itemVar: typeof iteration.itemVar === 'string' && iteration.itemVar.trim() ? iteration.itemVar : fallback.itemVar,
       indexVar: typeof iteration.indexVar === 'string' && iteration.indexVar.trim() ? iteration.indexVar : fallback.indexVar,
+      isParallel: false,
       parallelNums: typeof iteration.parallelNums === 'number' ? iteration.parallelNums : fallback.parallelNums,
       canvasSize: isObject(iteration.canvasSize)
         ? {

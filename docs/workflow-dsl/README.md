@@ -133,7 +133,7 @@
 - `start.xxx`：开始节点参数
 - `workflow.xxx`：流程参数/流程级写回结果
 - `global.xxx`：全局变量
-- `user.xxx`：用户保留变量
+- `user.xxx`：用户保留变量，例如 `user.username`、`user.warningAccount`
 - `节点ID.xxx`：节点输出
 
 ### 4.2 引用格式
@@ -476,7 +476,6 @@
   "joinMode": "all",
   "fanOutMode": "sequential",
   "iteratorSource": "",
-  "outputSource": "",
   "outputVar": "results",
   "itemVar": "item",
   "indexVar": "index",
@@ -493,8 +492,7 @@
 - `joinMode`
 - `fanOutMode`
 - `iteratorSource`：迭代输入集合
-- `outputSource`：子流程中作为单项输出来源的变量
-- `outputVar`：最终汇总输出变量名
+- `outputVar`：最终输出变量名，值为迭代状态对象
 - `itemVar`：单项变量名，默认 `item`
 - `indexVar`：索引变量名，默认 `index`
 - `isParallel`
@@ -505,7 +503,7 @@
 
 校验规则：
 
-- `iteratorSource`、`outputSource`、`outputVar` 不能为空
+- `iteratorSource`、`outputVar` 不能为空
 - `isParallel=true` 时，`parallelNums` 必须在 `1..100`
 - `children.nodes` 为空时给 warning
 
@@ -515,6 +513,8 @@
 - 子流程默认会带一个迭代开始节点，但该入口节点不承载表单配置
 - 迭代输入数组统一由父迭代节点的 `iteratorSource` 选择
 - 仅当前循环区域内的节点可使用 `itemVar` / `indexVar`
+- 迭代内部自动注入隐藏状态对象 `{{iterationNodeId.state}}`，可被引用与写入
+- 迭代完成后会直接输出该状态对象，不再依赖子流程结束节点收口
 
 ### 7.6 `code` 代码节点
 

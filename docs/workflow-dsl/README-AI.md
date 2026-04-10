@@ -110,7 +110,7 @@ DSL 根节点必须是对象，允许字段：
 - `start.xxx`
 - `workflow.xxx`
 - `global.xxx`
-- `user.xxx`
+- `user.xxx`（例如 `user.username`、`user.warningAccount`）
 - `节点ID.xxx`
 
 ### 3.3 写回映射
@@ -294,7 +294,6 @@ DSL 根节点必须是对象，允许字段：
 - `joinMode`
 - `fanOutMode`
 - `iteratorSource`
-- `outputSource`
 - `outputVar`
 - `itemVar`
 - `indexVar`
@@ -306,7 +305,7 @@ DSL 根节点必须是对象，允许字段：
 
 约束：
 
-- `iteratorSource`、`outputSource`、`outputVar` 必填
+- `iteratorSource`、`outputVar` 必填
 - `errorHandleMode` 只允许 `terminated | continue-on-error | remove-abnormal-output`
 - `isParallel=true` 时，`parallelNums` 必须在 `1..100`
 - `children` 必须是一个合法子 DSL，至少包含 `nodes`

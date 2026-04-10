@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Cascader, Modal, Select, TreeSelect } from 'antd'
 import StartNodeFormConfig from './StartNodeFormConfig'
 import VariableValueInput from './VariableValueInput'
@@ -670,7 +670,7 @@ const setValueByTargetPath = (target: Record<string, unknown>, rawPath: string, 
   current[segments[segments.length - 1]] = value
 }
 
-export default function NodeConfigPanel({
+function NodeConfigPanel({
   nodes,
   edges,
   workflowParameters,
@@ -1961,7 +1961,6 @@ export default function NodeConfigPanel({
       { type: BlockEnum.HttpRequest, label: 'HTTP' },
       { type: BlockEnum.IfElse, label: '条件分支' },
       { type: BlockEnum.Input, label: '输入' },
-      { type: BlockEnum.End, label: '结束' },
     ]
     return (
       <div className={sectionClass}>
@@ -1975,15 +1974,6 @@ export default function NodeConfigPanel({
           onScopeChange={scope => setScope(`${activeNode.id}.iteration.iteratorSource`, scope)}
           placeholder="例如 {{input.items}}"
         />
-        <VariableValueInput
-          label="输出来源（迭代体内变量）"
-          value={config.outputSource}
-          onChange={nextValue => updateConfig({ ...config, outputSource: nextValue })}
-          options={variableOptions}
-          scope={getScope(`${activeNode.id}.iteration.outputSource`, 'all')}
-          onScopeChange={scope => setScope(`${activeNode.id}.iteration.outputSource`, scope)}
-          placeholder="例如 {{code.result}}"
-        />
         <label className={labelClass}>输出变量名</label>
         <input
           className={inputClass}
@@ -1991,6 +1981,10 @@ export default function NodeConfigPanel({
           placeholder="results"
           onChange={event => updateConfig({ ...config, outputVar: event.target.value })}
         />
+        <div className="rounded border border-teal-200 bg-teal-50/70 p-2 text-xs leading-5 text-teal-800">
+          迭代体内自动注入隐藏状态对象，可通过 {'{{'}{`${activeNode.id}.state`}{'}}'} 引用或写入。
+          循环结束后会直接输出该状态对象，不再需要配置输出来源或结束节点。
+        </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className={labelClass}>迭代项变量名</label>
@@ -2011,27 +2005,9 @@ export default function NodeConfigPanel({
             />
           </div>
         </div>
-        <label className="flex items-center gap-1 text-xs text-gray-600">
-          <input
-            type="checkbox"
-            checked={config.isParallel}
-            onChange={event => updateConfig({ ...config, isParallel: event.target.checked })}
-          />
-          并行模式
-        </label>
-        {config.isParallel && (
-          <>
-            <label className={labelClass}>最大并行数</label>
-            <input
-              className={inputClass}
-              type="number"
-              min="1"
-              max="100"
-              value={config.parallelNums}
-              onChange={event => updateConfig({ ...config, parallelNums: Number(event.target.value || 1) })}
-            />
-          </>
-        )}
+        <div className="text-xs text-gray-500">
+          当前共享状态对象仅支持顺序执行，并行模式已停用。
+        </div>
         <label className={labelClass}>错误处理方式</label>
         <Select
           className={antSelectClass}
@@ -2043,14 +2019,6 @@ export default function NodeConfigPanel({
           ]}
           onChange={value => updateConfig({ ...config, errorHandleMode: value as IterationNodeConfig['errorHandleMode'] })}
         />
-        <label className="flex items-center gap-1 text-xs text-gray-600">
-          <input
-            type="checkbox"
-            checked={config.flattenOutput}
-            onChange={event => updateConfig({ ...config, flattenOutput: event.target.checked })}
-          />
-          扁平化输出
-        </label>
         <div className="rounded border border-gray-200 p-2">
           <div className="mb-1 text-xs text-gray-600">
             子流程节点：{iterationChildNodes.length}，连线：{iterationChildEdges.length}
@@ -3222,3 +3190,5 @@ export default function NodeConfigPanel({
     </div>
   )
 }
+
+export default memo(NodeConfigPanel)

@@ -137,7 +137,6 @@ export const demoDSL: DifyWorkflowDSL = {
         type: BlockEnum.Iteration,
         config: {
           iteratorSource: '{{workflow.items}}',
-          outputSource: '{{iteration-1.item}}',
           outputVar: 'results',
           itemVar: 'item',
           indexVar: 'index',
@@ -172,25 +171,10 @@ export const demoDSL: DifyWorkflowDSL = {
                   type: BlockEnum.Code,
                   config: {
                     language: 'javascript',
-                    code: 'function main(input) {\n  return { result: String({{item}}) }\n}',
+                    code: 'function main(input) {\n  return { result: String({{iteration-1.item}}) }\n}',
                     outputSchema: '',
                     writebackMappings: [],
                     outputs: ['result'],
-                  },
-                },
-              },
-              {
-                id: 'iter-end',
-                type: 'childNode',
-                position: { x: 600, y: 40 },
-                data: {
-                  title: '迭代结束',
-                  desc: '迭代子流程收口',
-                  type: BlockEnum.End,
-                  config: {
-                    outputs: [
-                      { name: 'result', source: '{{iter-code.result}}' },
-                    ],
                   },
                 },
               },
@@ -200,12 +184,6 @@ export const demoDSL: DifyWorkflowDSL = {
                 id: 'iter-edge-1',
                 source: 'iter-start',
                 target: 'iter-code',
-                type: CUSTOM_EDGE,
-              },
-              {
-                id: 'iter-edge-2',
-                source: 'iter-code',
-                target: 'iter-end',
                 type: CUSTOM_EDGE,
               },
             ],
