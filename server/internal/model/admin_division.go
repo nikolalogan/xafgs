@@ -25,6 +25,12 @@ type AdminDivisionChainNode struct {
 	Level int    `json:"level"`
 }
 
+type AdminDivisionAncestorNode struct {
+	Code  string `json:"code"`
+	Area  string `json:"area"`
+	Level string `json:"level"`
+}
+
 type AdminDivisionByCodeResult struct {
 	Current     AdminDivisionDTO       `json:"current"`
 	ParentChain []AdminDivisionChainNode `json:"parentChain"`
@@ -44,4 +50,3 @@ type AdminDivisionPageResult struct {
 	PageSize int                `json:"pageSize"`
 	Total    int64              `json:"total"`
 }
-

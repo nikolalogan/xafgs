@@ -94,15 +94,66 @@ const parseObjectLeafPathsFromJson = (rawJson?: string): string[] => {
   return parsed.paths
 }
 
+const parseStructuredLeafPathsFromDefault = (rawDefault?: string): string[] => {
+  if (!rawDefault?.trim())
+    return []
+
+  try {
+    const parsed = JSON.parse(rawDefault) as unknown
+    const visit = (value: unknown, prefix: string): string[] => {
+      if (value === null || value === undefined)
+        return prefix ? [prefix] : []
+      if (Array.isArray(value)) {
+        const container = prefix ? [prefix, `${prefix}[]`] : ['[]']
+        if (value.length === 0)
+          return container
+        return [...container, ...value.flatMap(item => visit(item, prefix ? `${prefix}[]` : '[]'))]
+      }
+      if (typeof value === 'object') {
+        const entries = Object.entries(value as Record<string, unknown>)
+        if (entries.length === 0)
+          return prefix ? [prefix] : []
+        return [
+          ...(prefix ? [prefix] : []),
+          ...entries.flatMap(([key, child]) => visit(child, prefix ? `${prefix}.${key}` : key)),
+        ]
+      }
+      return prefix ? [prefix] : []
+    }
+    return [...new Set(visit(parsed, ''))].filter(Boolean)
+  }
+  catch {
+    return []
+  }
+}
+
+const parseStructuredLeafPathsFromJson = (rawJson?: string): string[] => {
+  if (!rawJson?.trim())
+    return []
+  const parsed = extractJsonLeafPaths(rawJson)
+  if (!parsed.ok)
+    return []
+  return parsed.paths
+}
+
+const joinBaseAndChildPath = (baseParam: string, childPath: string) => {
+  if (!childPath)
+    return baseParam
+  if (childPath === '[]')
+    return `${baseParam}[]`
+  if (childPath.startsWith('[]'))
+    return `${baseParam}${childPath}`
+  return `${baseParam}.${childPath}`
+}
+
 const buildDisplayLabel = (nodeTitle: string, fullParamPath: string) => {
   return `${nodeTitle}.${fullParamPath}`
 }
 
 const isIterationEntryStartNode = (node: DifyNode) => {
   return node.data.type === BlockEnum.Start
-    && node.data._iterationRole === 'child'
-    && node.data._iterationParentId
-    && node.data._iterationChildId === 'iter-start'
+    && Boolean(node.data.parentIterationId)
+    && Boolean(node.data.isIterationEntry)
 }
 
 export const buildWorkflowVariableOptions = (
@@ -148,11 +199,12 @@ export const buildWorkflowVariableOptions = (
     const rootScope = normalizeScopeFromString(parameter.valueType)
     pushVariableOption(nodeId, nodeTitle, baseParam, rootScope)
 
-    if (parameter.valueType === 'object') {
-      const jsonPaths = parseObjectLeafPathsFromJson(parameter.json)
-      const childPaths = jsonPaths.length ? jsonPaths : parseObjectLeafPathsFromDefault(parameter.defaultValue)
+    if (parameter.valueType === 'object' || parameter.valueType === 'array') {
+      const jsonPaths = parseStructuredLeafPathsFromJson(parameter.json)
+      const childPaths = jsonPaths.length ? jsonPaths : parseStructuredLeafPathsFromDefault(parameter.defaultValue)
       childPaths.forEach((childPath) => {
-        pushVariableOption(nodeId, nodeTitle, `${baseParam}.${childPath}`, 'all')
+        const fullPath = joinBaseAndChildPath(baseParam, childPath)
+        pushVariableOption(nodeId, nodeTitle, fullPath, childPath.includes('[]') ? 'array' : 'all')
       })
     }
   })
@@ -167,11 +219,12 @@ export const buildWorkflowVariableOptions = (
     const rootScope = normalizeScopeFromString(variable.valueType)
     pushVariableOption(nodeId, nodeTitle, baseParam, rootScope)
 
-    if (variable.valueType === 'object') {
-      const jsonPaths = parseObjectLeafPathsFromJson(variable.json)
-      const childPaths = jsonPaths.length ? jsonPaths : parseObjectLeafPathsFromDefault(variable.defaultValue)
+    if (variable.valueType === 'object' || variable.valueType === 'array') {
+      const jsonPaths = parseStructuredLeafPathsFromJson(variable.json)
+      const childPaths = jsonPaths.length ? jsonPaths : parseStructuredLeafPathsFromDefault(variable.defaultValue)
       childPaths.forEach((childPath) => {
-        pushVariableOption(nodeId, nodeTitle, `${baseParam}.${childPath}`, 'all')
+        const fullPath = joinBaseAndChildPath(baseParam, childPath)
+        pushVariableOption(nodeId, nodeTitle, fullPath, childPath.includes('[]') ? 'array' : 'all')
       })
     }
   })
@@ -320,8 +373,8 @@ export const buildWorkflowVariableOptions = (
 
   const merged = [...unique.values()]
 
-  if (activeNode?.data._iterationRole === 'child' && activeNode.data._iterationParentId) {
-    const parentId = activeNode.data._iterationParentId
+  if (activeNode?.data.parentIterationId) {
+    const parentId = activeNode.data.parentIterationId
     const parentNode = nodes.find(node => node.id === parentId && node.data.type === BlockEnum.Iteration)
     if (parentNode) {
       const config = ensureNodeConfig(BlockEnum.Iteration, parentNode.data.config)

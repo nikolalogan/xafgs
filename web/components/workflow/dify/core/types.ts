@@ -125,6 +125,10 @@ export type IterationNodeConfig = {
   parallelNums: number
   errorHandleMode: 'terminated' | 'continue-on-error' | 'remove-abnormal-output'
   flattenOutput: boolean
+  canvasSize?: {
+    width: number
+    height: number
+  }
   children: {
     nodes: Array<{
       id: string
@@ -261,17 +265,24 @@ export type DifyNodeData = {
   desc?: string
   type: BlockEnum
   config?: DifyNodeConfig
+  parentIterationId?: string
+  nestedNodeId?: string
+  isIterationEntry?: boolean
   _iterationRole?: 'container' | 'child'
   _iterationParentId?: string
   _iterationChildId?: string
   _iterationCollapsed?: boolean
   _onToggleIterationCollapse?: () => void
+  _iterationCanvasWidth?: number
+  _iterationCanvasHeight?: number
+  _onResizeIterationCanvas?: (size: { width: number; height: number }, finalize?: boolean) => void
   _runningStatus?: NodeRunningStatus
   _connectedSourceHandleIds?: string[]
   _connectedTargetHandleIds?: string[]
 }
 
 export type DifyEdgeData = {
+  parentIterationId?: string
   _iterationParentId?: string
   _sourceRunningStatus?: NodeRunningStatus
   _targetRunningStatus?: NodeRunningStatus

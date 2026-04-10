@@ -54,7 +54,16 @@ const CustomEdge = ({ id, data, sourceX, sourceY, targetX, targetY, selected }: 
           position={{ x1: sourceX, y1: sourceY, x2: targetX, y2: targetY }}
         />
       )}
-      <BaseEdge id={id} path={edgePath} style={{ stroke, strokeWidth: 2, opacity: data?._waitingRun ? 0.7 : 1 }} />
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        style={{
+          stroke,
+          strokeWidth: 2,
+          opacity: data?._waitingRun ? 0.7 : 1,
+          zIndex: data?.parentIterationId ? 1002 : undefined,
+        }}
+      />
     </>
   )
 }

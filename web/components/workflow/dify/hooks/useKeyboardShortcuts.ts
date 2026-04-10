@@ -8,6 +8,7 @@ type UseKeyboardShortcutsParams = {
   pasteClipboard: () => void
   duplicateSelection: () => void
   deleteSelection: () => void
+  saveWorkflow?: () => void
 }
 
 export const useKeyboardShortcuts = ({
@@ -18,6 +19,7 @@ export const useKeyboardShortcuts = ({
   pasteClipboard,
   duplicateSelection,
   deleteSelection,
+  saveWorkflow,
 }: UseKeyboardShortcutsParams) => {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -62,6 +64,10 @@ export const useKeyboardShortcuts = ({
         event.preventDefault()
         doUndo()
       }
+      if (modKey && key === 's') {
+        event.preventDefault()
+        saveWorkflow?.()
+      }
       if (modKey && (key === 'y' || (event.shiftKey && key === 'z'))) {
         event.preventDefault()
         doRedo()
@@ -72,5 +78,5 @@ export const useKeyboardShortcuts = ({
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [canvasContainerRef, copySelection, deleteSelection, doRedo, doUndo, duplicateSelection, pasteClipboard])
+  }, [canvasContainerRef, copySelection, deleteSelection, doRedo, doUndo, duplicateSelection, pasteClipboard, saveWorkflow])
 }

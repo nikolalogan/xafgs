@@ -58,6 +58,14 @@ func (handler *AdminDivisionHandler) Register(router fiber.Router, adminMiddlewa
 		Middlewares:        adminMiddlewares,
 		SuccessDataExample: apimeta.ExampleFromType[[]model.AdminDivisionChainNode](),
 	}, handler.GetParentChain)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[adminDivisionCodeRequest]{
+		Method:             fiber.MethodGet,
+		Path:               "/admin-divisions/ancestors",
+		Summary:            "按编码查询行政区划所有父级节点",
+		Auth:               "admin",
+		Middlewares:        adminMiddlewares,
+		SuccessDataExample: apimeta.ExampleFromType[[]model.AdminDivisionAncestorNode](),
+	}, handler.GetAncestors)
 }
 
 func (handler *AdminDivisionHandler) List(c *fiber.Ctx, request *listAdminDivisionsRequest) error {
@@ -104,3 +112,10 @@ func (handler *AdminDivisionHandler) GetParentChain(c *fiber.Ctx, request *admin
 	return response.Success(c, fiber.StatusOK, result, "获取行政区划父级链路成功")
 }
 
+func (handler *AdminDivisionHandler) GetAncestors(c *fiber.Ctx, request *adminDivisionCodeRequest) error {
+	result, apiError := handler.service.GetAncestors(c.UserContext(), request.Code)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, result, "获取行政区划父级节点成功")
+}

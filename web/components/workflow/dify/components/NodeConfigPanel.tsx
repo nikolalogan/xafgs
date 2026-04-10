@@ -12,6 +12,7 @@ import {
   type ApiRequestParamDef,
   type ApiRequestParamLocation,
   type CodeNodeConfig,
+  type DifyEdge,
   type DifyNode,
   type EndNodeConfig,
   type HttpNodeConfig,
@@ -28,6 +29,7 @@ import {
 
 type NodeConfigPanelProps = {
   nodes: DifyNode[]
+  edges: DifyEdge[]
   workflowParameters: WorkflowParameter[]
   globalVariables: WorkflowGlobalVariable[]
   workflowVariableScopes: Record<string, WorkflowVariableScope>
@@ -38,6 +40,7 @@ type NodeConfigPanelProps = {
   onChange: (node: DifyNode) => void
   onChangeScopes: (scopes: Record<string, WorkflowVariableScope>) => void
   onFocusIterationRegion: (nodeId: string) => void
+  onAddIterationChild: (parentId: string, type: BlockEnum) => void
   onSave: () => void
 }
 
@@ -669,6 +672,7 @@ const setValueByTargetPath = (target: Record<string, unknown>, rawPath: string, 
 
 export default function NodeConfigPanel({
   nodes,
+  edges,
   workflowParameters,
   globalVariables,
   workflowVariableScopes,
@@ -679,6 +683,7 @@ export default function NodeConfigPanel({
   onChange,
   onChangeScopes,
   onFocusIterationRegion,
+  onAddIterationChild,
   onSave,
 }: NodeConfigPanelProps) {
   const panelRootRef = useRef<HTMLDivElement | null>(null)
@@ -1348,9 +1353,7 @@ export default function NodeConfigPanel({
 
   const renderStartConfig = () => {
     const config = ensureNodeConfig(BlockEnum.Start, activeNode.data.config) as StartNodeConfig
-    const isIterationEntry = activeNode.data._iterationRole === 'child'
-      && activeNode.data._iterationParentId
-      && activeNode.data._iterationChildId === 'iter-start'
+    const isIterationEntry = Boolean(activeNode.data.parentIterationId && activeNode.data.isIterationEntry)
 
     if (isIterationEntry) {
       return (
@@ -1950,6 +1953,8 @@ export default function NodeConfigPanel({
   const renderIterationConfig = () => {
     const config = ensureNodeConfig(BlockEnum.Iteration, activeNode.data.config) as IterationNodeConfig
     const updateConfig = (nextConfig: IterationNodeConfig) => updateBase({ config: nextConfig })
+    const iterationChildNodes = nodes.filter(node => node.data.parentIterationId === activeNode.id)
+    const iterationChildEdges = edges.filter(edge => edge.data?.parentIterationId === activeNode.id)
     const childTypes: Array<{ type: BlockEnum; label: string }> = [
       { type: BlockEnum.LLM, label: 'LLM' },
       { type: BlockEnum.Code, label: '代码' },
@@ -1958,38 +1963,6 @@ export default function NodeConfigPanel({
       { type: BlockEnum.Input, label: '输入' },
       { type: BlockEnum.End, label: '结束' },
     ]
-    const addChildNode = (type: BlockEnum) => {
-      const nextIndex = config.children.nodes.length + 1
-      const nextNodeId = `sub-node-${Date.now()}-${Math.floor(Math.random() * 1000)}`
-      const nextNode = {
-        id: nextNodeId,
-        type: 'childNode',
-        position: {
-          x: 40 + (config.children.nodes.length % 3) * 240,
-          y: 40 + Math.floor(config.children.nodes.length / 3) * 150,
-        },
-        data: {
-          title: `${type}-${nextIndex}`,
-          desc: '',
-          type,
-          config: (() => {
-            const nextConfig = createDefaultNodeConfig(type)
-            if (type === BlockEnum.LLM) {
-              const llmConfig = nextConfig as LLMNodeConfig
-              llmConfig.model = defaultLLMModel
-            }
-            return nextConfig
-          })(),
-        },
-      }
-      updateConfig({
-        ...config,
-        children: {
-          ...config.children,
-          nodes: [...config.children.nodes, nextNode],
-        },
-      })
-    }
     return (
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">迭代节点</div>
@@ -2080,13 +2053,13 @@ export default function NodeConfigPanel({
         </label>
         <div className="rounded border border-gray-200 p-2">
           <div className="mb-1 text-xs text-gray-600">
-            子流程节点：{config.children.nodes.length}，连线：{config.children.edges.length}
+            子流程节点：{iterationChildNodes.length}，连线：{iterationChildEdges.length}
           </div>
           <div className="mb-2 flex flex-wrap gap-1.5">
             {childTypes.map(item => (
               <button
                 key={item.type}
-                onClick={() => addChildNode(item.type)}
+                onClick={() => onAddIterationChild(activeNode.id, item.type)}
                 className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"
               >
                 + {item.label}
@@ -3023,7 +2996,60 @@ export default function NodeConfigPanel({
 
   const renderEndConfig = () => {
     const config = ensureNodeConfig(BlockEnum.End, activeNode.data.config) as EndNodeConfig
+    const isIterationEnd = Boolean(activeNode.data.parentIterationId)
     const updateConfig = (nextConfig: EndNodeConfig) => updateBase({ config: nextConfig })
+    if (isIterationEnd) {
+      const primaryOutput = config.outputs[0] ?? { name: 'result', source: '' }
+      return (
+        <div className="space-y-3 rounded border border-teal-200 bg-teal-50/60 p-3">
+          <div className="text-sm font-semibold text-teal-800">循环收口</div>
+          <div className="text-xs leading-5 text-teal-700">
+            该结束节点用于定义每次循环产出的单项对象。
+            例如输出名称填写 result，引用数据填写 {'{{code-1.result}}'}，则父级迭代节点最终聚合为 result: [每次循环的引用数据]。
+          </div>
+          <div className="space-y-2 rounded border border-dashed border-teal-200 bg-white/80 p-2">
+            <div>
+              <label className={labelClass}>输出对象名称</label>
+              <input
+                className={inputClass}
+                placeholder="result"
+                value={primaryOutput.name}
+                onChange={(event) => {
+                  updateConfig({
+                    ...config,
+                    outputs: [
+                      {
+                        ...primaryOutput,
+                        name: event.target.value,
+                      },
+                    ],
+                  })
+                }}
+              />
+            </div>
+            <VariableValueInput
+              label="引用数据"
+              value={primaryOutput.source}
+              onChange={(nextValue) => {
+                updateConfig({
+                  ...config,
+                  outputs: [
+                    {
+                      ...primaryOutput,
+                      source: nextValue,
+                    },
+                  ],
+                })
+              }}
+              options={variableOptions}
+              scope={getScope(`${activeNode.id}.iteration.end.source`, 'all')}
+              onScopeChange={scope => setScope(`${activeNode.id}.iteration.end.source`, scope)}
+              placeholder="例如 {{code-1.result}}"
+            />
+          </div>
+        </div>
+      )
+    }
     return (
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">结束节点输出</div>

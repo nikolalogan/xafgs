@@ -396,6 +396,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
             initialDSL={initialCanvasDSL}
             workflowId={workflowId}
             onDSLChange={showAdvancedJSON ? handleDSLChange : undefined}
+            onSave={save}
           />
           {showAdvancedJSON && (
             <div className="mt-3 space-y-2">

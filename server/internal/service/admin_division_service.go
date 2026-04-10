@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"sxfgssever/server/internal/model"
@@ -13,6 +14,7 @@ type AdminDivisionService interface {
 	List(ctx context.Context, query model.AdminDivisionListQuery) (model.AdminDivisionPageResult, *model.APIError)
 	GetByCode(ctx context.Context, code string) (model.AdminDivisionByCodeResult, *model.APIError)
 	GetParentChain(ctx context.Context, code string) ([]model.AdminDivisionChainNode, *model.APIError)
+	GetAncestors(ctx context.Context, code string) ([]model.AdminDivisionAncestorNode, *model.APIError)
 }
 
 type adminDivisionService struct {
@@ -58,3 +60,19 @@ func (service *adminDivisionService) GetParentChain(_ context.Context, code stri
 	return parentChain, nil
 }
 
+func (service *adminDivisionService) GetAncestors(_ context.Context, code string) ([]model.AdminDivisionAncestorNode, *model.APIError) {
+	parentChain, ok := service.repository.FindParentChainByCode(strings.TrimSpace(code))
+	if !ok {
+		return nil, model.NewAPIError(404, response.CodeNotFound, "行政区划不存在")
+	}
+
+	result := make([]model.AdminDivisionAncestorNode, 0, len(parentChain))
+	for _, item := range parentChain {
+		result = append(result, model.AdminDivisionAncestorNode{
+			Code:  item.Code,
+			Area:  item.Name,
+			Level: fmt.Sprintf("L%d", item.Level),
+		})
+	}
+	return result, nil
+}

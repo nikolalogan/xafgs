@@ -116,12 +116,17 @@ const cloneEdgeForPreview = (edge: DifyEdge): DifyEdge => ({
   type: CUSTOM_EDGE,
   data: edge.data ? clonePlainValue(edge.data) : edge.data,
 })
-const buildIterationContainerLayout = (children: IterationNodeConfig['children']['nodes']) => {
+const buildIterationContainerLayout = (
+  children: IterationNodeConfig['children']['nodes'],
+  manualSize?: IterationNodeConfig['canvasSize'],
+) => {
   const maxX = children.reduce((acc, item) => Math.max(acc, item.position.x), 0)
   const maxY = children.reduce((acc, item) => Math.max(acc, item.position.y), 0)
+  const contentWidth = Math.max(ITERATION_CONTAINER_MIN_WIDTH, maxX + ITERATION_CONTAINER_PADDING_X * 2 + ITERATION_CHILD_NODE_ESTIMATED_WIDTH)
+  const contentHeight = Math.max(ITERATION_CONTAINER_MIN_HEIGHT, maxY + ITERATION_CONTAINER_PADDING_Y + ITERATION_CHILD_NODE_ESTIMATED_HEIGHT)
   return {
-    width: Math.max(ITERATION_CONTAINER_MIN_WIDTH, maxX + ITERATION_CONTAINER_PADDING_X * 2 + ITERATION_CHILD_NODE_ESTIMATED_WIDTH),
-    height: Math.max(ITERATION_CONTAINER_MIN_HEIGHT, maxY + ITERATION_CONTAINER_PADDING_Y + ITERATION_CHILD_NODE_ESTIMATED_HEIGHT),
+    width: Math.max(contentWidth, manualSize?.width ?? 0),
+    height: Math.max(contentHeight, manualSize?.height ?? 0),
     paddingX: ITERATION_CONTAINER_PADDING_X,
     paddingY: ITERATION_CONTAINER_PADDING_Y,
   }
@@ -1437,7 +1442,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       }
 
       const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
-      const layout = buildIterationContainerLayout(config.children.nodes)
+      const layout = buildIterationContainerLayout(config.children.nodes, config.canvasSize)
 
       mergedNodes.push({
         ...cloneNodeForPreview(node),

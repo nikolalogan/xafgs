@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useCallback, useRef } from 'react'
 import type { NodeProps } from 'reactflow'
 import { Handle, Position } from 'reactflow'
 import { buildIfElseBranchHandleId, IF_ELSE_FALLBACK_HANDLE } from '@/lib/workflow-ifelse'
@@ -32,13 +32,53 @@ const typeLabelMap: Record<BlockEnum, string> = {
 const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
   const isStart = data.type === BlockEnum.Start
   const isEnd = data.type === BlockEnum.End
-  const isIterationContainer = data.type === BlockEnum.Iteration && data._iterationRole !== 'child'
-  const isIterationChild = data._iterationRole === 'child'
+  const isIterationContainer = data.type === BlockEnum.Iteration && !data.parentIterationId
+  const isIterationChild = Boolean(data.parentIterationId)
   const isIterationCollapsed = Boolean(data._iterationCollapsed)
+  const resizeStateRef = useRef<{ startX: number; startY: number; startWidth: number; startHeight: number } | null>(null)
+
+  const handleResizeStart = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    if (!data._onResizeIterationCanvas)
+      return
+    event.preventDefault()
+    event.stopPropagation()
+    resizeStateRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: data._iterationCanvasWidth || 760,
+      startHeight: data._iterationCanvasHeight || 420,
+    }
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const state = resizeStateRef.current
+      if (!state)
+        return
+      data._onResizeIterationCanvas?.({
+        width: state.startWidth + (moveEvent.clientX - state.startX),
+        height: state.startHeight + (moveEvent.clientY - state.startY),
+      }, false)
+    }
+
+    const handleMouseUp = (upEvent: MouseEvent) => {
+      const state = resizeStateRef.current
+      resizeStateRef.current = null
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      if (!state)
+        return
+      data._onResizeIterationCanvas?.({
+        width: state.startWidth + (upEvent.clientX - state.startX),
+        height: state.startHeight + (upEvent.clientY - state.startY),
+      }, true)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+  }, [data])
 
   if (isIterationContainer) {
     return (
-      <div className={`h-full w-full overflow-hidden rounded-2xl border bg-teal-50/70 ${selected ? 'border-teal-500 ring-2 ring-teal-200' : 'border-teal-200'}`}>
+      <div className={`relative h-full w-full overflow-hidden rounded-2xl border bg-teal-50/70 ${selected ? 'border-teal-500 ring-2 ring-teal-200' : 'border-teal-200'}`}>
         <Handle id="target" type="target" position={Position.Left} className="!h-2 !w-2 !bg-teal-500" />
         <div className="flex h-10 items-center justify-between border-b border-teal-200 bg-white/80 px-3">
           <div className="min-w-0">
@@ -64,6 +104,19 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
         <div className="px-3 py-2 text-xs text-teal-700">
           {isIterationCollapsed ? '当前仅显示循环摘要，内部节点与连线已隐藏。' : '迭代子流程区域（主画布内编辑）'}
         </div>
+        {!isIterationCollapsed && (
+          <button
+            type="button"
+            aria-label="调整迭代区域大小"
+            title="拖拽调整迭代区域大小"
+            onMouseDown={handleResizeStart}
+            className="nodrag nopan absolute bottom-2 right-2 h-4 w-4 cursor-se-resize rounded border border-teal-300 bg-white/90 text-teal-600 shadow-sm hover:bg-teal-50"
+          >
+            <svg viewBox="0 0 16 16" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.4">
+              <path d="M6 14 14 6M10 14l4-4M14 10l-4 4" />
+            </svg>
+          </button>
+        )}
         <Handle id="source" type="source" position={Position.Right} className="!h-2 !w-2 !bg-teal-500" />
       </div>
     )

@@ -145,6 +145,10 @@ export const demoDSL: DifyWorkflowDSL = {
           parallelNums: 10,
           errorHandleMode: 'terminated',
           flattenOutput: true,
+          canvasSize: {
+            width: 760,
+            height: 420,
+          },
           children: {
             nodes: [
               {
@@ -175,12 +179,33 @@ export const demoDSL: DifyWorkflowDSL = {
                   },
                 },
               },
+              {
+                id: 'iter-end',
+                type: 'childNode',
+                position: { x: 600, y: 40 },
+                data: {
+                  title: '迭代结束',
+                  desc: '迭代子流程收口',
+                  type: BlockEnum.End,
+                  config: {
+                    outputs: [
+                      { name: 'result', source: '{{iter-code.result}}' },
+                    ],
+                  },
+                },
+              },
             ],
             edges: [
               {
                 id: 'iter-edge-1',
                 source: 'iter-start',
                 target: 'iter-code',
+                type: CUSTOM_EDGE,
+              },
+              {
+                id: 'iter-edge-2',
+                source: 'iter-code',
+                target: 'iter-end',
                 type: CUSTOM_EDGE,
               },
             ],

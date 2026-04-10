@@ -29,6 +29,9 @@ const isValidRetryCount = (value: number | undefined) => {
   return Number.isInteger(value) && value >= 0
 }
 
+const isNestedIterationNode = (node: DifyNode) => Boolean(node.data.parentIterationId || node.parentNode)
+const isIterationEntryNode = (node: DifyNode) => Boolean((node.data.parentIterationId || node.parentNode) && node.data.isIterationEntry)
+
 const buildIfElseHandleLabels = (node: DifyNode) => {
   const labels = new Map<string, string>()
   const config = ensureNodeConfig(BlockEnum.IfElse, node.data.config)
@@ -203,8 +206,9 @@ export const validateWorkflow = (
     }
   })
 
-  const startNodes = nodes.filter(node => node.data.type === BlockEnum.Start)
-  const endNodes = nodes.filter(node => node.data.type === BlockEnum.End)
+  const rootNodes = nodes.filter(node => !isNestedIterationNode(node))
+  const startNodes = rootNodes.filter(node => node.data.type === BlockEnum.Start)
+  const endNodes = rootNodes.filter(node => node.data.type === BlockEnum.End)
   if (startNodes.length === 0) {
     issues.push({
       id: 'global-start-required',
@@ -428,6 +432,8 @@ export const validateWorkflow = (
     }
 
     if (node.data.type === BlockEnum.Start) {
+      if (isIterationEntryNode(node))
+        return
       const config = ensureNodeConfig(BlockEnum.Start, node.data.config)
       const names = config.variables.map(item => item.name)
       if (config.variables.length === 0) {
@@ -672,6 +678,10 @@ export const validateWorkflow = (
 
     if (node.data.type === BlockEnum.Iteration) {
       const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
+      const iterationChildren = nodes.filter(item => (item.data.parentIterationId || item.parentNode) === node.id)
+      const iterationStartNodes = iterationChildren.filter(item => item.data.type === BlockEnum.Start)
+      const iterationEndNodes = iterationChildren.filter(item => item.data.type === BlockEnum.End)
+      const nestedBusinessNodes = iterationChildren.filter(item => item.data.type !== BlockEnum.Start && item.data.type !== BlockEnum.End)
       if (!trim(config.iteratorSource)) {
         issues.push({
           id: `${prefix}-iteration-input`,
@@ -708,13 +718,49 @@ export const validateWorkflow = (
           message: '并行模式下并发数需在 1 到 100 之间。',
         })
       }
-      if (!config.children.nodes.length) {
+      if (iterationStartNodes.length === 0) {
+        issues.push({
+          id: `${prefix}-iteration-start-required`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 缺少开始节点`,
+          message: '迭代子流程必须包含一个开始节点。',
+        })
+      }
+      if (iterationStartNodes.length > 1) {
+        issues.push({
+          id: `${prefix}-iteration-start-singleton`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 开始节点过多`,
+          message: '单个迭代子流程只能存在一个开始节点。',
+        })
+      }
+      if (iterationEndNodes.length === 0) {
+        issues.push({
+          id: `${prefix}-iteration-end-required`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 缺少结束节点`,
+          message: '迭代子流程必须包含一个结束节点作为收口。',
+        })
+      }
+      if (iterationEndNodes.length > 1) {
+        issues.push({
+          id: `${prefix}-iteration-end-singleton`,
+          nodeId: node.id,
+          level: 'error',
+          title: `${node.data.title} 结束节点过多`,
+          message: '单个迭代子流程只能存在一个结束节点。',
+        })
+      }
+      if (nestedBusinessNodes.length === 0) {
         issues.push({
           id: `${prefix}-iteration-children-empty`,
           nodeId: node.id,
           level: 'warning',
           title: `${node.data.title} 子流程为空`,
-          message: '建议在迭代节点中配置子流程节点。',
+          message: '当前迭代子流程只有开始/结束骨架，建议补充实际处理节点。',
         })
       }
     }
