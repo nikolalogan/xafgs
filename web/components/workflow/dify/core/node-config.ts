@@ -206,7 +206,10 @@ const createDefaultIterationChildren = (): IterationNodeConfig['children'] => ({
         title: '迭代开始',
         desc: '迭代子流程入口',
         type: BlockEnum.Start,
-        config: defaultStartConfig(),
+        config: {
+          fanOutMode: 'sequential',
+          variables: [],
+        },
       },
     },
   ],

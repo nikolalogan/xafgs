@@ -264,6 +264,8 @@ export type DifyNodeData = {
   _iterationRole?: 'container' | 'child'
   _iterationParentId?: string
   _iterationChildId?: string
+  _iterationCollapsed?: boolean
+  _onToggleIterationCollapse?: () => void
   _runningStatus?: NodeRunningStatus
   _connectedSourceHandleIds?: string[]
   _connectedTargetHandleIds?: string[]

@@ -1348,6 +1348,26 @@ export default function NodeConfigPanel({
 
   const renderStartConfig = () => {
     const config = ensureNodeConfig(BlockEnum.Start, activeNode.data.config) as StartNodeConfig
+    const isIterationEntry = activeNode.data._iterationRole === 'child'
+      && activeNode.data._iterationParentId
+      && activeNode.data._iterationChildId === 'iter-start'
+
+    if (isIterationEntry) {
+      return (
+        <div className="space-y-2 rounded border border-teal-200 bg-teal-50/60 p-3">
+          <div className="text-sm font-semibold text-teal-800">循环入口</div>
+          <div className="text-xs leading-5 text-teal-700">
+            该开始节点仅表示循环体入口，不再配置表单。
+            迭代输入数组请在父级迭代节点的“迭代输入（Array）”中选择；
+            循环内其他节点引用当前项时，请从循环上下文选择 `item` / `index`。
+          </div>
+          <div className="rounded border border-dashed border-teal-200 bg-white/80 px-2 py-2 text-xs text-gray-600">
+            当前入口变量数：{config.variables.length}（只读）
+          </div>
+        </div>
+      )
+    }
+
     return (
       <StartNodeFormConfig
         nodeId={activeNode.id}

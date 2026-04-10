@@ -501,7 +501,7 @@
 - `parallelNums`
 - `errorHandleMode`：`terminated | continue-on-error | remove-abnormal-output`
 - `flattenOutput`
-- `children`：子流程 DSL
+- `children`：子流程 DSL（主画布内区域化编辑）
 
 校验规则：
 
@@ -512,7 +512,9 @@
 说明：
 
 - `children` 是一个嵌套的小型 DSL，仅用于迭代内部执行
-- 子流程默认会带一个迭代开始节点
+- 子流程默认会带一个迭代开始节点，但该入口节点不承载表单配置
+- 迭代输入数组统一由父迭代节点的 `iteratorSource` 选择
+- 仅当前循环区域内的节点可使用 `itemVar` / `indexVar`
 
 ### 7.6 `code` 代码节点
 

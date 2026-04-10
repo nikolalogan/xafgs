@@ -43,6 +43,8 @@ const ITERATION_CHILD_NODE_PREFIX = 'iter-child::'
 const ITERATION_CHILD_EDGE_PREFIX = 'iter-edge::'
 const ITERATION_CONTAINER_MIN_WIDTH = 760
 const ITERATION_CONTAINER_MIN_HEIGHT = 420
+const ITERATION_CONTAINER_COLLAPSED_WIDTH = 320
+const ITERATION_CONTAINER_COLLAPSED_HEIGHT = 120
 const ITERATION_CONTAINER_PADDING_X = 24
 const ITERATION_CONTAINER_PADDING_Y = 56
 const ITERATION_CHILD_NODE_ESTIMATED_WIDTH = 240
@@ -201,6 +203,12 @@ const parseChildEdgeId = (id: string): { parentId: string; childEdgeId: string }
   return { parentId, childEdgeId }
 }
 
+const isChildNodePositionChange = (
+  change: NodeChange,
+): change is NodeChange & { id: string; type: 'position'; position: { x: number; y: number } } => {
+  return 'id' in change && change.type === 'position' && !!change.position
+}
+
 const resolveNonOverlappingNodePosition = (nodes: DifyNode[], baseX: number, baseY: number) => {
   const isOccupied = (x: number, y: number) => nodes.some((item) => {
     return Math.abs(item.position.x - x) < NODE_COLLISION_X_THRESHOLD
@@ -328,6 +336,8 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
   const [defaultLLMModel, setDefaultLLMModel] = useState('gpt-4o-mini')
   const [defaultCodeModel, setDefaultCodeModel] = useState('gpt-4o-mini')
   const [aiNodeGenerateOpen, setAINodeGenerateOpen] = useState(false)
+  const [collapsedIterationIds, setCollapsedIterationIds] = useState<Record<string, boolean>>({})
+  const [iterationChildRenderPositions, setIterationChildRenderPositions] = useState<Record<string, { x: number; y: number }>>({})
   const latestNodesRef = useRef<DifyNode[]>([])
   const latestEdgesRef = useRef<DifyEdge[]>([])
   const latestWorkflowParametersRef = useRef<WorkflowParameter[]>([])
@@ -391,6 +401,30 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     latestEdgesRef.current = edges
     latestWorkflowParametersRef.current = workflowParameters
   }, [edges, nodes, workflowParameters])
+
+  useEffect(() => {
+    setCollapsedIterationIds((current) => {
+      const validIds = new Set(nodes.filter(node => node.data.type === BlockEnum.Iteration).map(node => node.id))
+      const next = Object.fromEntries(Object.entries(current).filter(([id]) => validIds.has(id)))
+      return Object.keys(next).length === Object.keys(current).length ? current : next
+    })
+  }, [nodes])
+
+  useEffect(() => {
+    setIterationChildRenderPositions((current) => {
+      const validIds = new Set<string>()
+      nodes.forEach((node) => {
+        if (node.data.type !== BlockEnum.Iteration)
+          return
+        const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
+        config.children.nodes.forEach((childNode) => {
+          validIds.add(buildChildNodeId(node.id, childNode.id))
+        })
+      })
+      const next = Object.fromEntries(Object.entries(current).filter(([id]) => validIds.has(id)))
+      return Object.keys(next).length === Object.keys(current).length ? current : next
+    })
+  }, [nodes])
 
   useEffect(() => {
     const run = async () => {
@@ -643,6 +677,52 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
   }, [defaultLLMModel, llmModelOptions, nodes, setNodes])
 
   useEffect(() => {
+    let changed = false
+    const nextNodes = nodes.map((node) => {
+      if (node.data.type !== BlockEnum.Iteration)
+        return node
+      const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
+      let childChanged = false
+      const nextChildren = config.children.nodes.map((childNode) => {
+        if (childNode.id !== 'iter-start' || childNode.data.type !== BlockEnum.Start)
+          return childNode
+        const childConfig = ensureNodeConfig(BlockEnum.Start, childNode.data.config)
+        if (childConfig.variables.length === 0)
+          return childNode
+        childChanged = true
+        return {
+          ...childNode,
+          data: {
+            ...childNode.data,
+            config: {
+              ...childConfig,
+              variables: [],
+            },
+          },
+        }
+      })
+      if (!childChanged)
+        return node
+      changed = true
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          config: {
+            ...config,
+            children: {
+              ...config.children,
+              nodes: nextChildren,
+            },
+          },
+        },
+      }
+    })
+    if (changed)
+      setNodes(nextNodes)
+  }, [nodes, setNodes])
+
+  useEffect(() => {
     if (!onDSLChange)
       return
     const nextDSL: DifyWorkflowDSL = {
@@ -666,10 +746,17 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       if (node.data.type !== BlockEnum.Iteration)
         return
       const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
-      layoutMap[node.id] = buildIterationContainerLayout(config.children.nodes)
+      layoutMap[node.id] = collapsedIterationIds[node.id]
+        ? {
+            width: ITERATION_CONTAINER_COLLAPSED_WIDTH,
+            height: ITERATION_CONTAINER_COLLAPSED_HEIGHT,
+            paddingX: ITERATION_CONTAINER_PADDING_X,
+            paddingY: ITERATION_CONTAINER_PADDING_Y,
+          }
+        : buildIterationContainerLayout(config.children.nodes)
     })
     return layoutMap
-  }, [nodes])
+  }, [collapsedIterationIds, nodes])
 
   const renderNodes = useMemo(() => {
     const mergedNodes: DifyNode[] = []
@@ -692,16 +779,27 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
         data: {
           ...node.data,
           _iterationRole: 'container',
+          _iterationCollapsed: Boolean(collapsedIterationIds[node.id]),
+          _onToggleIterationCollapse: () => {
+            setCollapsedIterationIds(current => ({
+              ...current,
+              [node.id]: !current[node.id],
+            }))
+          },
         },
       })
 
+      if (collapsedIterationIds[node.id])
+        return
+
       config.children.nodes.forEach((childNode) => {
+        const renderId = buildChildNodeId(node.id, childNode.id)
         mergedNodes.push({
-          id: buildChildNodeId(node.id, childNode.id),
+          id: renderId,
           type: CUSTOM_NODE,
           parentNode: node.id,
           extent: 'parent',
-          position: {
+          position: iterationChildRenderPositions[renderId] ?? {
             x: layout.paddingX + childNode.position.x,
             y: layout.paddingY + childNode.position.y,
           },
@@ -719,12 +817,14 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       })
     })
     return mergedNodes
-  }, [iterationLayouts, nodes])
+  }, [collapsedIterationIds, iterationChildRenderPositions, iterationLayouts, nodes])
 
   const renderEdges = useMemo(() => {
     const mergedEdges: DifyEdge[] = [...edges]
     nodes.forEach((node) => {
       if (node.data.type !== BlockEnum.Iteration)
+        return
+      if (collapsedIterationIds[node.id])
         return
       const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
       config.children.edges.forEach((edge) => {
@@ -742,7 +842,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       })
     })
     return mergedEdges
-  }, [edges, nodes])
+  }, [collapsedIterationIds, edges, nodes])
 
   const updateIterationChildren = useCallback((
     currentNodes: DifyNode[],
@@ -788,20 +888,22 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     if (childChanges.length === 0)
       return
 
-    const hasPositionChange = childChanges.some(change => change.type === 'position')
+    const positionChanges = childChanges.filter(isChildNodePositionChange)
+    const hasPositionChange = positionChanges.length > 0
+    if (hasPositionChange) {
+      setIterationChildRenderPositions((current) => {
+        const next = { ...current }
+        positionChanges.forEach((change) => {
+          next[change.id] = {
+            x: change.position!.x,
+            y: change.position!.y,
+          }
+        })
+        return next
+      })
+    }
     let changed = false
     setNodes((currentNodes) => {
-      const movingIterationParents = new Set<string>()
-      childChanges.forEach((change) => {
-        if (!('id' in change))
-          return
-        if (change.type !== 'position' || !change.position)
-          return
-        const targetNode = currentNodes.find(node => node.id === change.id)
-        if (targetNode?.data.type === BlockEnum.Iteration)
-          movingIterationParents.add(change.id)
-      })
-
       let nextNodes = currentNodes
       childChanges.forEach((change) => {
         if (!('id' in change))
@@ -809,27 +911,6 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
         const childRef = parseChildNodeId(change.id)
         if (!childRef)
           return
-
-        if (change.type === 'position' && change.position) {
-          if (movingIterationParents.has(childRef.parentId))
-            return
-          const nextPosition = change.position
-          nextNodes = updateIterationChildren(nextNodes, childRef.parentId, children => ({
-            ...children,
-            nodes: children.nodes.map((item) => {
-              if (item.id !== childRef.childId)
-                return item
-              return {
-                ...item,
-                position: {
-                  x: Math.max(0, nextPosition.x - ITERATION_CONTAINER_PADDING_X),
-                  y: Math.max(0, nextPosition.y - ITERATION_CONTAINER_PADDING_Y),
-                },
-              }
-            }),
-          }))
-          changed = true
-        }
 
         if (change.type === 'remove') {
           nextNodes = updateIterationChildren(nextNodes, childRef.parentId, children => ({
@@ -843,13 +924,27 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       return changed ? nextNodes : currentNodes
     })
 
+    if (hasPositionChange)
+      dragRecordPendingRef.current = true
+
     if (changed) {
-      if (hasPositionChange) {
-        dragRecordPendingRef.current = true
-      } else {
-        record({
-          nodes: latestNodesRef.current,
-          edges: latestEdgesRef.current,
+      setIterationChildRenderPositions((current) => {
+        const next = { ...current }
+        childChanges.forEach((change) => {
+          if (!('id' in change))
+            return
+          if (change.type !== 'remove')
+            return
+          delete next[change.id]
+        })
+        return next
+      })
+      if (!hasPositionChange) {
+        window.requestAnimationFrame(() => {
+          record({
+            nodes: latestNodesRef.current,
+            edges: latestEdgesRef.current,
+          })
         })
       }
     }
@@ -858,6 +953,32 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
   const handleNodeDragStop = useCallback((_: React.MouseEvent, node?: DifyNode) => {
     if (!node)
       return
+    const childRef = parseChildNodeId(node.id)
+    if (childRef) {
+      const nextNodes = updateIterationChildren(latestNodesRef.current, childRef.parentId, children => ({
+        ...children,
+        nodes: children.nodes.map((item) => {
+          if (item.id !== childRef.childId)
+            return item
+          return {
+            ...item,
+            position: {
+              x: Math.max(0, node.position.x - ITERATION_CONTAINER_PADDING_X),
+              y: Math.max(0, node.position.y - ITERATION_CONTAINER_PADDING_Y),
+            },
+          }
+        }),
+      }))
+      setNodes(nextNodes)
+      latestNodesRef.current = nextNodes
+      setIterationChildRenderPositions((current) => {
+        if (!(node.id in current))
+          return current
+        const next = { ...current }
+        delete next[node.id]
+        return next
+      })
+    }
     if (activeNode?.id === node.id) {
       // 同步 activeNode，避免保存时使用旧 position 覆盖最新拖拽结果。
       setActiveNode(node)
@@ -971,6 +1092,8 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     if (!node)
       return
 
+    if (node.data._iterationParentId)
+      setCollapsedIterationIds(current => ({ ...current, [node.data._iterationParentId!]: false }))
     setActiveNode(node)
     setChecklistOpen(false)
     fitView({ nodes: [{ id: node.id }], duration: 220, padding: 0.28 })
@@ -988,6 +1111,14 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     })()
 
     if (iterationParentId) {
+      const parentNode = nodes.find(node => node.id === iterationParentId && node.data.type === BlockEnum.Iteration)
+      if (!parentNode)
+        return
+      const iterationConfig = ensureNodeConfig(BlockEnum.Iteration, parentNode.data.config)
+      if ((type === BlockEnum.Start || type === BlockEnum.End) && iterationConfig.children.nodes.some(node => node.data.type === type)) {
+        globalThis.alert(`${nodeTypeLabel[type]}在当前循环中仅允许一个，已取消插入`)
+        return
+      }
       const nextChildId = `sub-node-${Date.now()}-${Math.floor(Math.random() * 1000)}`
       const nextNodes = updateIterationChildren(nodes, iterationParentId, children => ({
         ...children,
@@ -1013,6 +1144,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       const nextParentNode = nextNodes.find(node => node.id === iterationParentId) ?? null
       if (nextParentNode)
         setActiveNode(nextParentNode)
+      setCollapsedIterationIds(current => ({ ...current, [iterationParentId]: false }))
       record({ nodes: nextNodes, edges })
       fitView({ nodes: [{ id: iterationParentId }], duration: 220, padding: 0.28 })
       return
@@ -1117,6 +1249,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
         setActiveNode(insertedChildNode)
       else if (nextParentNode)
         setActiveNode(nextParentNode)
+      setCollapsedIterationIds(current => ({ ...current, [iterationParentId]: false }))
       record({ nodes: nextNodes, edges })
       fitView({ nodes: [{ id: iterationParentId }], duration: 220, padding: 0.28 })
       if (!linked && cannotLink)
@@ -1245,6 +1378,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     const node = nodes.find(item => item.id === nodeId && item.data.type === BlockEnum.Iteration)
     if (!node)
       return
+    setCollapsedIterationIds(current => ({ ...current, [nodeId]: false }))
     setActiveNode(node)
     fitView({ nodes: [{ id: node.id }], duration: 220, padding: 0.28 })
   }

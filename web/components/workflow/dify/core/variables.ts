@@ -98,6 +98,13 @@ const buildDisplayLabel = (nodeTitle: string, fullParamPath: string) => {
   return `${nodeTitle}.${fullParamPath}`
 }
 
+const isIterationEntryStartNode = (node: DifyNode) => {
+  return node.data.type === BlockEnum.Start
+    && node.data._iterationRole === 'child'
+    && node.data._iterationParentId
+    && node.data._iterationChildId === 'iter-start'
+}
+
 export const buildWorkflowVariableOptions = (
   nodes: DifyNode[],
   workflowParameters: WorkflowParameter[],
@@ -175,6 +182,8 @@ export const buildWorkflowVariableOptions = (
     const type = node.data.type
 
     if (type === BlockEnum.Start) {
+      if (isIterationEntryStartNode(node))
+        return
       const config = ensureNodeConfig(BlockEnum.Start, node.data.config)
       config.variables.forEach((item) => {
         if (!item.name)
@@ -320,21 +329,21 @@ export const buildWorkflowVariableOptions = (
       const indexVar = config.indexVar || 'index'
       merged.push({
         key: `${parentId}.${itemVar}`,
-        nodeId: parentId,
-        nodeTitle: parentNode.data.title || parentId,
+        nodeId: `${parentId}::__iteration_context__`,
+        nodeTitle: `${parentNode.data.title || parentId}·循环项`,
         param: itemVar,
         valueType: 'object',
         placeholder: `{{${parentId}.${itemVar}}}`,
-        displayLabel: `${parentNode.data.title || parentId}.${itemVar}`,
+        displayLabel: itemVar,
       })
       merged.push({
         key: `${parentId}.${indexVar}`,
-        nodeId: parentId,
-        nodeTitle: parentNode.data.title || parentId,
+        nodeId: `${parentId}::__iteration_context__`,
+        nodeTitle: `${parentNode.data.title || parentId}·循环项`,
         param: indexVar,
         valueType: 'number',
         placeholder: `{{${parentId}.${indexVar}}}`,
-        displayLabel: `${parentNode.data.title || parentId}.${indexVar}`,
+        displayLabel: indexVar,
       })
     }
   }

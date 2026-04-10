@@ -155,7 +155,7 @@ export const demoDSL: DifyWorkflowDSL = {
                   title: '迭代开始',
                   desc: '迭代子流程入口',
                   type: BlockEnum.Start,
-                  config: { variables: [{ name: 'item', label: '当前项', type: 'text-input', required: false }] },
+                  config: { variables: [] },
                 },
               },
               {

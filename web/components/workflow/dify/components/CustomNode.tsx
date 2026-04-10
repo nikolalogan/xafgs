@@ -34,16 +34,36 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
   const isEnd = data.type === BlockEnum.End
   const isIterationContainer = data.type === BlockEnum.Iteration && data._iterationRole !== 'child'
   const isIterationChild = data._iterationRole === 'child'
+  const isIterationCollapsed = Boolean(data._iterationCollapsed)
 
   if (isIterationContainer) {
     return (
       <div className={`h-full w-full overflow-hidden rounded-2xl border bg-teal-50/70 ${selected ? 'border-teal-500 ring-2 ring-teal-200' : 'border-teal-200'}`}>
         <Handle id="target" type="target" position={Position.Left} className="!h-2 !w-2 !bg-teal-500" />
         <div className="flex h-10 items-center justify-between border-b border-teal-200 bg-white/80 px-3">
-          <div className="text-sm font-semibold text-gray-900">{data.title}</div>
-          <span className={`rounded px-2 py-0.5 text-xs ${typeColorMap[data.type]}`}>{typeLabelMap[data.type]}</span>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-gray-900">{data.title}</div>
+            <div className="text-[11px] text-teal-700">
+              {isIterationCollapsed ? '已收起 · 点击右侧展开' : '循环区域 · 主画布内编辑'}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                data._onToggleIterationCollapse?.()
+              }}
+              className="rounded border border-teal-200 bg-white px-2 py-1 text-[11px] font-medium text-teal-700 hover:bg-teal-50"
+            >
+              {isIterationCollapsed ? '展开' : '收起'}
+            </button>
+            <span className={`rounded px-2 py-0.5 text-xs ${typeColorMap[data.type]}`}>{typeLabelMap[data.type]}</span>
+          </div>
         </div>
-        <div className="px-3 py-2 text-xs text-teal-700">迭代子流程区域（主画布内编辑）</div>
+        <div className="px-3 py-2 text-xs text-teal-700">
+          {isIterationCollapsed ? '当前仅显示循环摘要，内部节点与连线已隐藏。' : '迭代子流程区域（主画布内编辑）'}
+        </div>
         <Handle id="source" type="source" position={Position.Right} className="!h-2 !w-2 !bg-teal-500" />
       </div>
     )
