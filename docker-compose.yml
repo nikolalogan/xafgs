@@ -11,10 +11,13 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
+    volumes:
+      - /Users/logan/Documents/code/pgfile:/data/uploads
     environment:
       PORT: "8080"
       APP_NAME: "sxfgssever-api"
       API_TOKEN: "dev-token"
+      FILE_STORAGE_ROOT: "/data/uploads"
       DATABASE_URL: "postgres://sxfg:sxfg_password@postgres:5432/sxfg?sslmode=disable"
     depends_on:
       postgres:

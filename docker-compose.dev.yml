@@ -27,12 +27,14 @@ services:
     working_dir: /app
     volumes:
       - ./server:/app
+      - /Users/logan/Documents/code/pgfile:/data/uploads
       - go_pkg_mod:/go/pkg/mod
       - go_build_cache:/root/.cache/go-build
     environment:
       PORT: "8080"
       APP_NAME: "sxfgssever-api"
       API_TOKEN: "dev-token"
+      FILE_STORAGE_ROOT: "/data/uploads"
       GOPROXY: "https://goproxy.cn,direct"
       GOSUMDB: "sum.golang.google.cn"
       DATABASE_URL: "postgres://sxfg:sxfg_password@postgres:5432/sxfg?sslmode=disable"

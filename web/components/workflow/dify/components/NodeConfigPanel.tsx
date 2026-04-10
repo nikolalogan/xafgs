@@ -681,6 +681,7 @@ export default function NodeConfigPanel({
   onFocusIterationRegion,
   onSave,
 }: NodeConfigPanelProps) {
+  const panelRootRef = useRef<HTMLDivElement | null>(null)
   const [templateOptions, setTemplateOptions] = useState<TemplateOption[]>([])
   const [apiRoutes, setApiRoutes] = useState<APIRouteDoc[]>([])
   const [apiRoutesError, setApiRoutesError] = useState('')
@@ -958,6 +959,18 @@ export default function NodeConfigPanel({
         <p className="text-xs text-gray-500">点击画布中的节点后可编辑</p>
       </div>
     )
+  }
+
+  const handlePanelBlurCapture = () => {
+    window.requestAnimationFrame(() => {
+      const root = panelRootRef.current
+      if (!root)
+        return
+      const activeElement = document.activeElement
+      if (activeElement instanceof Node && root.contains(activeElement))
+        return
+      onSave()
+    })
   }
 
   const updateNode = (nextNode: DifyNode) => onChange(nextNode)
@@ -3137,7 +3150,11 @@ export default function NodeConfigPanel({
   }
 
   return (
-    <div className="col-span-3 rounded-xl border border-gray-200 bg-white p-3">
+    <div
+      ref={panelRootRef}
+      className="col-span-3 rounded-xl border border-gray-200 bg-white p-3"
+      onBlurCapture={handlePanelBlurCapture}
+    >
       <div className="mb-2 text-sm font-semibold">节点配置</div>
       <div className="space-y-2">
         <label className={labelClass}>标题</label>
@@ -3155,7 +3172,6 @@ export default function NodeConfigPanel({
         {renderJoinModeConfig()}
         {renderFanOutModeConfig()}
         {renderNodeSpecificConfig()}
-        <button type="button" onClick={onSave} className="w-full rounded bg-blue-600 px-3 py-2 text-xs text-white hover:bg-blue-700">保存节点配置</button>
       </div>
     </div>
   )

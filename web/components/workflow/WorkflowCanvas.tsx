@@ -1178,9 +1178,48 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
 
     const childRef = parseChildNodeId(activeNode.id)
     if (!childRef) {
+      const currentNode = nodes.find(item => item.id === activeNode.id)
+      if (!currentNode)
+        return
+      const currentPayload = JSON.stringify({
+        title: currentNode.data.title,
+        desc: currentNode.data.desc || '',
+        type: currentNode.data.type,
+        config: currentNode.data.config ?? null,
+      })
+      const activePayload = JSON.stringify({
+        title: activeNode.data.title,
+        desc: activeNode.data.desc || '',
+        type: activeNode.data.type,
+        config: activeNode.data.config ?? null,
+      })
+      if (currentPayload === activePayload)
+        return
       saveNode()
       return
     }
+
+    const parentNode = nodes.find(item => item.id === childRef.parentId && item.data.type === BlockEnum.Iteration)
+    if (!parentNode)
+      return
+    const parentConfig = ensureNodeConfig(BlockEnum.Iteration, parentNode.data.config)
+    const currentChildNode = parentConfig.children.nodes.find(item => item.id === childRef.childId)
+    if (!currentChildNode)
+      return
+    const currentPayload = JSON.stringify({
+      title: currentChildNode.data.title,
+      desc: currentChildNode.data.desc || '',
+      type: currentChildNode.data.type,
+      config: currentChildNode.data.config ?? null,
+    })
+    const activePayload = JSON.stringify({
+      title: activeNode.data.title,
+      desc: activeNode.data.desc || '',
+      type: activeNode.data.type,
+      config: activeNode.data.config ?? null,
+    })
+    if (currentPayload === activePayload)
+      return
 
     const nextNodes = updateIterationChildren(nodes, childRef.parentId, children => ({
       ...children,
@@ -1281,7 +1320,6 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
         onUndo={doUndo}
         onRedo={doRedo}
         onLayout={handleAutoLayout}
-        onSave={handleSaveActiveNode}
         onRun={() => {
           setRunSnapshot({
             workflowId,
@@ -1334,6 +1372,8 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
               onConnect,
               onNodeDragStop: handleNodeDragStop,
               onNodeClick: (_, node) => {
+                if (activeNode && activeNode.id !== node.id)
+                  handleSaveActiveNode()
                 setActiveNode(node)
               },
               onPaneClick: clearMenus,

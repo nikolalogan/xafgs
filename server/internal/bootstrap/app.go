@@ -95,6 +95,7 @@ func NewApp() (*fiber.App, Config) {
 	adminDivisionRepository := repository.NewAdminDivisionRepository()
 	fileRepository := repository.NewFileRepository()
 	templateRepository := repository.NewTemplateRepository()
+	reportingRepository := repository.NewReportingRepository()
 	chatRepository := repository.NewChatRepository()
 	authRepository := repository.NewAuthRepository(cfg.APIToken)
 
@@ -141,8 +142,11 @@ func NewApp() (*fiber.App, Config) {
 	adminDivisionService := service.NewAdminDivisionService(adminDivisionRepository)
 	fileStorage := service.NewLocalFileStorage(cfg.FileStorageRoot)
 	fileService := service.NewFileService(fileRepository, fileStorage)
+	ocrProvider := service.NewNoopOCRProvider()
+	documentParseService := service.NewDocumentParseService(fileService, ocrProvider)
 	templateRenderer := service.NewGonjaTemplateRenderer()
 	templateService := service.NewTemplateService(templateRepository, templateRenderer)
+	reportingService := service.NewReportingService(reportingRepository, fileRepository, documentParseService)
 	aiClient := ai.NewOpenAICompatClient(nil)
 	webSearchClient := service.NewTavilySearchClient(nil)
 	chatService := service.NewChatService(chatRepository, systemConfigService, userConfigService, fileService, webSearchClient, aiClient)
@@ -171,6 +175,7 @@ func NewApp() (*fiber.App, Config) {
 	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, workflowService, workflowExecutionRateLimiter, userConfigService, apiRegistry)
 	fileHandler := handler.NewFileHandler(fileService, apiRegistry)
 	templateHandler := handler.NewTemplateHandler(templateService, apiRegistry)
+	reportingHandler := handler.NewReportingHandler(reportingService, apiRegistry)
 	chatHandler := handler.NewChatHandler(chatService, apiRegistry)
 	workflowCodeGenerateHandler := handler.NewWorkflowCodeGenerateHandler(workflowCodeGenerateService, apiRegistry)
 	workflowNodeGenerateHandler := handler.NewWorkflowNodeGenerateHandler(workflowNodeGenerateService, apiRegistry)
@@ -181,7 +186,7 @@ func NewApp() (*fiber.App, Config) {
 	app.Use(traceMiddleware.Handler())
 
 	apiMetaHandler := handler.NewAPIMetaHandler(apiRegistry, traceStore)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, reportingHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Select } from 'antd'
 import ReactFlow, {
   addEdge,
@@ -107,6 +107,7 @@ function IterationSubflowEditorInner({
   const [edges, setEdges] = useState<ChildEdge[]>([])
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 })
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null)
+  const configPanelRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const nextNodes = (value.nodes ?? []).map((item) => ({
@@ -377,7 +378,18 @@ function IterationSubflowEditorInner({
       })),
       viewport,
     })
-    onClose()
+  }
+
+  const handleConfigPanelBlurCapture = () => {
+    window.requestAnimationFrame(() => {
+      const root = configPanelRef.current
+      if (!root)
+        return
+      const activeElement = document.activeElement
+      if (activeElement instanceof Node && root.contains(activeElement))
+        return
+      commitSave()
+    })
   }
 
   const containerClassName = mode === 'embedded'
@@ -395,7 +407,6 @@ function IterationSubflowEditorInner({
           <div className="text-sm font-semibold text-gray-900">迭代子流程编辑</div>
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="rounded border border-gray-300 px-2 py-1 text-xs">取消</button>
-            <button onClick={commitSave} className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700">保存</button>
           </div>
         </div>
         <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -430,7 +441,11 @@ function IterationSubflowEditorInner({
               <Background gap={14} size={1.5} color="#d1d5db" />
             </ReactFlow>
           </div>
-          <div className="col-span-3 rounded-xl border border-gray-200 p-3">
+          <div
+            ref={configPanelRef}
+            className="col-span-3 rounded-xl border border-gray-200 p-3"
+            onBlurCapture={handleConfigPanelBlurCapture}
+          >
             <div className="mb-2 text-sm font-semibold">子节点配置</div>
             {!activeNode && (
               <div className="text-xs text-gray-500">点击左侧子节点进行编辑</div>
