@@ -630,14 +630,10 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const autoOpenedNodeIdsRef = useRef<Set<string>>(new Set())
   const nodeCardRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const nodeHeaderRefs = useRef<Record<string, HTMLButtonElement | null>>({})
-  const waitingFormRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const startFormRef = useRef<HTMLDivElement | null>(null)
-  const runScrollContainerRef = useRef<HTMLDivElement | null>(null)
   const historyGroupHeaderRef = useRef<HTMLButtonElement | null>(null)
   const historyNodeIdsRef = useRef<string[]>([])
   const historyGroupExpandedRef = useRef(false)
-  const scrollRetryTimerRef = useRef<number | null>(null)
-  const scrollRequestTokenRef = useRef(0)
   const startFields = useMemo(() => normalizeStartFields(nodes), [nodes])
   const [startInput, setStartInput] = useState<Record<string, unknown>>({})
   const waitingFields = useMemo(() => normalizeWaitingFields(execution?.waitingInput?.schema), [execution?.waitingInput?.schema])
@@ -700,11 +696,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       window.clearTimeout(playbackTimerRef.current)
       playbackTimerRef.current = null
     }
-    if (scrollRetryTimerRef.current !== null) {
-      window.clearTimeout(scrollRetryTimerRef.current)
-      scrollRetryTimerRef.current = null
-    }
-    scrollRequestTokenRef.current += 1
     playbackActiveRef.current = false
     processedExecutionIdRef.current = ''
     processedEventCountRef.current = 0
@@ -765,140 +756,12 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     return loading ? '提交中...' : '提交并继续'
   }
 
-  const scrollWaitingFormIntoView = (nodeId: string) => {
-    if (typeof window === 'undefined')
-      return
-    const formElement = waitingFormRefs.current[nodeId]
-    if (!formElement)
-      return
-    window.requestAnimationFrame(() => {
-      try {
-        formElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
-      catch {
-      }
-      window.setTimeout(() => {
-        try {
-          const rect = formElement.getBoundingClientRect()
-          const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0
-          if (rect.bottom > viewportHeight - 24) {
-            const overshoot = rect.bottom - viewportHeight + 24
-            window.scrollBy({ top: overshoot, behavior: 'smooth' })
-          }
-        }
-        catch {
-        }
-      }, 80)
-    })
-  }
-
-  const scrollNodeCardIntoView = (nodeId: string, requestToken = ++scrollRequestTokenRef.current) => {
-    if (typeof window === 'undefined')
-      return
-    const titleElement = nodeId === '__history_group__'
-      ? historyGroupHeaderRef.current
-      : (nodeHeaderRefs.current[nodeId] || nodeCardRefs.current[nodeId])
-    if (!titleElement) {
-      if (scrollRetryTimerRef.current !== null)
-        window.clearTimeout(scrollRetryTimerRef.current)
-      scrollRetryTimerRef.current = window.setTimeout(() => {
-        if (scrollRequestTokenRef.current !== requestToken)
-          return
-        scrollNodeCardIntoView(nodeId, requestToken)
-      }, 60)
-      return
-    }
-
-    const alignTitleIntoView = (behavior: ScrollBehavior) => {
-      if (scrollRequestTokenRef.current !== requestToken)
-        return false
-      try {
-        const container = runScrollContainerRef.current
-        if (!container) {
-          titleElement.scrollIntoView({ behavior, block: 'start' })
-          return true
-        }
-
-        const containerRect = container.getBoundingClientRect()
-        const titleRect = titleElement.getBoundingClientRect()
-        const currentScrollTop = container.scrollTop
-        const targetOffsetTop = titleRect.top - containerRect.top + currentScrollTop
-        const topAnchorOffset = Math.max(16, Math.round(container.clientHeight / 8))
-        const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
-        const targetTop = Math.min(maxScrollTop, Math.max(0, targetOffsetTop - topAnchorOffset))
-        if (Math.abs(container.scrollTop - targetTop) <= 4)
-          return true
-
-        container.scrollTo({
-          top: targetTop,
-          behavior,
-        })
-        return true
-      }
-      catch {
-        return false
-      }
-    }
-
-    window.requestAnimationFrame(() => {
-      const aligned = alignTitleIntoView('smooth')
-      if (!aligned)
-        return
-      if (scrollRetryTimerRef.current !== null)
-        window.clearTimeout(scrollRetryTimerRef.current)
-      scrollRetryTimerRef.current = window.setTimeout(() => {
-        if (scrollRequestTokenRef.current !== requestToken)
-          return
-        window.requestAnimationFrame(() => {
-          if (scrollRequestTokenRef.current !== requestToken)
-            return
-          alignTitleIntoView('auto')
-        })
-      }, 90)
-    })
-  }
-
-  const scheduleNodeScrollIntoView = (nodeId: string) => {
-    if (typeof window === 'undefined' || !nodeId)
-      return
-    const requestToken = ++scrollRequestTokenRef.current
-    const delays = [0, 80, 180, 320]
-    const runAttempt = (attemptIndex: number) => {
-      if (scrollRequestTokenRef.current !== requestToken)
-        return
-      scrollNodeCardIntoView(nodeId, requestToken)
-      const nextAttemptIndex = attemptIndex + 1
-      if (nextAttemptIndex >= delays.length)
-        return
-      if (scrollRetryTimerRef.current !== null)
-        window.clearTimeout(scrollRetryTimerRef.current)
-      scrollRetryTimerRef.current = window.setTimeout(() => {
-        runAttempt(nextAttemptIndex)
-      }, delays[nextAttemptIndex])
-    }
-    runAttempt(0)
-  }
-
   const bindNodeCardRef = (nodeId: string, element: HTMLDivElement | null) => {
     nodeCardRefs.current[nodeId] = element
-    if (!element)
-      return
-    if (activeNodeIdRef.current !== nodeId && focusedNodeIdRef.current !== nodeId)
-      return
-    window.setTimeout(() => {
-      scheduleNodeScrollIntoView(nodeId)
-    }, 0)
   }
 
   const bindNodeHeaderRef = (nodeId: string, element: HTMLButtonElement | null) => {
     nodeHeaderRefs.current[nodeId] = element
-    if (!element)
-      return
-    if (activeNodeIdRef.current !== nodeId && focusedNodeIdRef.current !== nodeId)
-      return
-    window.setTimeout(() => {
-      scheduleNodeScrollIntoView(nodeId)
-    }, 0)
   }
 
   const focusCurrentNode = (nodeId: string, options?: { open?: boolean }) => {
@@ -983,14 +846,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   }, [historyGroupExpanded])
 
   useEffect(() => {
-    if (!execution?.waitingInput?.nodeId)
-      return
-    if ((openPanels[execution.waitingInput.nodeId] ?? false) !== true)
-      return
-    scrollWaitingFormIntoView(execution.waitingInput.nodeId)
-  }, [execution?.waitingInput?.nodeId, openPanels])
-
-  useEffect(() => {
     const cached = typeof window !== 'undefined'
       ? (window.localStorage.getItem('sxfg_access_token')
           || window.localStorage.getItem('access_token')
@@ -1028,10 +883,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   useEffect(() => {
     return () => {
       stopExecutionStream()
-      if (scrollRetryTimerRef.current !== null) {
-        window.clearTimeout(scrollRetryTimerRef.current)
-        scrollRetryTimerRef.current = null
-      }
       if (playbackTimerRef.current !== null) {
         window.clearTimeout(playbackTimerRef.current)
         playbackTimerRef.current = null
@@ -1121,38 +972,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   useEffect(() => {
     historyNodeIdsRef.current = historyNodeIds
   }, [historyNodeIds])
-
-  useEffect(() => {
-    const scrollTargetId = currentDisplayNodeId && currentHistoryNodeId === currentDisplayNodeId && !historyGroupExpanded
-      ? '__history_group__'
-      : currentDisplayNodeId
-    if (!scrollTargetId)
-      return
-    if (typeof window === 'undefined')
-      return
-    scheduleNodeScrollIntoView(scrollTargetId)
-  }, [currentDisplayNodeId, currentHistoryNodeId, historyGroupExpanded, nodes, visibleNodeIds])
-
-  useEffect(() => {
-    if (typeof window === 'undefined')
-      return
-    if (!currentDisplayNodeId || (currentHistoryNodeId === currentDisplayNodeId && !historyGroupExpanded))
-      return
-    const element = nodeCardRefs.current[currentDisplayNodeId]
-    if (!element || typeof ResizeObserver === 'undefined')
-      return
-    const observer = new ResizeObserver(() => {
-      scheduleNodeScrollIntoView(currentDisplayNodeId)
-    })
-    observer.observe(element)
-    return () => {
-      try {
-        observer.disconnect()
-      }
-      catch {
-      }
-    }
-  }, [currentDisplayNodeId, currentHistoryNodeId, historyGroupExpanded])
 
   useEffect(() => {
     if (!execution)
@@ -1249,9 +1068,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
             }
             if (currentNode?.data.type !== BlockEnum.End)
               setHistoryGroupExpanded(false)
-            window.setTimeout(() => {
-              scheduleNodeScrollIntoView(nodeId)
-            }, 0)
           } else if (currentEvent.type === 'node.finished') {
             const finishedStatus = typeof currentEvent.payload?.status === 'string' ? currentEvent.payload.status : ''
             const node = nodeMap.get(nodeId)
@@ -1306,14 +1122,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
           && currentEvent.payload.status === 'failed')
       if (shouldExpandHistoryGroup)
         setHistoryGroupExpanded(true)
-      const scrollTargetNodeId = nextActiveNodeId || nextFocusedNodeId
-      if (scrollTargetNodeId) {
-        window.setTimeout(() => {
-          const targetNode = nodeMap.get(scrollTargetNodeId)
-          const shouldScrollGroupHeader = !!targetNode && targetNode.data.type !== BlockEnum.End && !historyGroupExpandedRef.current
-          scheduleNodeScrollIntoView(shouldScrollGroupHeader ? '__history_group__' : scrollTargetNodeId)
-        }, 0)
-      }
       setPendingPlaybackEvents(prev => prev.slice(1))
     }, delay)
 
@@ -2405,7 +2213,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
             )}
 
             {isWaitingCurrent && (
-              <div ref={(el) => { waitingFormRefs.current[node.id] = el }} className="space-y-2 rounded border border-gray-200 bg-white p-2">
+              <div className="space-y-2 rounded border border-gray-200 bg-white p-2">
                 <div className="text-xs font-medium text-gray-800">节点等待输入，请提交后继续</div>
                 {!!submitPhase && submitPhase === 'submitting_waiting_input' && (
                   <div className="rounded border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-700">
@@ -2769,7 +2577,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         )}
       </div>
 
-      <div ref={runScrollContainerRef} className="workflow-run-scroll min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 bg-white p-3">
+      <div className="workflow-run-scroll min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 bg-white p-3">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-gray-900">
             <span className="shrink-0">流程执行</span>
