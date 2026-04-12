@@ -9,3 +9,5 @@ server/tmp
 .tmp
 /demo
 /.spec-workflow
+/server/.gocache
+/server/.gomodcache

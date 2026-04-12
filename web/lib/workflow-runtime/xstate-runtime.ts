@@ -282,6 +282,43 @@ export class XStateWorkflowRuntime implements WorkflowRuntimePort {
       const queue: string[] = []
       const pushed = new Set<string>()
       const arrivedSources = new Map<string, Set<string>>()
+      const seedArrivedFromHistory = () => {
+        const branchHandleByNode = new Map<string, string>()
+        nextExecution.events.forEach((event) => {
+          if (event.type !== 'node.branch' || !event.payload)
+            return
+          const nodeId = typeof event.payload.nodeId === 'string' ? event.payload.nodeId.trim() : ''
+          const handleId = typeof event.payload.handleId === 'string' ? event.payload.handleId.trim() : ''
+          if (!nodeId || !handleId)
+            return
+          branchHandleByNode.set(nodeId, handleId)
+        })
+
+        Object.entries(nextExecution.nodeStates).forEach(([nodeId, state]) => {
+          if (state.status !== 'succeeded')
+            return
+          const node = nodeMap.get(nodeId)
+          if (!node)
+            return
+          const outgoingEdges = outgoingEdgesMap.get(nodeId) ?? []
+          if (outgoingEdges.length === 0)
+            return
+
+          if (node.data.type === 'if-else') {
+            const handleId = branchHandleByNode.get(nodeId)
+            if (!handleId)
+              return
+            selectIfElseNextEdges(outgoingEdges, handleId).forEach((edge) => {
+              markArrived(edge.target, nodeId)
+            })
+            return
+          }
+
+          outgoingEdges.forEach((edge) => {
+            markArrived(edge.target, nodeId)
+          })
+        })
+      }
       const enqueue = (nodeId?: string) => {
         if (!nodeId || pushed.has(nodeId))
           return
@@ -303,6 +340,30 @@ export class XStateWorkflowRuntime implements WorkflowRuntimePort {
         set.add(sourceId)
         arrivedSources.set(targetId, set)
       }
+      const canEnqueueFromHistory = (nodeId: string) => {
+        const expected = incomingSourcesMap.get(nodeId)
+        if (!expected || expected.size === 0)
+          return true
+        const arrived = arrivedSources.get(nodeId) ?? new Set<string>()
+        if (shouldWaitAllIncoming(nodeMap.get(nodeId), expected.size))
+          return arrived.size >= expected.size
+        return arrived.size > 0
+      }
+      const enqueueEligiblePendingNodes = () => {
+        plan.forEach((nodeId) => {
+          if (pushed.has(nodeId))
+            return
+          const state = nextExecution.nodeStates[nodeId]
+          if (state && state.status !== 'pending')
+            return
+          if (!canEnqueueFromHistory(nodeId))
+            return
+          enqueue(nodeId)
+        })
+      }
+
+      if (options?.resumedNodeId)
+        seedArrivedFromHistory()
 
       if (options?.resumedNodeId) {
         // resume 的节点此前已进入 waiting_input：此处应强制入队，避免多入边 join 策略阻塞 resume
@@ -311,6 +372,8 @@ export class XStateWorkflowRuntime implements WorkflowRuntimePort {
       }
       else
         enqueue(getStartNodeId(execution.workflowDsl.nodes))
+      if (options?.resumedNodeId)
+        enqueueEligiblePendingNodes()
 
       let stepCount = 0
       while (queue.length > 0) {

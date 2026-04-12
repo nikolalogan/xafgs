@@ -202,10 +202,16 @@ func (repository *workflowRepository) Update(workflowID int64, update model.Work
 	if len(update.DSL) > 0 {
 		now := time.Now().UTC()
 		existingWorkflow.DSL = update.DSL
-		existingWorkflow.CurrentDraftVersionNo++
 		if _, ok := repository.versions[workflowID]; !ok {
 			repository.versions[workflowID] = make(map[int]workflowVersionSnapshot)
 		}
+		nextVersionNo := 0
+		for versionNo := range repository.versions[workflowID] {
+			if versionNo > nextVersionNo {
+				nextVersionNo = versionNo
+			}
+		}
+		existingWorkflow.CurrentDraftVersionNo = nextVersionNo + 1
 		repository.versions[workflowID][existingWorkflow.CurrentDraftVersionNo] = workflowVersionSnapshot{
 			DSL:       update.DSL,
 			CreatedAt: now,

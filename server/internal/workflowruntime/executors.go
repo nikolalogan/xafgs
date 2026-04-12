@@ -23,6 +23,8 @@ import (
 	"sxfgssever/server/internal/ai"
 )
 
+const iterationNestedNodePrefix = "iter-node::"
+
 type NodeExecutorContext struct {
 	Node      WorkflowNode
 	Variables map[string]any
@@ -39,9 +41,10 @@ const (
 )
 
 type NodeExecutorResult struct {
-	Type       NodeExecutorResultType
-	Output     map[string]any
-	Writebacks []Writeback
+	Type           NodeExecutorResultType
+	Output         map[string]any
+	Writebacks     []Writeback
+	IterationTrace *IterationTrace
 
 	Schema     map[string]any
 	HandleID   string
@@ -743,6 +746,16 @@ func normalizeVariablePath(path string) string {
 	value := strings.TrimSpace(path)
 	if value == "" {
 		return ""
+	}
+	if strings.HasPrefix(value, iterationNestedNodePrefix) {
+		payload := strings.TrimPrefix(value, iterationNestedNodePrefix)
+		if parentID, childAndRest, ok := strings.Cut(payload, "::"); ok && strings.TrimSpace(parentID) != "" {
+			if childID, rest, hasRest := strings.Cut(childAndRest, "."); hasRest && strings.TrimSpace(childID) != "" {
+				value = strings.TrimSpace(childID + "." + rest)
+			} else if strings.TrimSpace(childAndRest) != "" {
+				value = strings.TrimSpace(childAndRest)
+			}
+		}
 	}
 	return variablePathAliasReplacer.Replace(value)
 }

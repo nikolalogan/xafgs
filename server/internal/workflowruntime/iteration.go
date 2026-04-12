@@ -61,8 +61,20 @@ func (runtime *Runtime) executeIterationNode(ctx context.Context, node WorkflowN
 	}
 
 	state := map[string]any{}
+	aggregatedOutputs := map[string]any{}
+	trace := IterationTrace{
+		ItemVar:  itemVar,
+		IndexVar: indexVar,
+		Items:    make([]IterationItemTrace, 0, len(items)),
+	}
 	parentVariables := deepCloneVariables(variables)
 	for index, item := range items {
+		itemTrace := IterationItemTrace{
+			Index:        index,
+			ItemSnapshot: cloneRuntimeValue(item),
+			Status:       NodeRunStatusRunning,
+			StartedAt:    NowISO(),
+		}
 		iterationVariables := deepCloneVariables(parentVariables)
 		setByPath(iterationVariables, node.ID, map[string]any{
 			itemVar:  item,
@@ -70,18 +82,27 @@ func (runtime *Runtime) executeIterationNode(ctx context.Context, node WorkflowN
 			"state":  deepCloneVariables(state),
 		})
 
-		executedVariables, runErr := runtime.executeChildWorkflow(ctx, childDSL, iterationVariables)
+		executedVariables, childTrace, runErr := runtime.executeChildWorkflowWithTrace(ctx, childDSL, iterationVariables)
+		itemTrace.ChildNodes = childTrace.ChildNodes
+		itemTrace.Events = childTrace.Events
+		itemTrace.EndedAt = NowISO()
 		if runErr != nil {
+			itemTrace.Status = NodeRunStatusFailed
+			itemTrace.Error = runErr.Error()
+			trace.Items = append(trace.Items, itemTrace)
 			switch errorHandleMode {
 			case "continue-on-error", "remove-abnormal-output":
 				continue
 			default:
 				return NodeExecutorResult{
-					Type:  NodeExecutorResultFailed,
-					Error: fmt.Sprintf("迭代第 %d 项执行失败: %s", index, runErr.Error()),
+					Type:           NodeExecutorResultFailed,
+					Error:          fmt.Sprintf("迭代第 %d 项执行失败: %s", index, runErr.Error()),
+					IterationTrace: &trace,
 				}, nil
 			}
 		}
+		itemTrace.Status = NodeRunStatusSucceeded
+		trace.Items = append(trace.Items, itemTrace)
 
 		nextState, found := getByPath(executedVariables, node.ID+".state")
 		if !found {
@@ -93,13 +114,20 @@ func (runtime *Runtime) executeIterationNode(ctx context.Context, node WorkflowN
 		}
 
 		state = deepCloneVariables(nextStateObject)
+		collectIterationEndOutputs(aggregatedOutputs, childDSL, executedVariables)
 		commitIterationReservedRoots(parentVariables, executedVariables)
 	}
 
+	finalOutput := deepCloneVariables(state)
+	for key, value := range aggregatedOutputs {
+		finalOutput[key] = value
+	}
+
 	return NodeExecutorResult{
-		Type: NodeExecutorResultSuccess,
+		Type:           NodeExecutorResultSuccess,
+		IterationTrace: &trace,
 		Output: map[string]any{
-			outputVar: state,
+			outputVar: finalOutput,
 		},
 	}, nil
 }
@@ -116,6 +144,11 @@ func parseIterationChildrenDSL(config map[string]any) (WorkflowDSL, error) {
 }
 
 func (runtime *Runtime) executeChildWorkflow(ctx context.Context, dsl WorkflowDSL, variables map[string]any) (map[string]any, error) {
+	nextVariables, _, err := runtime.executeChildWorkflowWithTrace(ctx, dsl, variables)
+	return nextVariables, err
+}
+
+func (runtime *Runtime) executeChildWorkflowWithTrace(ctx context.Context, dsl WorkflowDSL, variables map[string]any) (map[string]any, IterationItemTrace, error) {
 	nodeMap := map[string]WorkflowNode{}
 	for _, node := range dsl.Nodes {
 		nodeMap[node.ID] = node
@@ -172,10 +205,17 @@ func (runtime *Runtime) executeChildWorkflow(ctx context.Context, dsl WorkflowDS
 	maxSteps := len(dsl.Nodes)*8 + 16
 	stepCount := 0
 	nextVariables := deepCloneVariables(variables)
+	itemTrace := IterationItemTrace{
+		Status:     NodeRunStatusRunning,
+		ChildNodes: []IterationChildNodeTrace{},
+		Events:     []ExecutionEvent{},
+	}
 	for len(queue) > 0 {
 		stepCount++
 		if stepCount > maxSteps {
-			return nil, fmt.Errorf("检测到迭代子流程可能存在循环")
+			itemTrace.Status = NodeRunStatusFailed
+			itemTrace.Error = "检测到迭代子流程可能存在循环"
+			return nil, itemTrace, fmt.Errorf("检测到迭代子流程可能存在循环")
 		}
 		nodeID := queue[0]
 		queue = queue[1:]
@@ -184,17 +224,148 @@ func (runtime *Runtime) executeChildWorkflow(ctx context.Context, dsl WorkflowDS
 			continue
 		}
 
+		childTrace := IterationChildNodeTrace{
+			NodeID:    nodeID,
+			NodeTitle: node.Data.Title,
+			NodeType:  node.Data.Type,
+			Status:    NodeRunStatusRunning,
+			StartedAt: NowISO(),
+		}
+		itemTrace.Events = append(itemTrace.Events, ExecutionEvent{
+			ID:   "",
+			Type: "node.started",
+			At:   childTrace.StartedAt,
+			Payload: map[string]any{
+				"nodeId": nodeID,
+			},
+		})
+
 		result, err := runtime.executeWorkflowNode(ctx, node, nextVariables, nil)
 		if err != nil {
-			return nil, err
+			childTrace.Status = NodeRunStatusFailed
+			childTrace.EndedAt = NowISO()
+			childTrace.Error = err.Error()
+			itemTrace.ChildNodes = append(itemTrace.ChildNodes, childTrace)
+			itemTrace.Events = append(itemTrace.Events,
+				ExecutionEvent{
+					ID:   "",
+					Type: "node.failed",
+					At:   childTrace.EndedAt,
+					Payload: map[string]any{
+						"nodeId": nodeID,
+						"error":  err.Error(),
+					},
+				},
+				ExecutionEvent{
+					ID:   "",
+					Type: "node.finished",
+					At:   childTrace.EndedAt,
+					Payload: map[string]any{
+						"nodeId":  nodeID,
+						"status":  string(childTrace.Status),
+						"endedAt": childTrace.EndedAt,
+						"error":   childTrace.Error,
+					},
+				},
+			)
+			itemTrace.Status = NodeRunStatusFailed
+			itemTrace.Error = err.Error()
+			return nil, itemTrace, err
 		}
 
 		switch result.Type {
 		case NodeExecutorResultWaitingInput:
-			return nil, fmt.Errorf("迭代子流程暂不支持输入节点")
+			childTrace.Status = NodeRunStatusWaitingInput
+			childTrace.EndedAt = NowISO()
+			itemTrace.ChildNodes = append(itemTrace.ChildNodes, childTrace)
+			itemTrace.Events = append(itemTrace.Events,
+				ExecutionEvent{
+					ID:   "",
+					Type: "node.waiting_input",
+					At:   childTrace.EndedAt,
+					Payload: map[string]any{
+						"nodeId": nodeID,
+					},
+				},
+				ExecutionEvent{
+					ID:   "",
+					Type: "node.finished",
+					At:   childTrace.EndedAt,
+					Payload: map[string]any{
+						"nodeId":  nodeID,
+						"status":  string(childTrace.Status),
+						"endedAt": childTrace.EndedAt,
+					},
+				},
+			)
+			itemTrace.Status = NodeRunStatusFailed
+			itemTrace.Error = "迭代子流程暂不支持输入节点"
+			return nil, itemTrace, fmt.Errorf("迭代子流程暂不支持输入节点")
 		case NodeExecutorResultFailed:
-			return nil, fmt.Errorf("%s", result.Error)
+			childTrace.Status = NodeRunStatusFailed
+			childTrace.EndedAt = NowISO()
+			childTrace.Error = result.Error
+			itemTrace.ChildNodes = append(itemTrace.ChildNodes, childTrace)
+			itemTrace.Events = append(itemTrace.Events,
+				ExecutionEvent{
+					ID:   "",
+					Type: "node.failed",
+					At:   childTrace.EndedAt,
+					Payload: map[string]any{
+						"nodeId": nodeID,
+						"error":  result.Error,
+					},
+				},
+				ExecutionEvent{
+					ID:   "",
+					Type: "node.finished",
+					At:   childTrace.EndedAt,
+					Payload: map[string]any{
+						"nodeId":  nodeID,
+						"status":  string(childTrace.Status),
+						"endedAt": childTrace.EndedAt,
+						"error":   childTrace.Error,
+					},
+				},
+			)
+			itemTrace.Status = NodeRunStatusFailed
+			itemTrace.Error = result.Error
+			return nil, itemTrace, fmt.Errorf("%s", result.Error)
 		case NodeExecutorResultBranch:
+			childTrace.Status = NodeRunStatusSucceeded
+			childTrace.EndedAt = NowISO()
+			childTrace.Output = cloneMap(defaultMap(result.Output))
+			itemTrace.ChildNodes = append(itemTrace.ChildNodes, childTrace)
+			itemTrace.Events = append(itemTrace.Events,
+				ExecutionEvent{
+					ID:   "",
+					Type: "node.branch",
+					At:   childTrace.EndedAt,
+					Payload: map[string]any{
+						"nodeId":     nodeID,
+						"handleId":   result.HandleID,
+						"branchName": result.BranchName,
+					},
+				},
+				ExecutionEvent{
+					ID:   "",
+					Type: "node.succeeded",
+					At:   childTrace.EndedAt,
+					Payload: map[string]any{
+						"nodeId": nodeID,
+					},
+				},
+				ExecutionEvent{
+					ID:   "",
+					Type: "node.finished",
+					At:   childTrace.EndedAt,
+					Payload: map[string]any{
+						"nodeId":  nodeID,
+						"status":  string(childTrace.Status),
+						"endedAt": childTrace.EndedAt,
+					},
+				},
+			)
 			nextVariables[nodeID] = defaultMap(result.Output)
 			nextEdges := orderFanOutEdges(node, selectIfElseNextEdges(outgoingEdgesMap[nodeID], result.HandleID), nodeMap)
 			for _, edge := range nextEdges {
@@ -202,6 +373,30 @@ func (runtime *Runtime) executeChildWorkflow(ctx context.Context, dsl WorkflowDS
 				enqueue(edge.Target)
 			}
 		default:
+			childTrace.Status = NodeRunStatusSucceeded
+			childTrace.EndedAt = NowISO()
+			childTrace.Output = cloneMap(defaultMap(result.Output))
+			itemTrace.ChildNodes = append(itemTrace.ChildNodes, childTrace)
+			itemTrace.Events = append(itemTrace.Events,
+				ExecutionEvent{
+					ID:   "",
+					Type: "node.succeeded",
+					At:   childTrace.EndedAt,
+					Payload: map[string]any{
+						"nodeId": nodeID,
+					},
+				},
+				ExecutionEvent{
+					ID:   "",
+					Type: "node.finished",
+					At:   childTrace.EndedAt,
+					Payload: map[string]any{
+						"nodeId":  nodeID,
+						"status":  string(childTrace.Status),
+						"endedAt": childTrace.EndedAt,
+					},
+				},
+			)
 			nextVariables[nodeID] = defaultMap(result.Output)
 			applyWritebacksToVariables(nextVariables, result.Writebacks)
 			nextEdges := orderFanOutEdges(node, outgoingEdgesMap[nodeID], nodeMap)
@@ -212,7 +407,8 @@ func (runtime *Runtime) executeChildWorkflow(ctx context.Context, dsl WorkflowDS
 		}
 	}
 
-	return nextVariables, nil
+	itemTrace.Status = NodeRunStatusSucceeded
+	return nextVariables, itemTrace, nil
 }
 
 func applyWritebacksToVariables(variables map[string]any, writebacks []Writeback) {
@@ -258,6 +454,41 @@ func commitIterationReservedRoots(parentVariables map[string]any, iterationVaria
 			default:
 				parentVariables[rootKey] = typed
 			}
+		}
+	}
+}
+
+func collectIterationEndOutputs(target map[string]any, dsl WorkflowDSL, variables map[string]any) {
+	if target == nil {
+		return
+	}
+	for _, node := range dsl.Nodes {
+		if node.Data.Type != "end" {
+			continue
+		}
+		nodeOutput, found := variables[node.ID]
+		if !found {
+			continue
+		}
+		outputMap, ok := nodeOutput.(map[string]any)
+		if !ok {
+			continue
+		}
+		for key, value := range outputMap {
+			trimmedKey := strings.TrimSpace(key)
+			if trimmedKey == "" {
+				continue
+			}
+			existing, found := target[trimmedKey]
+			if !found {
+				target[trimmedKey] = []any{cloneRuntimeValue(value)}
+				continue
+			}
+			if typed, ok := existing.([]any); ok {
+				target[trimmedKey] = append(typed, cloneRuntimeValue(value))
+				continue
+			}
+			target[trimmedKey] = []any{cloneRuntimeValue(existing), cloneRuntimeValue(value)}
 		}
 	}
 }

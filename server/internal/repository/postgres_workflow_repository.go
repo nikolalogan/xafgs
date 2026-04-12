@@ -302,7 +302,15 @@ func (repository *PostgresWorkflowRepository) Update(workflowID int64, update mo
 	nextDraftNo := existing.CurrentDraftVersionNo
 	nextDSL := existing.DSL
 	if len(update.DSL) > 0 {
-		nextDraftNo = existing.CurrentDraftVersionNo + 1
+		err = repository.db.QueryRowContext(ctx, `
+SELECT COALESCE(MAX(version_no), 0)
+FROM workflow_version
+WHERE workflow_id = $1
+`, workflowID).Scan(&nextDraftNo)
+		if err != nil {
+			return model.WorkflowDTO{}, false
+		}
+		nextDraftNo++
 		nextDSL = update.DSL
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO workflow_version (workflow_id, version_no, dsl_json, created_at, updated_at)

@@ -486,7 +486,9 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			}
 		}
 	}
-	seedArrivedFromHistory()
+	if options.ResumedNodeID != "" {
+		seedArrivedFromHistory()
+	}
 
 	appendNodeFinishedEvent := func(nodeID string, status NodeRunStatus, endedAt string, errText string) {
 		payload := map[string]any{
@@ -539,12 +541,43 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 		pushed[nodeID] = true
 	}
 
+	canEnqueueFromHistory := func(nodeID string) bool {
+		expected := incomingSourcesMap[nodeID]
+		if len(expected) == 0 {
+			return true
+		}
+		arrived := arrivedSources[nodeID]
+		if shouldWaitAllIncoming(nodeMap[nodeID], len(expected)) {
+			return len(arrived) >= len(expected)
+		}
+		return len(arrived) > 0
+	}
+
+	enqueueEligiblePendingNodes := func() {
+		for _, nodeID := range plan {
+			if pushed[nodeID] {
+				continue
+			}
+			state := next.NodeStates[nodeID]
+			if state.Status != "" && state.Status != NodeRunStatusPending {
+				continue
+			}
+			if !canEnqueueFromHistory(nodeID) {
+				continue
+			}
+			enqueue(nodeID)
+		}
+	}
+
 	if options.ResumedNodeID != "" {
 		// resume 的节点此前已进入 waiting_input：此处应强制入队，避免多入边 join 策略阻塞 resume
 		queue = append(queue, options.ResumedNodeID)
 		pushed[options.ResumedNodeID] = true
 	} else {
 		enqueue(getStartNodeID(execution.WorkflowDSL.Nodes))
+	}
+	if options.ResumedNodeID != "" {
+		enqueueEligiblePendingNodes()
 	}
 
 	stepCount := 0
@@ -734,6 +767,12 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			failedState.EndedAt = NowISO()
 			failedState.Error = result.Error
 			next.NodeStates[nodeID] = failedState
+			if result.IterationTrace != nil {
+				if next.IterationTraces == nil {
+					next.IterationTraces = map[string]IterationTrace{}
+				}
+				next.IterationTraces[nodeID] = cloneIterationTrace(*result.IterationTrace)
+			}
 			next.Error = result.Error
 			next.LifecycleEvents = append(next.LifecycleEvents, LifecycleEvent{Type: "FAIL"})
 			next.Status = StatusFromLifecycleEvents(next.LifecycleEvents)
@@ -769,6 +808,12 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			succeededState.EndedAt = NowISO()
 			next.NodeStates[nodeID] = succeededState
 			output := defaultMap(result.Output)
+			if result.IterationTrace != nil {
+				if next.IterationTraces == nil {
+					next.IterationTraces = map[string]IterationTrace{}
+				}
+				next.IterationTraces[nodeID] = cloneIterationTrace(*result.IterationTrace)
+			}
 			next.Variables[nodeID] = output
 			for _, mapping := range result.Writebacks {
 				targetPath := strings.TrimSpace(mapping.TargetPath)
@@ -928,6 +973,7 @@ func (runtime *Runtime) publishExecution(execution WorkflowExecution) {
 func cloneExecutionSnapshot(source WorkflowExecution) WorkflowExecution {
 	cloned := source
 	cloned.NodeStates = cloneNodeStates(source.NodeStates)
+	cloned.IterationTraces = cloneIterationTraces(source.IterationTraces)
 	cloned.LifecycleEvents = append([]LifecycleEvent{}, source.LifecycleEvents...)
 	cloned.Events = cloneExecutionEvents(source.Events)
 	if variables, cycle := cloneMapForRuntimeJSON(source.Variables, map[uintptr]struct{}{}, map[uintptr]struct{}{}); !cycle && variables != nil {
@@ -975,6 +1021,65 @@ func cloneNodeStates(source map[string]ExecutionNodeState) map[string]ExecutionN
 		out[k] = v
 	}
 	return out
+}
+
+func cloneIterationTraces(source map[string]IterationTrace) map[string]IterationTrace {
+	if len(source) == 0 {
+		return nil
+	}
+	out := make(map[string]IterationTrace, len(source))
+	for key, trace := range source {
+		out[key] = cloneIterationTrace(trace)
+	}
+	return out
+}
+
+func cloneIterationTrace(source IterationTrace) IterationTrace {
+	return IterationTrace{
+		ItemVar:  source.ItemVar,
+		IndexVar: source.IndexVar,
+		Items:    cloneIterationItemTraces(source.Items),
+	}
+}
+
+func cloneIterationItemTraces(source []IterationItemTrace) []IterationItemTrace {
+	if len(source) == 0 {
+		return nil
+	}
+	out := make([]IterationItemTrace, 0, len(source))
+	for _, item := range source {
+		next := item
+		next.ItemSnapshot = cloneRuntimeValue(item.ItemSnapshot)
+		next.ChildNodes = cloneIterationChildNodeTraces(item.ChildNodes)
+		next.Events = cloneExecutionEvents(item.Events)
+		out = append(out, next)
+	}
+	return out
+}
+
+func cloneIterationChildNodeTraces(source []IterationChildNodeTrace) []IterationChildNodeTrace {
+	if len(source) == 0 {
+		return nil
+	}
+	out := make([]IterationChildNodeTrace, 0, len(source))
+	for _, item := range source {
+		next := item
+		if payload, cycle := cloneMapForRuntimeJSON(item.Output, map[uintptr]struct{}{}, map[uintptr]struct{}{}); !cycle && payload != nil {
+			next.Output = payload
+		} else if item.Output != nil {
+			next.Output = cloneMap(item.Output)
+		}
+		out = append(out, next)
+	}
+	return out
+}
+
+func cloneRuntimeValue(value any) any {
+	safe, cycle := sanitizeForRuntimeJSON(value)
+	if cycle {
+		return value
+	}
+	return safe
 }
 
 func shouldWaitAllIncoming(node WorkflowNode, incomingCount int) bool {

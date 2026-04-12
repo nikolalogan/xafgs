@@ -28,6 +28,39 @@ type ExecutionWaitingInput = {
   schema: Record<string, unknown>
 }
 
+type IterationChildNodeTrace = {
+  nodeId: string
+  nodeTitle: string
+  nodeType: string
+  status: RuntimeNodeStatus
+  startedAt?: string
+  endedAt?: string
+  error?: string
+  output?: Record<string, unknown>
+}
+
+type IterationItemTrace = {
+  index: number
+  itemSnapshot?: unknown
+  status: RuntimeNodeStatus
+  startedAt?: string
+  endedAt?: string
+  error?: string
+  childNodes?: IterationChildNodeTrace[]
+  events?: Array<{
+    id: string
+    type: string
+    at: string
+    payload?: Record<string, unknown>
+  }>
+}
+
+type IterationTrace = {
+  itemVar: string
+  indexVar: string
+  items?: IterationItemTrace[]
+}
+
 type WorkflowExecution = {
   id: string
   status: 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled'
@@ -42,6 +75,7 @@ type WorkflowExecution = {
   }>
   waitingInput?: ExecutionWaitingInput
   error?: string
+  iterationTraces?: Record<string, IterationTrace>
   updatedAt: string
 }
 
@@ -102,6 +136,9 @@ const clonePlainValue = <T,>(value: T): T => {
 }
 const buildChildNodeId = (parentId: string, childId: string) => `${ITERATION_CHILD_NODE_PREFIX}${parentId}::${childId}`
 const buildChildEdgeId = (parentId: string, childEdgeId: string) => `${ITERATION_CHILD_EDGE_PREFIX}${parentId}::${childEdgeId}`
+const dedupeById = <T extends { id: string }>(items: T[]) => {
+  return [...new Map(items.map(item => [item.id, item])).values()]
+}
 const cloneNodeForPreview = (node: DifyNode): DifyNode => ({
   ...node,
   position: { ...node.position },
@@ -159,6 +196,8 @@ const shouldShowRunningIcon = (nodeType: string, status: RuntimeNodeStatus, acti
 const shouldAutoOpenNode = (nodeType: string, status: RuntimeNodeStatus) => {
   if (nodeType === BlockEnum.Start || nodeType === BlockEnum.End)
     return true
+  if (nodeType === BlockEnum.Iteration && status === 'running')
+    return true
   if (status === 'waiting_input' || status === 'failed')
     return true
   return false
@@ -176,6 +215,48 @@ const getNodePreviewStyle = (status: RuntimeNodeStatus | undefined) => {
   if (status === 'skipped')
     return { border: '1.5px solid #64748b', background: '#f8fafc' }
   return { border: '1px solid #d1d5db', background: '#ffffff' }
+}
+
+const formatTraceTime = (value?: string) => {
+  if (!value)
+    return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()))
+    return value
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+const formatTraceDuration = (startedAt?: string, endedAt?: string) => {
+  if (!startedAt || !endedAt)
+    return ''
+  const started = new Date(startedAt).getTime()
+  const ended = new Date(endedAt).getTime()
+  if (!Number.isFinite(started) || !Number.isFinite(ended) || ended < started)
+    return ''
+  const durationMs = ended - started
+  if (durationMs < 1000)
+    return `${durationMs}ms`
+  if (durationMs < 60000)
+    return `${(durationMs / 1000).toFixed(durationMs >= 10000 ? 0 : 1)}s`
+  const minutes = Math.floor(durationMs / 60000)
+  const seconds = Math.round((durationMs % 60000) / 1000)
+  return `${minutes}分${seconds}秒`
+}
+
+const summarizeIterationItem = (value: unknown) => {
+  if (value === null || value === undefined)
+    return '空值'
+  if (typeof value === 'string')
+    return value.length > 40 ? `${value.slice(0, 40)}...` : value
+  if (typeof value === 'number' || typeof value === 'boolean')
+    return String(value)
+  if (Array.isArray(value))
+    return `数组(${value.length})`
+  if (isObject(value)) {
+    const entries = Object.entries(value).slice(0, 3).map(([key, item]) => `${key}: ${typeof item === 'string' ? item : JSON.stringify(item)}`)
+    return entries.length > 0 ? entries.join('，') : '对象'
+  }
+  return String(value)
 }
 
 const normalizeStartFields = (nodes: DifyNode[]): DynamicField[] => {
@@ -587,6 +668,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const [endRenderError, setEndRenderError] = useState<Record<string, string>>({})
   const [endRenderedHeights, setEndRenderedHeights] = useState<Record<string, number>>({})
   const [nodeOutputExpandedById, setNodeOutputExpandedById] = useState<Record<string, boolean>>({})
+  const [iterationSubflowExpandedById, setIterationSubflowExpandedById] = useState<Record<string, boolean>>({})
   const iframeResizeObserversRef = useRef<Record<string, ResizeObserver>>({})
   const executionStreamIdRef = useRef<string>('')
   const executionStreamAbortRef = useRef<AbortController | null>(null)
@@ -1496,8 +1578,8 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     })
 
     return {
-      nodes: mergedNodes,
-      edges: mergedEdges,
+      nodes: dedupeById(mergedNodes),
+      edges: dedupeById(mergedEdges),
     }
   }, [edges, nodes])
 
@@ -2244,6 +2326,12 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     const showRunningIcon = shouldShowRunningIcon(node.data.type, status, activeNodeId, node.id)
     const nodeConfig: Record<string, unknown> = isObject(node.data.config) ? node.data.config : {}
     const hasEndTemplate = node.data.type === BlockEnum.End && Number(nodeConfig.templateId ?? 0) > 0
+    const iterationTrace = node.data.type === BlockEnum.Iteration
+      ? execution.iterationTraces?.[node.id]
+      : null
+    const iterationSubflowExpanded = node.data.type === BlockEnum.Iteration
+      ? (iterationSubflowExpandedById[node.id] ?? (status === 'running'))
+      : false
     const waitingPrompt = (() => {
       if (!isWaitingCurrent)
         return ''
@@ -2427,6 +2515,129 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                             {endRendered[node.id].html}
                           </pre>
                         )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {node.data.type === BlockEnum.Iteration && (
+              <div className="space-y-2 rounded border border-teal-200 bg-teal-50/40 p-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIterationSubflowExpandedById(prev => ({
+                      ...prev,
+                      [node.id]: !iterationSubflowExpanded,
+                    }))
+                  }}
+                  className="flex w-full items-center justify-between rounded px-1 py-1 text-left hover:bg-teal-50"
+                >
+                  <div>
+                    <div className="text-xs font-medium text-teal-900">迭代执行详情</div>
+                    <div className="text-[11px] text-teal-700">
+                      {iterationTrace?.items?.length
+                        ? `已记录 ${iterationTrace.items.length} 个迭代项`
+                        : '暂无子节点执行详情'}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded px-2 py-0.5 text-xs ${statusClassMap[status]}`}>{statusTextMap[status]}</span>
+                    <span className="text-xs text-teal-700">{iterationSubflowExpanded ? '收起' : '展开'}</span>
+                  </div>
+                </button>
+                {iterationSubflowExpanded && (
+                  <div className="space-y-2 rounded border border-teal-200 bg-white p-2">
+                    {!iterationTrace?.items?.length && (
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无迭代子节点执行详情" />
+                    )}
+                    {!!iterationTrace?.items?.length && (
+                      <Collapse
+                        size="small"
+                        bordered={false}
+                        className="bg-white"
+                        items={iterationTrace.items.map((item) => {
+                          const itemStatus = item.status ?? 'pending'
+                          const itemDuration = formatTraceDuration(item.startedAt, item.endedAt)
+                          return {
+                            key: `iteration-item-${node.id}-${item.index}`,
+                            label: (
+                              <div className="flex min-w-0 items-center justify-between gap-3 pr-2">
+                                <div className="min-w-0">
+                                  <div className="truncate text-xs font-medium text-gray-900">
+                                    第 {item.index + 1} 项 · {summarizeIterationItem(item.itemSnapshot)}
+                                  </div>
+                                  <div className="truncate text-[11px] text-gray-500">
+                                    开始：{formatTraceTime(item.startedAt)}{itemDuration ? ` · 耗时 ${itemDuration}` : ''}
+                                  </div>
+                                </div>
+                                <span className={`shrink-0 rounded px-2 py-0.5 text-xs ${statusClassMap[itemStatus]}`}>{statusTextMap[itemStatus]}</span>
+                              </div>
+                            ),
+                            children: (
+                              <div className="space-y-2">
+                                <div className="rounded border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-700">
+                                  <div>索引变量：{iterationTrace.indexVar || 'index'}</div>
+                                  <div>项变量：{iterationTrace.itemVar || 'item'}</div>
+                                  <div>开始时间：{formatTraceTime(item.startedAt)}</div>
+                                  <div>结束时间：{formatTraceTime(item.endedAt)}</div>
+                                  {item.error && (
+                                    <div className="mt-1 rounded border border-rose-200 bg-rose-50 px-2 py-1 text-rose-700">
+                                      {item.error}
+                                    </div>
+                                  )}
+                                </div>
+                                {!!item.childNodes?.length && item.childNodes.map((child, childIndex) => {
+                                  const childStatus = child.status ?? 'pending'
+                                  const childDuration = formatTraceDuration(child.startedAt, child.endedAt)
+                                  return (
+                                    <div key={`iteration-child-${node.id}-${item.index}-${child.nodeId}-${childIndex}`} className="rounded border border-gray-200 bg-white p-2">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <div className="truncate text-xs font-medium text-gray-900">{child.nodeTitle || child.nodeId}</div>
+                                          <div className="text-[11px] text-gray-500">{child.nodeType} · {child.nodeId}</div>
+                                        </div>
+                                        <span className={`shrink-0 rounded px-2 py-0.5 text-xs ${statusClassMap[childStatus]}`}>{statusTextMap[childStatus]}</span>
+                                      </div>
+                                      <div className="mt-2 grid grid-cols-1 gap-1 text-[11px] text-gray-600 md:grid-cols-2">
+                                        <div>开始：{formatTraceTime(child.startedAt)}</div>
+                                        <div>结束：{formatTraceTime(child.endedAt)}</div>
+                                        {!!childDuration && <div>耗时：{childDuration}</div>}
+                                      </div>
+                                      {child.error && (
+                                        <div className="mt-2 rounded border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
+                                          {child.error}
+                                        </div>
+                                      )}
+                                      <Collapse
+                                        size="small"
+                                        bordered={false}
+                                        className="mt-2 rounded border border-gray-200 bg-white"
+                                        items={[
+                                          {
+                                            key: 'output',
+                                            label: <span className="text-xs text-gray-600">节点输出（JSON）</span>,
+                                            children: (
+                                              <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">
+                                                {renderJson(child.output ?? {})}
+                                              </pre>
+                                            ),
+                                          },
+                                        ]}
+                                      />
+                                    </div>
+                                  )
+                                })}
+                                {!item.childNodes?.length && (
+                                  <div className="rounded border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                                    当前迭代项未记录到子节点明细。
+                                  </div>
+                                )}
+                              </div>
+                            ),
+                          }
+                        })}
+                      />
+                    )}
                   </div>
                 )}
               </div>

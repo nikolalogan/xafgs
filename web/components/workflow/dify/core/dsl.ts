@@ -6,6 +6,7 @@ import { normalizeWorkflowVariableScopes } from './workflow-variable-scopes'
 import { BlockEnum, type DifyEdge, type DifyNode, type DifyWorkflowDSL, type IterationNodeConfig } from './types'
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
+const iterationRuntimeReferencePattern = /\{\{\s*(iter-node::([^:.]+)::([^}.]+))(\.[^}]+)?\s*\}\}/g
 
 export const buildIterationNestedNodeId = (parentId: string, childId: string) => `${ITERATION_NESTED_NODE_PREFIX}${parentId}::${childId}`
 export const buildIterationNestedEdgeId = (parentId: string, childEdgeId: string) => `${ITERATION_NESTED_EDGE_PREFIX}${parentId}::${childEdgeId}`
@@ -130,6 +131,22 @@ const stripIterationEditorMeta = (node: DifyNode): DifyNode => {
   }
 }
 
+const normalizeIterationRuntimeReferences = <T,>(value: T): T => {
+  if (typeof value === 'string') {
+    return value.replace(iterationRuntimeReferencePattern, (_full, _rawId, _parentId, childId, suffix = '') => {
+      return `{{${childId}${suffix}}}`
+    }) as T
+  }
+  if (Array.isArray(value))
+    return value.map(item => normalizeIterationRuntimeReferences(item)) as T
+  if (isObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, normalizeIterationRuntimeReferences(item)]),
+    ) as T
+  }
+  return value
+}
+
 const flattenIterationChildren = (nodes: DifyNode[], edges: DifyEdge[]) => {
   const flatNodes: DifyNode[] = []
   const flatEdges: DifyEdge[] = [...edges]
@@ -216,7 +233,7 @@ export const serializeWorkflowDSL = (dsl: DifyWorkflowDSL): DifyWorkflowDSL => {
             title: childNode.data.title,
             desc: childNode.data.desc,
             type: childNode.data.type,
-            config: childNode.data.config,
+            config: normalizeIterationRuntimeReferences(childNode.data.config),
           },
         } satisfies IterationNodeConfig['children']['nodes'][number]
       })

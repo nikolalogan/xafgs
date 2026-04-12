@@ -1983,7 +1983,7 @@ function NodeConfigPanel({
         />
         <div className="rounded border border-teal-200 bg-teal-50/70 p-2 text-xs leading-5 text-teal-800">
           迭代体内自动注入隐藏状态对象，可通过 {'{{'}{`${activeNode.id}.state`}{'}}'} 引用或写入。
-          循环结束后会直接输出该状态对象，不再需要配置输出来源或结束节点。
+          同时可在嵌套结束节点里定义“每次循环返回值”，父级会按返回名称自动聚合为数组输出。
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
@@ -2973,7 +2973,7 @@ function NodeConfigPanel({
           <div className="text-sm font-semibold text-teal-800">循环收口</div>
           <div className="text-xs leading-5 text-teal-700">
             该结束节点用于定义每次循环产出的单项对象。
-            例如输出名称填写 result，引用数据填写 {'{{code-1.result}}'}，则父级迭代节点最终聚合为 result: [每次循环的引用数据]。
+            例如输出名称填写 result，引用数据填写 {'{{sub-node-1.result}}'}，则父级迭代节点最终聚合为 result: [每次循环的引用数据]。
           </div>
           <div className="space-y-2 rounded border border-dashed border-teal-200 bg-white/80 p-2">
             <div>
@@ -3012,7 +3012,7 @@ function NodeConfigPanel({
               options={variableOptions}
               scope={getScope(`${activeNode.id}.iteration.end.source`, 'all')}
               onScopeChange={scope => setScope(`${activeNode.id}.iteration.end.source`, scope)}
-              placeholder="例如 {{code-1.result}}"
+              placeholder="例如 {{sub-node-1.result}}"
             />
           </div>
         </div>

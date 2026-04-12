@@ -48,23 +48,52 @@ type ExecutionEvent struct {
 	Payload map[string]any `json:"payload,omitempty"`
 }
 
+type IterationChildNodeTrace struct {
+	NodeID    string         `json:"nodeId"`
+	NodeTitle string         `json:"nodeTitle"`
+	NodeType  string         `json:"nodeType"`
+	Status    NodeRunStatus  `json:"status"`
+	StartedAt string         `json:"startedAt,omitempty"`
+	EndedAt   string         `json:"endedAt,omitempty"`
+	Error     string         `json:"error,omitempty"`
+	Output    map[string]any `json:"output,omitempty"`
+}
+
+type IterationItemTrace struct {
+	Index        int                       `json:"index"`
+	ItemSnapshot any                       `json:"itemSnapshot,omitempty"`
+	Status       NodeRunStatus             `json:"status"`
+	StartedAt    string                    `json:"startedAt,omitempty"`
+	EndedAt      string                    `json:"endedAt,omitempty"`
+	Error        string                    `json:"error,omitempty"`
+	ChildNodes   []IterationChildNodeTrace `json:"childNodes,omitempty"`
+	Events       []ExecutionEvent          `json:"events,omitempty"`
+}
+
+type IterationTrace struct {
+	ItemVar  string               `json:"itemVar"`
+	IndexVar string               `json:"indexVar"`
+	Items    []IterationItemTrace `json:"items,omitempty"`
+}
+
 type WorkflowExecution struct {
-	ID             string                        `json:"id"`
-	WorkflowID     int64                         `json:"workflowId"`
-	WorkflowName   string                        `json:"workflowName"`
-	MenuKey        string                        `json:"menuKey"`
-	StarterUserID  int64                         `json:"starterUserId"`
-	WorkflowDSL    WorkflowDSL                   `json:"workflowDsl"`
-	Status         ExecutionStatus               `json:"status"`
-	NodeStates     map[string]ExecutionNodeState `json:"nodeStates"`
-	Variables      map[string]any                `json:"variables"`
-	Outputs        map[string]any                `json:"outputs,omitempty"`
-	WaitingInput   *ExecutionWaitingInput        `json:"waitingInput,omitempty"`
-	Error          string                        `json:"error,omitempty"`
-	LifecycleEvents []LifecycleEvent             `json:"lifecycleEvents"`
-	Events         []ExecutionEvent              `json:"events"`
-	CreatedAt      string                        `json:"createdAt"`
-	UpdatedAt      string                        `json:"updatedAt"`
+	ID              string                        `json:"id"`
+	WorkflowID      int64                         `json:"workflowId"`
+	WorkflowName    string                        `json:"workflowName"`
+	MenuKey         string                        `json:"menuKey"`
+	StarterUserID   int64                         `json:"starterUserId"`
+	WorkflowDSL     WorkflowDSL                   `json:"workflowDsl"`
+	Status          ExecutionStatus               `json:"status"`
+	NodeStates      map[string]ExecutionNodeState `json:"nodeStates"`
+	Variables       map[string]any                `json:"variables"`
+	Outputs         map[string]any                `json:"outputs,omitempty"`
+	WaitingInput    *ExecutionWaitingInput        `json:"waitingInput,omitempty"`
+	Error           string                        `json:"error,omitempty"`
+	IterationTraces map[string]IterationTrace     `json:"iterationTraces,omitempty"`
+	LifecycleEvents []LifecycleEvent              `json:"lifecycleEvents"`
+	Events          []ExecutionEvent              `json:"events"`
+	CreatedAt       string                        `json:"createdAt"`
+	UpdatedAt       string                        `json:"updatedAt"`
 }
 
 type ExecutionListFilter struct {

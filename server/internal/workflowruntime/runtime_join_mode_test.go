@@ -199,6 +199,323 @@ func TestRuntime_JoinModeAll_AfterResume_KeepArrivedSources(t *testing.T) {
 	findEventIndex(t, resumedExecution.Events, "node.started", "join")
 }
 
+func TestRuntime_Resume_ReenqueuePendingNodesUnlockedByHistory(t *testing.T) {
+	store := NewInMemoryExecutionStore()
+	runtime := NewRuntime(store)
+
+	dsl := WorkflowDSL{
+		Nodes: []WorkflowNode{
+			{
+				ID:       "start",
+				Position: map[string]any{"x": 0, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "start",
+					Type:  "start",
+					Config: map[string]any{
+						"fanOutMode": "parallel",
+					},
+				},
+			},
+			{
+				ID:       "history-ready",
+				Position: map[string]any{"x": 120, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "history-ready",
+					Type:  "code",
+					Config: map[string]any{
+						"code":    "function main(input) { return { ok: true } }",
+						"outputs": []any{"ok"},
+					},
+				},
+			},
+			{
+				ID:       "history-downstream",
+				Position: map[string]any{"x": 240, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "history-downstream",
+					Type:  "code",
+					Config: map[string]any{
+						"code":    "function main(input) { return { ready: true } }",
+						"outputs": []any{"ready"},
+					},
+				},
+			},
+			{
+				ID:       "input",
+				Position: map[string]any{"x": 120, "y": 120},
+				Data: WorkflowNodeData{
+					Title: "input",
+					Type:  "input",
+					Config: map[string]any{
+						"fields": []any{
+							map[string]any{
+								"name":     "confirm",
+								"label":    "确认",
+								"type":     "text",
+								"required": true,
+							},
+						},
+					},
+				},
+			},
+			{
+				ID:       "after-input",
+				Position: map[string]any{"x": 240, "y": 120},
+				Data: WorkflowNodeData{
+					Title: "after-input",
+					Type:  "code",
+					Config: map[string]any{
+						"code":    "function main(input) { return { resumed: true } }",
+						"outputs": []any{"resumed"},
+					},
+				},
+			},
+			{
+				ID:       "join",
+				Position: map[string]any{"x": 360, "y": 60},
+				Data: WorkflowNodeData{
+					Title: "join",
+					Type:  "code",
+					Config: map[string]any{
+						"joinMode": "all",
+						"code":     "function main(input) { return { merged: true } }",
+						"outputs":  []any{"merged"},
+					},
+				},
+			},
+			{ID: "end", Position: map[string]any{"x": 480, "y": 60}, Data: WorkflowNodeData{Title: "end", Type: "end", Config: map[string]any{}}},
+		},
+		Edges: []WorkflowEdge{
+			{ID: "e-start-history-ready", Source: "start", Target: "history-ready"},
+			{ID: "e-start-input", Source: "start", Target: "input"},
+			{ID: "e-history-ready-history-downstream", Source: "history-ready", Target: "history-downstream"},
+			{ID: "e-input-after-input", Source: "input", Target: "after-input"},
+			{ID: "e-history-downstream-join", Source: "history-downstream", Target: "join"},
+			{ID: "e-after-input-join", Source: "after-input", Target: "join"},
+			{ID: "e-join-end", Source: "join", Target: "end"},
+		},
+	}
+
+	waitingExecution, err := runtime.Start(context.Background(), StartExecutionInput{
+		WorkflowDSL: dsl,
+		Input:       map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	if waitingExecution.Status != ExecutionStatusWaitingInput {
+		t.Fatalf("期望 execution 进入 waiting_input，实际=%s", waitingExecution.Status)
+	}
+	if waitingExecution.NodeStates["history-ready"].Status != NodeRunStatusSucceeded {
+		t.Fatalf("期望 history-ready 在暂停前已执行成功，实际=%s", waitingExecution.NodeStates["history-ready"].Status)
+	}
+	if waitingExecution.NodeStates["history-downstream"].Status != NodeRunStatusPending {
+		t.Fatalf("期望 history-downstream 在暂停前仍为 pending，实际=%s", waitingExecution.NodeStates["history-downstream"].Status)
+	}
+
+	resumedExecution, err := runtime.Resume(context.Background(), ResumeExecutionInput{
+		ExecutionID: waitingExecution.ID,
+		NodeID:      "input",
+		Input: map[string]any{
+			"confirm": "ok",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resume() error: %v", err)
+	}
+
+	if resumedExecution.NodeStates["history-downstream"].Status != NodeRunStatusSucceeded {
+		t.Fatalf("期望 history-downstream 在 resume 后执行成功，实际=%s", resumedExecution.NodeStates["history-downstream"].Status)
+	}
+	if resumedExecution.NodeStates["join"].Status != NodeRunStatusSucceeded {
+		t.Fatalf("期望 join 在 resume 后执行成功，实际=%s", resumedExecution.NodeStates["join"].Status)
+	}
+	if resumedExecution.NodeStates["end"].Status != NodeRunStatusSucceeded {
+		t.Fatalf("期望 end 在 resume 后执行成功，实际=%s", resumedExecution.NodeStates["end"].Status)
+	}
+}
+
+func TestRuntime_FreshStart_DoesNotReenqueuePendingNodes(t *testing.T) {
+	store := NewInMemoryExecutionStore()
+	runtime := NewRuntime(store)
+
+	dsl := WorkflowDSL{
+		Nodes: []WorkflowNode{
+			{ID: "start", Position: map[string]any{"x": 0, "y": 0}, Data: WorkflowNodeData{Title: "start", Type: "start", Config: map[string]any{}}},
+			{
+				ID:       "prepare",
+				Position: map[string]any{"x": 100, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "prepare",
+					Type:  "code",
+					Config: map[string]any{
+						"code":    "function main(input) { return { code: 'ok' } }",
+						"outputs": []any{"code"},
+					},
+				},
+			},
+			{
+				ID:       "need-upstream",
+				Position: map[string]any{"x": 220, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "need-upstream",
+					Type:  "api-request",
+					Config: map[string]any{
+						"route": map[string]any{
+							"method": "GET",
+							"path":   "/demo",
+						},
+						"params": []any{
+							map[string]any{
+								"name": "code",
+								"in":   "query",
+								"type": "string",
+								"validation": map[string]any{
+									"required": true,
+								},
+							},
+						},
+						"paramValues": []any{
+							map[string]any{
+								"name":  "code",
+								"in":    "query",
+								"value": "{{prepare.code}}",
+							},
+						},
+					},
+				},
+			},
+		},
+		Edges: []WorkflowEdge{
+			{ID: "e-start-prepare", Source: "start", Target: "prepare"},
+			{ID: "e-prepare-need-upstream", Source: "prepare", Target: "need-upstream"},
+		},
+	}
+
+	execution, err := runtime.Start(context.Background(), StartExecutionInput{
+		WorkflowDSL: dsl,
+		Input:       map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+
+	prepareStarted := findEventIndex(t, execution.Events, "node.started", "prepare")
+	needUpstreamStarted := findEventIndex(t, execution.Events, "node.started", "need-upstream")
+	if needUpstreamStarted <= prepareStarted {
+		t.Fatalf("期望 fresh start 按依赖顺序执行：prepareStarted=%d needUpstreamStarted=%d", prepareStarted, needUpstreamStarted)
+	}
+}
+
+func TestRuntime_Resume_DoesNotEnqueueSingleIncomingNodeWithoutHistoryArrival(t *testing.T) {
+	store := NewInMemoryExecutionStore()
+	runtime := NewRuntime(store)
+
+	dsl := WorkflowDSL{
+		Nodes: []WorkflowNode{
+			{
+				ID:       "start",
+				Position: map[string]any{"x": 0, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "start",
+					Type:  "start",
+					Config: map[string]any{
+						"fanOutMode": "parallel",
+					},
+				},
+			},
+			{
+				ID:       "done-before-pause",
+				Position: map[string]any{"x": 120, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "done-before-pause",
+					Type:  "code",
+					Config: map[string]any{
+						"code":    "function main(input) { return { ok: true } }",
+						"outputs": []any{"ok"},
+					},
+				},
+			},
+			{
+				ID:       "single-downstream",
+				Position: map[string]any{"x": 240, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "single-downstream",
+					Type:  "code",
+					Config: map[string]any{
+						"code":    "function main(input) { return { value: true } }",
+						"outputs": []any{"value"},
+					},
+				},
+			},
+			{
+				ID:       "input",
+				Position: map[string]any{"x": 120, "y": 120},
+				Data: WorkflowNodeData{
+					Title: "input",
+					Type:  "input",
+					Config: map[string]any{
+						"fields": []any{
+							map[string]any{
+								"name":     "confirm",
+								"label":    "确认",
+								"type":     "text",
+								"required": true,
+							},
+						},
+					},
+				},
+			},
+			{
+				ID:       "resume-downstream",
+				Position: map[string]any{"x": 240, "y": 120},
+				Data: WorkflowNodeData{
+					Title: "resume-downstream",
+					Type:  "code",
+					Config: map[string]any{
+						"code":    "function main(input) { return { value: true } }",
+						"outputs": []any{"value"},
+					},
+				},
+			},
+		},
+		Edges: []WorkflowEdge{
+			{ID: "e-start-done-before-pause", Source: "start", Target: "done-before-pause"},
+			{ID: "e-start-input", Source: "start", Target: "input"},
+			{ID: "e-input-resume-downstream", Source: "input", Target: "resume-downstream"},
+			{ID: "e-resume-downstream-single-downstream", Source: "resume-downstream", Target: "single-downstream"},
+		},
+	}
+
+	waitingExecution, err := runtime.Start(context.Background(), StartExecutionInput{
+		WorkflowDSL: dsl,
+		Input:       map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	if waitingExecution.Status != ExecutionStatusWaitingInput {
+		t.Fatalf("期望 execution 进入 waiting_input，实际=%s", waitingExecution.Status)
+	}
+
+	resumedExecution, err := runtime.Resume(context.Background(), ResumeExecutionInput{
+		ExecutionID: waitingExecution.ID,
+		NodeID:      "input",
+		Input: map[string]any{
+			"confirm": "ok",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resume() error: %v", err)
+	}
+
+	resumeDownstreamStarted := findEventIndex(t, resumedExecution.Events, "node.started", "resume-downstream")
+	singleDownstreamStarted := findEventIndex(t, resumedExecution.Events, "node.started", "single-downstream")
+	if singleDownstreamStarted <= resumeDownstreamStarted {
+		t.Fatalf("期望单入边节点仅在其真实上游到达后执行：resumeDownstreamStarted=%d singleDownstreamStarted=%d", resumeDownstreamStarted, singleDownstreamStarted)
+	}
+}
+
 func TestRuntime_NodeFinishedEvent_AfterSuccess(t *testing.T) {
 	store := NewInMemoryExecutionStore()
 	runtime := NewRuntime(store)

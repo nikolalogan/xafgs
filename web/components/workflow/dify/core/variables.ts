@@ -14,6 +14,12 @@ export type WorkflowVariableOption = {
   displayLabel: string
 }
 
+const getRuntimeVariableNodeId = (node: DifyNode) => {
+  if (node.data.parentIterationId && node.data.nestedNodeId)
+    return node.data.nestedNodeId
+  return node.id
+}
+
 export type WorkflowVariableSelectGroupOption = {
   label: string
   options: Array<{
@@ -266,14 +272,16 @@ export const buildWorkflowVariableOptions = (
     nodeTitle: string,
     fullParamPath: string,
     valueType: VariableScope,
+    runtimeNodeId?: string,
   ) => {
+    const resolvedRuntimeNodeId = runtimeNodeId || nodeId
     options.push({
       key: `${nodeId}.${fullParamPath}`,
       nodeId,
       nodeTitle,
       param: fullParamPath,
       valueType,
-      placeholder: `{{${nodeId}.${fullParamPath}}}`,
+      placeholder: `{{${resolvedRuntimeNodeId}.${fullParamPath}}}`,
       displayLabel: buildDisplayLabel(nodeTitle, fullParamPath),
     })
   }
@@ -330,6 +338,7 @@ export const buildWorkflowVariableOptions = (
 
   nodes.forEach((node) => {
     const nodeId = node.id
+    const runtimeNodeId = getRuntimeVariableNodeId(node)
     const nodeTitle = node.data.title || node.id
     const type = node.data.type
 
@@ -346,7 +355,7 @@ export const buildWorkflowVariableOptions = (
           nodeTitle,
           param: item.name,
           valueType: normalizeScopeFromString(item.type),
-          placeholder: `{{${nodeId}.${item.name}}}`,
+          placeholder: `{{${runtimeNodeId}.${item.name}}}`,
           displayLabel: `${nodeTitle}.${item.name}`,
         })
         if (item.type === 'json_object') {
@@ -363,7 +372,7 @@ export const buildWorkflowVariableOptions = (
               nodeTitle,
               param: fullPath,
               valueType: inferScopeFromPath(childPath),
-              placeholder: `{{${nodeId}.${fullPath}}}`,
+              placeholder: `{{${runtimeNodeId}.${fullPath}}}`,
               displayLabel: `${nodeTitle}.${fullPath}`,
             })
           })
@@ -384,7 +393,7 @@ export const buildWorkflowVariableOptions = (
           nodeTitle,
           param: field.name,
           valueType,
-          placeholder: `{{${nodeId}.${field.name}}}`,
+          placeholder: `{{${runtimeNodeId}.${field.name}}}`,
           displayLabel: `${nodeTitle}.${field.name}`,
         })
       })
@@ -402,7 +411,7 @@ export const buildWorkflowVariableOptions = (
           nodeTitle,
           param: outputName,
           valueType: normalizeScopeFromUnknown(outputName),
-          placeholder: `{{${nodeId}.${outputName}}}`,
+          placeholder: `{{${runtimeNodeId}.${outputName}}}`,
           displayLabel: `${nodeTitle}.${outputName}`,
         })
       })
@@ -414,7 +423,7 @@ export const buildWorkflowVariableOptions = (
           nodeTitle,
           param: childPath,
           valueType: inferScopeFromPath(childPath),
-          placeholder: `{{${nodeId}.${childPath}}}`,
+          placeholder: `{{${runtimeNodeId}.${childPath}}}`,
           displayLabel: `${nodeTitle}.${childPath}`,
         })
       })
@@ -432,7 +441,7 @@ export const buildWorkflowVariableOptions = (
         { name: 'url', scope: 'string' as const },
         { name: 'method', scope: 'string' as const },
       ].forEach((output) => {
-        pushVariableOption(nodeId, nodeTitle, output.name, output.scope)
+        pushVariableOption(nodeId, nodeTitle, output.name, output.scope, runtimeNodeId)
       })
       return
     }
@@ -440,15 +449,18 @@ export const buildWorkflowVariableOptions = (
     if (type === BlockEnum.Iteration) {
       const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
       if (config.outputVar) {
-        options.push({
-          key: `${nodeId}.${config.outputVar}`,
-          nodeId,
-          nodeTitle,
-          param: config.outputVar,
-          valueType: 'object',
-          placeholder: `{{${nodeId}.${config.outputVar}}}`,
-          displayLabel: `${nodeTitle}.${config.outputVar}`,
-        })
+        pushVariableOption(nodeId, nodeTitle, config.outputVar, 'object', runtimeNodeId)
+        config.children.nodes
+          .filter(childNode => childNode.data.type === BlockEnum.End)
+          .forEach((childNode) => {
+            const endConfig = ensureNodeConfig(BlockEnum.End, childNode.data.config)
+            endConfig.outputs.forEach((output) => {
+              const outputName = output.name?.trim()
+              if (!outputName)
+                return
+              pushVariableOption(nodeId, nodeTitle, `${config.outputVar}.${outputName}`, 'array', runtimeNodeId)
+            })
+          })
       }
       return
     }
@@ -464,7 +476,7 @@ export const buildWorkflowVariableOptions = (
           nodeTitle,
           param: output.name,
           valueType: normalizeScopeFromUnknown(output.name),
-          placeholder: `{{${nodeId}.${output.name}}}`,
+          placeholder: `{{${runtimeNodeId}.${output.name}}}`,
           displayLabel: `${nodeTitle}.${output.name}`,
         })
       })
@@ -492,7 +504,7 @@ export const buildWorkflowVariableOptions = (
           nodeTitle,
           param: childPath,
           valueType: inferScopeFromPath(childPath),
-          placeholder: `{{${nodeId}.${childPath}}}`,
+          placeholder: `{{${runtimeNodeId}.${childPath}}}`,
           displayLabel: `${nodeTitle}.${childPath}`,
         })
       })
@@ -506,7 +518,7 @@ export const buildWorkflowVariableOptions = (
         nodeTitle,
         param: outputName,
         valueType: normalizeNodeOutputType(type, outputName),
-        placeholder: `{{${nodeId}.${outputName}}}`,
+        placeholder: `{{${runtimeNodeId}.${outputName}}}`,
         displayLabel: `${nodeTitle}.${outputName}`,
       })
     })
