@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Form, Input, message } from 'antd'
+import { Button, Divider, Form, Input, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
 
 type ApiResponse<T> = {
@@ -21,6 +21,9 @@ type UserConfigDTO = {
   updatedAt?: string
 }
 
+const defaultAIBaseUrl = 'https://api.siliconflow.cn'
+const defaultAIApiKey = 'sk-dninauetsqzfirndyjutohuztdwhevpwfvhmejahsunzcxxn'
+
 const getToken = () => {
   if (typeof window === 'undefined')
     return ''
@@ -37,6 +40,7 @@ const fieldIds = {
   aiApiKey: 'aiApiKey',
   searchServiceBaseUrl: 'searchServiceBaseUrl',
   searchServiceApiKey: 'searchServiceApiKey',
+  changePassword: 'changePassword',
 } as const
 
 type FieldId = typeof fieldIds[keyof typeof fieldIds]
@@ -58,6 +62,8 @@ const normalizeHashToFieldId = (rawHash: string): FieldId | null => {
     return fieldIds.searchServiceBaseUrl
   if (normalized === 'searchserviceapikey' || normalized === 'searchapikey' || normalized === 'searchaiapikey')
     return fieldIds.searchServiceApiKey
+  if (normalized === 'changepassword' || normalized === 'password')
+    return fieldIds.changePassword
   return null
 }
 
@@ -67,9 +73,11 @@ export default function UserConfigPage() {
   const { role: currentRole, hydrated } = useConsoleRole()
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
   const [highlight, setHighlight] = useState<FieldId | ''>('')
   const highlightTimer = useRef<number | null>(null)
   const [form] = Form.useForm<UserConfigDTO>()
+  const [passwordForm] = Form.useForm<{ currentPassword: string, newPassword: string, confirmNewPassword: string }>()
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
@@ -102,8 +110,8 @@ export default function UserConfigPage() {
         userId: Number(data?.userId || 0),
         warningAccount: data?.warningAccount || '',
         warningPassword: data?.warningPassword || '',
-        aiBaseUrl: data?.aiBaseUrl || '',
-        aiApiKey: data?.aiApiKey || '',
+        aiBaseUrl: data?.aiBaseUrl || defaultAIBaseUrl,
+        aiApiKey: data?.aiApiKey || defaultAIApiKey,
         searchServiceBaseUrl: data?.searchServiceBaseUrl || '',
         searchServiceApiKey: data?.searchServiceApiKey || '',
       })
@@ -185,6 +193,30 @@ export default function UserConfigPage() {
     }
   }
 
+  const changePassword = async () => {
+    const values = await passwordForm.validateFields()
+    setChangingPassword(true)
+    try {
+      await request<boolean>('/api/users/me/password', {
+        method: 'PUT',
+        body: JSON.stringify({
+          currentPassword: values.currentPassword || '',
+          newPassword: values.newPassword || '',
+        }),
+      })
+      msgApi.success('修改密码成功')
+      passwordForm.resetFields()
+      if (typeof window !== 'undefined')
+        window.sessionStorage.removeItem('sxfg_default_password_prompt')
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '修改密码失败')
+    }
+    finally {
+      setChangingPassword(false)
+    }
+  }
+
   if (!hydrated) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-6">
@@ -220,8 +252,8 @@ export default function UserConfigPage() {
           initialValues={{
             warningAccount: '',
             warningPassword: '',
-            aiBaseUrl: '',
-            aiApiKey: '',
+            aiBaseUrl: defaultAIBaseUrl,
+            aiApiKey: defaultAIApiKey,
             searchServiceBaseUrl: '',
             searchServiceApiKey: '',
           }}
@@ -240,6 +272,7 @@ export default function UserConfigPage() {
               className={highlight === fieldIds.warningPassword ? 'blinkTwice' : ''}
               placeholder="请输入预警通密码"
               autoComplete="new-password"
+              visibilityToggle={false}
             />
           </Form.Item>
           <Form.Item label="AI 服务商地址" name="aiBaseUrl">
@@ -256,6 +289,7 @@ export default function UserConfigPage() {
               className={highlight === fieldIds.aiApiKey ? 'blinkTwice' : ''}
               placeholder="请输入 APIKey"
               autoComplete="new-password"
+              visibilityToggle={false}
             />
           </Form.Item>
           <Form.Item label="搜索服务地址（可选）" name="searchServiceBaseUrl">
@@ -272,9 +306,76 @@ export default function UserConfigPage() {
               className={highlight === fieldIds.searchServiceApiKey ? 'blinkTwice' : ''}
               placeholder="请输入搜索服务 APIKey（例如 Tavily）"
               autoComplete="new-password"
+              visibilityToggle={false}
             />
           </Form.Item>
         </Form>
+
+        <Divider />
+
+        <div id={fieldIds.changePassword} className="scroll-mt-24">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="text-sm font-semibold text-gray-900">修改密码</div>
+            <Button type="primary" onClick={changePassword} loading={changingPassword}>修改密码</Button>
+          </div>
+          <Form<{ currentPassword: string, newPassword: string, confirmNewPassword: string }>
+            form={passwordForm}
+            layout="vertical"
+            disabled={changingPassword}
+            initialValues={{
+              currentPassword: '',
+              newPassword: '',
+              confirmNewPassword: '',
+            }}
+          >
+            <Form.Item
+              label="当前密码"
+              name="currentPassword"
+              rules={[{ required: true, message: '请输入当前密码' }]}
+            >
+              <Input.Password
+                className={highlight === fieldIds.changePassword ? 'blinkTwice' : ''}
+                placeholder="请输入当前密码"
+                autoComplete="current-password"
+                visibilityToggle={false}
+              />
+            </Form.Item>
+            <Form.Item
+              label="新密码"
+              name="newPassword"
+              rules={[{ required: true, message: '请输入新密码' }]}
+            >
+              <Input.Password
+                className={highlight === fieldIds.changePassword ? 'blinkTwice' : ''}
+                placeholder="请输入新密码"
+                autoComplete="new-password"
+                visibilityToggle={false}
+              />
+            </Form.Item>
+            <Form.Item
+              label="确认新密码"
+              name="confirmNewPassword"
+              dependencies={['newPassword']}
+              rules={[
+                { required: true, message: '请再次输入新密码' },
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    if (!value || getFieldValue('newPassword') === value)
+                      return Promise.resolve()
+                    return Promise.reject(new Error('两次输入的新密码不一致'))
+                  },
+                }),
+              ]}
+            >
+              <Input.Password
+                className={highlight === fieldIds.changePassword ? 'blinkTwice' : ''}
+                placeholder="请再次输入新密码"
+                autoComplete="new-password"
+                visibilityToggle={false}
+              />
+            </Form.Item>
+          </Form>
+        </div>
       </div>
 
       <style jsx global>{`

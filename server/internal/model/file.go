@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	FileStatusActive  = "active"
@@ -107,6 +110,72 @@ type FileUploadResultDTO struct {
 	SessionID string         `json:"sessionId,omitempty"`
 	File      FileDTO        `json:"file"`
 	Version   FileVersionDTO `json:"version"`
+}
+
+type FileParseResultDTO struct {
+	Version       FileVersionDTO              `json:"version"`
+	Profile       json.RawMessage             `json:"profile"`
+	SliceCount    int                         `json:"sliceCount"`
+	TableCount    int                         `json:"tableCount"`
+	FigureCount   int                         `json:"figureCount"`
+	FragmentCount int                         `json:"fragmentCount"`
+	CellCount     int                         `json:"cellCount"`
+	Slices        []FileParseSlicePreviewDTO  `json:"slices"`
+	Tables        []FileParseTablePreviewDTO  `json:"tables"`
+	Figures       []FileParseFigurePreviewDTO `json:"figures"`
+}
+
+type FileParseSlicePreviewDTO struct {
+	SliceType   string          `json:"sliceType"`
+	Title       string          `json:"title"`
+	PageStart   int             `json:"pageStart"`
+	PageEnd     int             `json:"pageEnd"`
+	SourceRef   string          `json:"sourceRef"`
+	BBox        json.RawMessage `json:"bbox"`
+	CleanText   string          `json:"cleanText"`
+	Confidence  float64         `json:"confidence"`
+	ParseStatus string          `json:"parseStatus"`
+}
+
+type FileParseTableCellPreviewDTO struct {
+	Text      string `json:"text"`
+	SourceRef string `json:"sourceRef"`
+}
+
+type FileParseTableRowPreviewDTO struct {
+	RowIndex int                            `json:"rowIndex"`
+	Cells    []FileParseTableCellPreviewDTO `json:"cells"`
+}
+
+type FileParseTablePreviewDTO struct {
+	Title          string                        `json:"title"`
+	PageStart      int                           `json:"pageStart"`
+	PageEnd        int                           `json:"pageEnd"`
+	HeaderRowCount int                           `json:"headerRowCount"`
+	ColumnCount    int                           `json:"columnCount"`
+	SourceRef      string                        `json:"sourceRef"`
+	BBox           json.RawMessage               `json:"bbox"`
+	PreviewRows    []FileParseTableRowPreviewDTO `json:"previewRows"`
+}
+
+type FileParseFigurePreviewDTO struct {
+	Title       string                            `json:"title"`
+	FigureType  string                            `json:"figureType"`
+	PageNo      int                               `json:"pageNo"`
+	SourceRef   string                            `json:"sourceRef"`
+	BBox        json.RawMessage                   `json:"bbox"`
+	CleanText   string                            `json:"cleanText"`
+	Regions     []FileParseFigureRegionPreviewDTO `json:"regions"`
+	Confidence  float64                           `json:"confidence"`
+	ParseStatus string                            `json:"parseStatus"`
+}
+
+type FileParseFigureRegionPreviewDTO struct {
+	RowIndex  int             `json:"rowIndex"`
+	Region    string          `json:"region"`
+	Text      string          `json:"text"`
+	SourceRef string          `json:"sourceRef"`
+	BBox      json.RawMessage `json:"bbox"`
 }
 
 func (file File) ToDTO(latest *FileVersion) FileDTO {

@@ -11,7 +11,6 @@ type contextKey string
 
 const (
 	contextKeyRequestID contextKey = "requestId"
-	contextKeyAuthHeader contextKey = "authHeader"
 )
 
 func WithRequestID(ctx context.Context, requestID string) context.Context {
@@ -37,32 +36,6 @@ func requestIDFromContext(ctx context.Context) string {
 		return ""
 	}
 	return requestID
-}
-
-func WithAuthHeader(ctx context.Context, authorizationHeader string) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	trimmed := authorizationHeader
-	if trimmed == "" {
-		return ctx
-	}
-	return context.WithValue(ctx, contextKeyAuthHeader, trimmed)
-}
-
-func authHeaderFromContext(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
-	value := ctx.Value(contextKeyAuthHeader)
-	if value == nil {
-		return ""
-	}
-	auth, ok := value.(string)
-	if !ok {
-		return ""
-	}
-	return auth
 }
 
 func writeWorkflowLog(payload map[string]any) {

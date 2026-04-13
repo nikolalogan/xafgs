@@ -570,8 +570,12 @@ func (apiRequestExecutor) Execute(ctx context.Context, input NodeExecutorContext
 	if requestID := requestIDFromContext(ctx); requestID != "" {
 		req.Header.Set("x-request-id", requestID)
 	}
-	if auth := strings.TrimSpace(authHeaderFromContext(ctx)); auth != "" {
-		req.Header.Set("authorization", auth)
+	internalAPIToken := strings.TrimSpace(os.Getenv("API_TOKEN"))
+	if internalAPIToken == "" {
+		internalAPIToken = "dev-token"
+	}
+	if internalAPIToken != "" {
+		req.Header.Set("authorization", "Bearer "+internalAPIToken)
 	}
 
 	client := &http.Client{Timeout: time.Duration(timeoutSeconds*1000) * time.Millisecond}

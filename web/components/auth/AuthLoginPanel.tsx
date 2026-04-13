@@ -4,11 +4,17 @@ import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import styles from './AuthLoginPanel.module.css'
 import { AnimatedCharacters } from './AnimatedCharacters'
+import { writeStoredCurrentUser } from '@/lib/current-user'
 
 type LoginResponse = {
   data?: {
     accessToken?: string
-    user?: { role?: string }
+    user?: {
+      id?: number
+      username?: string
+      name?: string
+      role?: string
+    }
   }
   message?: string
 }
@@ -64,6 +70,20 @@ export default function AuthLoginPanel(props: AuthLoginPanelProps) {
         : 'guest'
       window.localStorage.setItem('sxfg_user_role', role)
       window.localStorage.setItem('user_role', role)
+      if (payload.data.user && (role === 'admin' || role === 'user')) {
+        writeStoredCurrentUser({
+          id: Number(payload.data.user.id || 0),
+          username: String(payload.data.user.username || username).trim() || username,
+          name: String(payload.data.user.name || payload.data.user.username || username).trim() || username,
+          role,
+        })
+      }
+      if (typeof window !== 'undefined') {
+        if (password === '123456')
+          window.sessionStorage.setItem('sxfg_default_password_prompt', '1')
+        else
+          window.sessionStorage.removeItem('sxfg_default_password_prompt')
+      }
       router.replace(redirect)
     }
     catch (requestError) {

@@ -14,6 +14,7 @@ type UserService interface {
 	List(ctx context.Context) ([]model.UserDTO, *model.APIError)
 	Create(ctx context.Context, request model.CreateUserRequest, operatorID int64) (model.UserDTO, *model.APIError)
 	Update(ctx context.Context, userID int64, request model.UpdateUserRequest, operatorID int64) (model.UserDTO, *model.APIError)
+	ChangeCurrentPassword(ctx context.Context, userID int64, request model.ChangeCurrentUserPasswordRequest, operatorID int64) *model.APIError
 	Delete(ctx context.Context, userID int64) *model.APIError
 }
 
@@ -106,6 +107,47 @@ func (service *userService) Update(
 func (service *userService) Delete(_ context.Context, userID int64) *model.APIError {
 	if !service.userRepository.Delete(userID) {
 		return model.NewAPIError(404, response.CodeNotFound, "用户不存在")
+	}
+	return nil
+}
+
+func (service *userService) ChangeCurrentPassword(
+	_ context.Context,
+	userID int64,
+	request model.ChangeCurrentUserPasswordRequest,
+	operatorID int64,
+) *model.APIError {
+	request.CurrentPassword = strings.TrimSpace(request.CurrentPassword)
+	request.NewPassword = strings.TrimSpace(request.NewPassword)
+
+	if userID <= 0 || operatorID <= 0 {
+		return model.NewAPIError(401, response.CodeUnauthorized, "未找到认证用户")
+	}
+	if request.CurrentPassword == "" || request.NewPassword == "" {
+		return model.NewAPIError(400, response.CodeBadRequest, "当前密码和新密码不能为空")
+	}
+	if request.CurrentPassword == request.NewPassword {
+		return model.NewAPIError(400, response.CodeBadRequest, "新密码不能与当前密码相同")
+	}
+
+	userEntity, ok := service.userRepository.FindEntityByID(userID)
+	if !ok {
+		return model.NewAPIError(404, response.CodeNotFound, "用户不存在")
+	}
+	if strings.TrimSpace(userEntity.Password) != request.CurrentPassword {
+		return model.NewAPIError(400, response.CodeBadRequest, "当前密码错误")
+	}
+
+	_, ok = service.userRepository.Update(userID, model.User{
+		Name:     userEntity.Name,
+		Password: request.NewPassword,
+		Role:     userEntity.Role,
+		BaseEntity: model.BaseEntity{
+			UpdatedBy: operatorID,
+		},
+	})
+	if !ok {
+		return model.NewAPIError(500, response.CodeInternal, "修改密码失败")
 	}
 	return nil
 }

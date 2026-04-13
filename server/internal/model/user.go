@@ -15,6 +15,11 @@ type UserDTO struct {
 	Role     string `json:"role"`
 }
 
+type ChangeCurrentUserPasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
 func (user User) ToDTO() UserDTO {
 	return UserDTO{
 		ID:       user.ID,

@@ -50,11 +50,19 @@ const (
 )
 
 const (
-	DocumentStructurePage           = "page"
-	DocumentStructureSection        = "section"
-	DocumentStructureParagraph      = "paragraph"
-	DocumentStructureTable          = "table"
-	DocumentStructureTableCandidate = "table_candidate"
+	DocumentStructurePage            = "page"
+	DocumentStructureSection         = "section"
+	DocumentStructureParagraph       = "paragraph"
+	DocumentStructureTable           = "table"
+	DocumentStructureTableCandidate  = "table_candidate"
+	DocumentStructureFigureCandidate = "figure_candidate"
+)
+
+const (
+	DocumentFigureTypeStructureChart = "structure_chart"
+	DocumentFigureTypeFlowChart      = "flow_chart"
+	DocumentFigureTypeOrgChart       = "org_chart"
+	DocumentFigureTypeGenericFigure  = "generic_figure"
 )
 
 func IsValidReportTemplateStatus(status string) bool {
@@ -151,24 +159,24 @@ type ReportCaseFile struct {
 }
 
 type ReportCaseFileDTO struct {
-	ID                 int64           `json:"id"`
-	CaseID             int64           `json:"caseId"`
-	FileID             int64           `json:"fileId"`
-	VersionNo          int             `json:"versionNo"`
-	ManualCategory     string          `json:"manualCategory"`
-	SuggestedSubCategory string        `json:"suggestedSubCategory"`
-	FinalSubCategory   string          `json:"finalSubCategory"`
-	Status             string          `json:"status"`
-	ReviewStatus       string          `json:"reviewStatus"`
-	Confidence         float64         `json:"confidence"`
-	FileType           string          `json:"fileType"`
-	SourceType         string          `json:"sourceType"`
-	ParseStatus        string          `json:"parseStatus"`
-	OCRPending         bool            `json:"ocrPending"`
-	IsScannedSuspected bool            `json:"isScannedSuspected"`
-	ProcessingNotes    json.RawMessage `json:"processingNotes"`
-	CreatedAt          time.Time       `json:"createdAt"`
-	UpdatedAt          time.Time       `json:"updatedAt"`
+	ID                   int64           `json:"id"`
+	CaseID               int64           `json:"caseId"`
+	FileID               int64           `json:"fileId"`
+	VersionNo            int             `json:"versionNo"`
+	ManualCategory       string          `json:"manualCategory"`
+	SuggestedSubCategory string          `json:"suggestedSubCategory"`
+	FinalSubCategory     string          `json:"finalSubCategory"`
+	Status               string          `json:"status"`
+	ReviewStatus         string          `json:"reviewStatus"`
+	Confidence           float64         `json:"confidence"`
+	FileType             string          `json:"fileType"`
+	SourceType           string          `json:"sourceType"`
+	ParseStatus          string          `json:"parseStatus"`
+	OCRPending           bool            `json:"ocrPending"`
+	IsScannedSuspected   bool            `json:"isScannedSuspected"`
+	ProcessingNotes      json.RawMessage `json:"processingNotes"`
+	CreatedAt            time.Time       `json:"createdAt"`
+	UpdatedAt            time.Time       `json:"updatedAt"`
 }
 
 type DocumentSlice struct {
@@ -307,6 +315,44 @@ type DocumentTableCellDTO struct {
 	CreatedAt       time.Time       `json:"createdAt"`
 }
 
+type DocumentFigureCandidate struct {
+	ID          int64           `json:"id"`
+	CaseFileID  int64           `json:"caseFileId"`
+	FileID      int64           `json:"fileId"`
+	VersionNo   int             `json:"versionNo"`
+	PageNo      int             `json:"pageNo"`
+	BlockIndex  int             `json:"blockIndex"`
+	Title       string          `json:"title"`
+	FigureType  string          `json:"figureType"`
+	SourceType  string          `json:"sourceType"`
+	RawText     string          `json:"rawText"`
+	CleanText   string          `json:"cleanText"`
+	DetailJSON  json.RawMessage `json:"detailJson"`
+	BBoxJSON    json.RawMessage `json:"bboxJson"`
+	Confidence  float64         `json:"confidence"`
+	ParseStatus string          `json:"parseStatus"`
+	CreatedAt   time.Time       `json:"createdAt"`
+}
+
+type DocumentFigureCandidateDTO struct {
+	ID          int64           `json:"id"`
+	CaseFileID  int64           `json:"caseFileId"`
+	FileID      int64           `json:"fileId"`
+	VersionNo   int             `json:"versionNo"`
+	PageNo      int             `json:"pageNo"`
+	BlockIndex  int             `json:"blockIndex"`
+	Title       string          `json:"title"`
+	FigureType  string          `json:"figureType"`
+	SourceType  string          `json:"sourceType"`
+	RawText     string          `json:"rawText"`
+	CleanText   string          `json:"cleanText"`
+	Detail      json.RawMessage `json:"detail"`
+	BBox        json.RawMessage `json:"bbox"`
+	Confidence  float64         `json:"confidence"`
+	ParseStatus string          `json:"parseStatus"`
+	CreatedAt   time.Time       `json:"createdAt"`
+}
+
 type ExtractionFact struct {
 	BaseEntity
 	CaseID              int64           `json:"caseId"`
@@ -420,15 +466,15 @@ type AssemblyItemDTO struct {
 }
 
 type ReportCaseDetailDTO struct {
-	Case           ReportCaseDTO             `json:"case"`
-	Files          []ReportCaseFileDTO       `json:"files"`
-	Slices         []DocumentSliceDTO        `json:"slices"`
-	Tables         []DocumentTableDTO        `json:"tables"`
+	Case           ReportCaseDTO              `json:"case"`
+	Files          []ReportCaseFileDTO        `json:"files"`
+	Slices         []DocumentSliceDTO         `json:"slices"`
+	Tables         []DocumentTableDTO         `json:"tables"`
 	TableFragments []DocumentTableFragmentDTO `json:"tableFragments"`
-	TableCells     []DocumentTableCellDTO    `json:"tableCells"`
-	Facts          []ExtractionFactDTO       `json:"facts"`
-	SourceRefs     []FactSourceRefDTO        `json:"sourceRefs"`
-	AssemblyItems  []AssemblyItemDTO         `json:"assemblyItems"`
+	TableCells     []DocumentTableCellDTO     `json:"tableCells"`
+	Facts          []ExtractionFactDTO        `json:"facts"`
+	SourceRefs     []FactSourceRefDTO         `json:"sourceRefs"`
+	AssemblyItems  []AssemblyItemDTO          `json:"assemblyItems"`
 }
 
 type ReviewQueueItemDTO struct {
@@ -480,24 +526,24 @@ func (entity ReportCase) ToDTO() ReportCaseDTO {
 
 func (entity ReportCaseFile) ToDTO() ReportCaseFileDTO {
 	return ReportCaseFileDTO{
-		ID:                  entity.ID,
-		CaseID:              entity.CaseID,
-		FileID:              entity.FileID,
-		VersionNo:           entity.VersionNo,
-		ManualCategory:      entity.ManualCategory,
+		ID:                   entity.ID,
+		CaseID:               entity.CaseID,
+		FileID:               entity.FileID,
+		VersionNo:            entity.VersionNo,
+		ManualCategory:       entity.ManualCategory,
 		SuggestedSubCategory: entity.SuggestedSubCategory,
-		FinalSubCategory:    entity.FinalSubCategory,
-		Status:              entity.Status,
-		ReviewStatus:        entity.ReviewStatus,
-		Confidence:          entity.Confidence,
-		FileType:            entity.FileType,
-		SourceType:          entity.SourceType,
-		ParseStatus:         entity.ParseStatus,
-		OCRPending:          entity.OCRPending,
-		IsScannedSuspected:  entity.IsScannedSuspected,
-		ProcessingNotes:     entity.ProcessingNotesJSON,
-		CreatedAt:           entity.CreatedAt,
-		UpdatedAt:           entity.UpdatedAt,
+		FinalSubCategory:     entity.FinalSubCategory,
+		Status:               entity.Status,
+		ReviewStatus:         entity.ReviewStatus,
+		Confidence:           entity.Confidence,
+		FileType:             entity.FileType,
+		SourceType:           entity.SourceType,
+		ParseStatus:          entity.ParseStatus,
+		OCRPending:           entity.OCRPending,
+		IsScannedSuspected:   entity.IsScannedSuspected,
+		ProcessingNotes:      entity.ProcessingNotesJSON,
+		CreatedAt:            entity.CreatedAt,
+		UpdatedAt:            entity.UpdatedAt,
 	}
 }
 
@@ -574,6 +620,27 @@ func (entity DocumentTableCell) ToDTO() DocumentTableCellDTO {
 		BBox:            entity.BBoxJSON,
 		Confidence:      entity.Confidence,
 		CreatedAt:       entity.CreatedAt,
+	}
+}
+
+func (entity DocumentFigureCandidate) ToDTO() DocumentFigureCandidateDTO {
+	return DocumentFigureCandidateDTO{
+		ID:          entity.ID,
+		CaseFileID:  entity.CaseFileID,
+		FileID:      entity.FileID,
+		VersionNo:   entity.VersionNo,
+		PageNo:      entity.PageNo,
+		BlockIndex:  entity.BlockIndex,
+		Title:       entity.Title,
+		FigureType:  entity.FigureType,
+		SourceType:  entity.SourceType,
+		RawText:     entity.RawText,
+		CleanText:   entity.CleanText,
+		Detail:      entity.DetailJSON,
+		BBox:        entity.BBoxJSON,
+		Confidence:  entity.Confidence,
+		ParseStatus: entity.ParseStatus,
+		CreatedAt:   entity.CreatedAt,
 	}
 }
 

@@ -30,8 +30,8 @@ type ReportingService interface {
 }
 
 type reportingService struct {
-	reportingRepository repository.ReportingRepository
-	fileRepository      repository.FileRepository
+	reportingRepository  repository.ReportingRepository
+	fileRepository       repository.FileRepository
 	documentParseService DocumentParseService
 }
 
@@ -168,7 +168,7 @@ func (service *reportingService) CreateReportCase(_ context.Context, request mod
 		"reviewPendingCount": 0,
 	})
 	return service.reportingRepository.CreateReportCase(model.ReportCase{
-		BaseEntity: model.BaseEntity{CreatedBy: operatorID, UpdatedBy: operatorID},
+		BaseEntity:  model.BaseEntity{CreatedBy: operatorID, UpdatedBy: operatorID},
 		TemplateID:  request.TemplateID,
 		Name:        request.Name,
 		SubjectID:   request.SubjectID,
@@ -292,7 +292,7 @@ func (service *reportingService) ReviewReportCase(_ context.Context, caseID int6
 				_, _ = service.reportingRepository.UpdateExtractionFact(fact)
 				if reportCase.SubjectID > 0 && (caseFile.ManualCategory == "主体" || caseFile.ManualCategory == "财务") {
 					service.reportingRepository.CreateSubjectAsset(model.SubjectAsset{
-						BaseEntity: model.BaseEntity{CreatedBy: operatorID, UpdatedBy: operatorID},
+						BaseEntity:  model.BaseEntity{CreatedBy: operatorID, UpdatedBy: operatorID},
 						SubjectID:   reportCase.SubjectID,
 						SubjectName: reportCase.SubjectName,
 						AssetType:   caseFile.ManualCategory,
@@ -369,16 +369,17 @@ func (service *reportingService) processSingleCaseFile(ctx context.Context, repo
 	caseFile.OCRPending = parsed.Profile.OCRRequired
 	caseFile.IsScannedSuspected = parsed.Profile.IsScannedSuspected
 	notes, _ := json.Marshal(map[string]any{
-		"originName":          parsed.Version.OriginName,
-		"mimeType":            parsed.Version.MimeType,
-		"sizeBytes":           parsed.Version.SizeBytes,
-		"parseStrategy":       parsed.Profile.ParseStrategy,
-		"hasTextLayer":        parsed.Profile.HasTextLayer,
-		"textDensity":         parsed.Profile.TextDensity,
-		"traceable":           true,
-		"ocrProvider":         "noop",
-		"ocrPending":          parsed.Profile.OCRRequired,
-		"isScannedSuspected":  parsed.Profile.IsScannedSuspected,
+		"originName":         parsed.Version.OriginName,
+		"mimeType":           parsed.Version.MimeType,
+		"sizeBytes":          parsed.Version.SizeBytes,
+		"parseStrategy":      parsed.Profile.ParseStrategy,
+		"hasTextLayer":       parsed.Profile.HasTextLayer,
+		"textDensity":        parsed.Profile.TextDensity,
+		"traceable":          true,
+		"ocrProvider":        "noop",
+		"ocrPending":         parsed.Profile.OCRRequired,
+		"isScannedSuspected": parsed.Profile.IsScannedSuspected,
+		"pdfDiagnostics":     parsed.Profile.PDFDiagnostics,
 	})
 	caseFile.ProcessingNotesJSON = notes
 	caseFile.UpdatedBy = operatorID
@@ -400,27 +401,56 @@ func (service *reportingService) processSingleCaseFile(ctx context.Context, repo
 	persistedTables := make([]model.DocumentTableDTO, 0, len(parsed.Tables))
 	persistedFragments := make([]model.DocumentTableFragmentDTO, 0, len(parsed.TableFragments))
 	persistedCells := make([]model.DocumentTableCellDTO, 0, len(parsed.TableCells))
+	tableIDMap := make(map[int64]int64, len(parsed.Tables))
+	fragmentIDMap := make(map[int64]int64, len(parsed.TableFragments))
 
 	if len(parsed.Tables) > 0 {
-		for _, table := range parsed.Tables {
+		for index, table := range parsed.Tables {
+			originalTableID := table.ID
+			if originalTableID == 0 {
+				originalTableID = int64(index + 1)
+			}
 			table.CaseFileID = caseFile.ID
 			table.FileID = caseFile.FileID
 			table.VersionNo = parsed.Version.VersionNo
-			persistedTables = append(persistedTables, service.reportingRepository.CreateDocumentTable(table))
+			persisted := service.reportingRepository.CreateDocumentTable(table)
+			persistedTables = append(persistedTables, persisted)
+			tableIDMap[originalTableID] = persisted.ID
 		}
 	}
 	if len(parsed.TableFragments) > 0 && len(persistedTables) > 0 {
-		for _, fragment := range parsed.TableFragments {
+		defaultTableID := persistedTables[0].ID
+		for index, fragment := range parsed.TableFragments {
+			originalFragmentID := fragment.ID
+			if originalFragmentID == 0 {
+				originalFragmentID = int64(index + 1)
+			}
 			fragment.CaseFileID = caseFile.ID
-			fragment.TableID = persistedTables[0].ID
-			persistedFragments = append(persistedFragments, service.reportingRepository.CreateDocumentTableFragment(fragment))
+			if mappedTableID, ok := tableIDMap[fragment.TableID]; ok {
+				fragment.TableID = mappedTableID
+			} else {
+				fragment.TableID = defaultTableID
+			}
+			persisted := service.reportingRepository.CreateDocumentTableFragment(fragment)
+			persistedFragments = append(persistedFragments, persisted)
+			fragmentIDMap[originalFragmentID] = persisted.ID
 		}
 	}
 	if len(parsed.TableCells) > 0 && len(persistedTables) > 0 && len(persistedFragments) > 0 {
+		defaultTableID := persistedTables[0].ID
+		defaultFragmentID := persistedFragments[0].ID
 		for _, cell := range parsed.TableCells {
 			cell.CaseFileID = caseFile.ID
-			cell.TableID = persistedTables[0].ID
-			cell.FragmentID = persistedFragments[0].ID
+			if mappedTableID, ok := tableIDMap[cell.TableID]; ok {
+				cell.TableID = mappedTableID
+			} else {
+				cell.TableID = defaultTableID
+			}
+			if mappedFragmentID, ok := fragmentIDMap[cell.FragmentID]; ok {
+				cell.FragmentID = mappedFragmentID
+			} else {
+				cell.FragmentID = defaultFragmentID
+			}
 			persistedCells = append(persistedCells, service.reportingRepository.CreateDocumentTableCell(cell))
 		}
 	}
@@ -447,15 +477,15 @@ func (service *reportingService) createProfileFact(caseFile model.ReportCaseFile
 	})
 	if len(slices) > 0 {
 		service.reportingRepository.CreateFactSourceRef(model.FactSourceRef{
-			FactID:       fact.ID,
-			FileID:       caseFile.FileID,
-			VersionNo:    parsed.Version.VersionNo,
-			SliceID:      slices[0].ID,
-			PageNo:       slices[0].PageStart,
-			BBoxJSON:     slices[0].BBox,
-			QuoteText:    parsed.Version.OriginName,
-			SourceRank:   1,
-			IsPrimary:    true,
+			FactID:     fact.ID,
+			FileID:     caseFile.FileID,
+			VersionNo:  parsed.Version.VersionNo,
+			SliceID:    slices[0].ID,
+			PageNo:     slices[0].PageStart,
+			BBoxJSON:   slices[0].BBox,
+			QuoteText:  parsed.Version.OriginName,
+			SourceRank: 1,
+			IsPrimary:  true,
 		})
 	}
 }
@@ -491,15 +521,15 @@ func (service *reportingService) createSliceFacts(reportCase model.ReportCase, c
 			ExtractorType:       parsed.Profile.SourceType,
 		})
 		service.reportingRepository.CreateFactSourceRef(model.FactSourceRef{
-			FactID:       fact.ID,
-			FileID:       caseFile.FileID,
-			VersionNo:    parsed.Version.VersionNo,
-			SliceID:      slice.ID,
-			PageNo:       slice.PageStart,
-			BBoxJSON:     slice.BBox,
-			QuoteText:    content,
-			SourceRank:   1,
-			IsPrimary:    true,
+			FactID:     fact.ID,
+			FileID:     caseFile.FileID,
+			VersionNo:  parsed.Version.VersionNo,
+			SliceID:    slice.ID,
+			PageNo:     slice.PageStart,
+			BBoxJSON:   slice.BBox,
+			QuoteText:  content,
+			SourceRank: 1,
+			IsPrimary:  true,
 		})
 	}
 }
@@ -598,10 +628,10 @@ func (service *reportingService) refreshCaseSummary(reportCase model.ReportCase,
 		}
 	}
 	summary, _ := json.Marshal(map[string]any{
-		"fileCount":           len(files),
-		"readyCount":          readyCount,
-		"reviewPendingCount":  reviewPendingCount,
-		"needsOCRCount":       needsOCRCount,
+		"fileCount":          len(files),
+		"readyCount":         readyCount,
+		"reviewPendingCount": reviewPendingCount,
+		"needsOCRCount":      needsOCRCount,
 	})
 	reportCase.SummaryJSON = summary
 	reportCase.UpdatedBy = operatorID
@@ -663,6 +693,9 @@ func (service *reportingService) deriveConfidence(originName string, profile Doc
 		return 0.97
 	}
 	if profile.FileType == "pdf" && profile.HasTextLayer {
+		if profile.ParseStrategy == "pdf_decode_failed" {
+			return 0.25
+		}
 		return 0.9
 	}
 	return 0.82
@@ -672,7 +705,20 @@ func chooseParseStatus(parsed ParsedDocument) string {
 	if parsed.Profile.OCRRequired {
 		return model.DocumentParseStatusNeedsOCR
 	}
+	if parsed.Profile.ParseStrategy == "pdf_decode_failed" {
+		return model.DocumentParseStatusFailed
+	}
 	if len(parsed.Slices) == 0 && len(parsed.Tables) == 0 {
+		return model.DocumentParseStatusFailed
+	}
+	allFailed := true
+	for _, slice := range parsed.Slices {
+		if slice.ParseStatus != model.DocumentParseStatusFailed {
+			allFailed = false
+			break
+		}
+	}
+	if allFailed && len(parsed.Slices) > 0 {
 		return model.DocumentParseStatusFailed
 	}
 	return model.DocumentParseStatusParsed

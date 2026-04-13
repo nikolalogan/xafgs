@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button } from 'antd'
+import { Button, Skeleton } from 'antd'
 
 type ConsoleRole = 'admin' | 'user' | 'guest'
 type ExecutionStatus = 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled'
@@ -54,7 +54,6 @@ export default function AppIndexPage() {
   const [role, setRole] = useState<ConsoleRole>('guest')
   const [loading, setLoading] = useState(false)
   const [todoItems, setTodoItems] = useState<WorkflowExecutionSummary[]>([])
-  const [todoTotal, setTodoTotal] = useState(0)
 
   useEffect(() => {
     const raw = (window.localStorage.getItem('sxfg_user_role') || window.localStorage.getItem('user_role') || 'guest').toLowerCase()
@@ -93,10 +92,11 @@ export default function AppIndexPage() {
       const data = await request<WorkflowTaskPage>('/api/workflow/tasks?status=waiting_input&page=1&pageSize=6')
       const items = Array.isArray(data?.items) ? data.items : []
       setTodoItems(items)
-      setTodoTotal(Number(data?.total || 0))
     }
     catch (error) {
-      console.error(error instanceof Error ? error.message : '加载待办任务失败')
+      if (error instanceof Error && error.message === '未登录或登录已过期')
+        return
+      setTodoItems([])
     }
     finally {
       setLoading(false)
@@ -109,45 +109,16 @@ export default function AppIndexPage() {
     fetchTodoTasks()
   }, [hydrated, role])
 
-  const workflowCount = useMemo(() => {
-    return new Set(todoItems.map(item => Number(item.workflowId || 0)).filter(id => id > 0)).size
-  }, [todoItems])
-
-  const latestUpdatedAt = useMemo(() => {
-    if (todoItems.length === 0)
-      return '-'
-    return todoItems[0]?.updatedAt || '-'
-  }, [todoItems])
-
-  const statusView = (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-      <div className="rounded-xl border border-gray-100 p-4">
-        <div className="text-xs text-gray-500">待办总数</div>
-        <div className="mt-2 text-2xl font-semibold text-gray-900">{todoTotal}</div>
-      </div>
-      <div className="rounded-xl border border-gray-100 p-4">
-        <div className="text-xs text-gray-500">待办流程数</div>
-        <div className="mt-2 text-2xl font-semibold text-gray-900">{workflowCount}</div>
-      </div>
-      <div className="rounded-xl border border-gray-100 p-4">
-        <div className="text-xs text-gray-500">最近更新时间</div>
-        <div className="mt-2 text-sm font-medium text-gray-900">{latestUpdatedAt}</div>
-      </div>
+  const skeletonPanel = (
+    <div className="rounded-2xl border border-gray-200 bg-white p-6">
+      <Skeleton active paragraph={{ rows: 4 }} title={{ width: '35%' }} />
     </div>
   )
 
   return (
     <div className="grid grid-cols-1 gap-6 xl:grid-cols-4">
       <section className="xl:col-span-3 space-y-6">
-        <div className="rounded-2xl border border-gray-200 bg-white p-6">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="text-base font-semibold text-gray-900">待办概览</div>
-            <Button size="small" onClick={() => router.push('/app/workflow-tasks?status=waiting_input')}>查看全部待办</Button>
-          </div>
-          {!hydrated || loading
-            ? <div className="text-sm text-gray-500">加载中...</div>
-            : statusView}
-        </div>
+        {skeletonPanel}
 
         <div className="rounded-2xl border border-gray-200 bg-white p-6">
           <div className="mb-4 flex items-center justify-between">
@@ -192,18 +163,10 @@ export default function AppIndexPage() {
 
       <aside className="xl:col-span-1 space-y-6">
         <div className="rounded-2xl border border-gray-200 bg-white p-5">
-          <div className="mb-3 text-sm font-semibold text-gray-900">快捷入口</div>
-          <div className="space-y-2">
-            <Button block onClick={() => router.push('/app/workflow-tasks?status=waiting_input')}>待办任务</Button>
-            <Button block onClick={() => router.push('/app/workflow-tasks')}>任务中心</Button>
-            <Button block onClick={() => router.push('/app/workflows')}>工作流配置</Button>
-          </div>
+          <Skeleton active paragraph={{ rows: 5 }} title={{ width: '45%' }} />
         </div>
         <div className="rounded-2xl border border-gray-200 bg-white p-5">
-          <div className="mb-3 text-sm font-semibold text-gray-900">提示</div>
-          <div className="text-xs leading-6 text-gray-500">
-            当前首页仅展示 `waiting_input` 待办数据，用于快速回到表单提交节点继续流程。
-          </div>
+          <Skeleton active paragraph={{ rows: 4 }} title={{ width: '30%' }} />
         </div>
       </aside>
     </div>

@@ -11,6 +11,7 @@ import { ensureNodeConfig } from '../core/node-config'
 import { edgeTypes, nodeTypes } from '../config/workflowPreset'
 import { validateWorkflow } from '../core/validation'
 import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowGlobalVariable, type WorkflowParameter } from '../core/types'
+import { formatShanghaiDateTime, formatShanghaiFilenameTimestamp } from '@/lib/time'
 
 type RuntimeNodeStatus = 'pending' | 'running' | 'waiting_input' | 'succeeded' | 'failed' | 'skipped'
 
@@ -218,12 +219,7 @@ const getNodePreviewStyle = (status: RuntimeNodeStatus | undefined) => {
 }
 
 const formatTraceTime = (value?: string) => {
-  if (!value)
-    return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime()))
-    return value
-  return date.toLocaleString('zh-CN', { hour12: false })
+  return formatShanghaiDateTime(value)
 }
 
 const formatTraceDuration = (startedAt?: string, endedAt?: string) => {
@@ -1749,7 +1745,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const downloadExecutionSnapshot = () => {
     if (!execution)
       return
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const timestamp = formatShanghaiFilenameTimestamp()
     const filename = `workflow-execution-${execution.id}-${timestamp}.json`
     const payload = JSON.stringify(execution, null, 2)
     const blob = new Blob([payload], { type: 'application/json;charset=utf-8' })

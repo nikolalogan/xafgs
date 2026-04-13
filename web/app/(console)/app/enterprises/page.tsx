@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, message } from 'antd'
+import { formatShanghaiCompactTimestamp } from '@/lib/time'
 
 type AdmissionStatus = 'admitted' | 'rejected' | 'pending'
 
@@ -11,9 +12,6 @@ type EnterpriseDTO = {
   shortName: string
   unifiedCreditCode: string
   regionId: number
-  regionAdminCode?: string
-  regionCode?: string
-  regionName?: string
   admissionStatus: AdmissionStatus
   createdAt: string
   updatedAt: string
@@ -53,19 +51,13 @@ type ApiResponse<T> = {
 
 type ListFilters = {
   keyword: string
-  regionId?: number
   admissionStatus?: AdmissionStatus
 }
 
 type EnterpriseFormValues = {
   shortName: string
   unifiedCreditCode: string
-  regionId?: number
   admissionStatus: AdmissionStatus
-  enterpriseLevel: string
-  industry: string
-  address: string
-  legalPerson: string
 }
 
 const admissionStatusOptions = [
@@ -106,6 +98,7 @@ export default function EnterprisesPage() {
   const [submitting, setSubmitting] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingID, setEditingID] = useState<number | null>(null)
+  const [editingDetail, setEditingDetail] = useState<EnterpriseDetailDTO | null>(null)
   const [items, setItems] = useState<EnterpriseDTO[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -145,8 +138,6 @@ export default function EnterprisesPage() {
     search.set('pageSize', String(pageSize))
     if (filters.keyword.trim())
       search.set('keyword', filters.keyword.trim())
-    if (typeof filters.regionId === 'number' && filters.regionId > 0)
-      search.set('regionId', String(filters.regionId))
     if (filters.admissionStatus)
       search.set('admissionStatus', filters.admissionStatus)
 
@@ -179,8 +170,6 @@ export default function EnterprisesPage() {
     search.set('pageSize', String(targetPageSize))
     if (filters.keyword.trim())
       search.set('keyword', filters.keyword.trim())
-    if (typeof filters.regionId === 'number' && filters.regionId > 0)
-      search.set('regionId', String(filters.regionId))
     if (filters.admissionStatus)
       search.set('admissionStatus', filters.admissionStatus)
     return search
@@ -216,13 +205,10 @@ export default function EnterprisesPage() {
       }
 
       const rows = exportItems.map(item => {
-        const regionCode = item.regionCode || item.regionAdminCode || String(item.regionId || '')
-        const regionName = item.regionName || `区域#${item.regionId || ''}`
         return {
           id: item.id,
           shortName: item.shortName || '',
           unifiedCreditCode: item.unifiedCreditCode || '',
-          region: `${regionName}（${regionCode}）`,
           admissionStatus: admissionStatusLabelMap[item.admissionStatus] || '待定',
           createdAt: item.createdAt || '',
           updatedAt: item.updatedAt || '',
@@ -242,7 +228,6 @@ export default function EnterprisesPage() {
 <td>${escapeHTML(row.id)}</td>
 <td>${escapeHTML(row.shortName)}</td>
 <td>${escapeHTML(row.unifiedCreditCode)}</td>
-<td>${escapeHTML(row.region)}</td>
 <td>${escapeHTML(row.admissionStatus)}</td>
 <td>${escapeHTML(row.createdAt)}</td>
 <td>${escapeHTML(row.updatedAt)}</td>
@@ -259,9 +244,8 @@ export default function EnterprisesPage() {
     <thead>
       <tr>
         <th>ID</th>
-        <th>企业简称</th>
+        <th>企业名称</th>
         <th>统一信用代码</th>
-        <th>所在区域</th>
         <th>准入状态</th>
         <th>创建时间</th>
         <th>更新时间</th>
@@ -275,8 +259,7 @@ export default function EnterprisesPage() {
       const blob = new Blob([`\uFEFF${excelHTML}`], { type: 'application/vnd.ms-excel;charset=utf-8;' })
       const url = window.URL.createObjectURL(blob)
       const anchor = document.createElement('a')
-      const now = new Date()
-      const filename = `企业列表_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}.xls`
+      const filename = `企业列表_${formatShanghaiCompactTimestamp()}.xls`
       anchor.href = url
       anchor.download = filename
       document.body.appendChild(anchor)
@@ -299,16 +282,13 @@ export default function EnterprisesPage() {
 
   const openCreate = () => {
     setEditingID(null)
+    setEditingDetail(null)
     setModalOpen(true)
+    form.resetFields()
     form.setFieldsValue({
       shortName: '',
       unifiedCreditCode: '',
-      regionId: undefined,
       admissionStatus: 'pending',
-      enterpriseLevel: '',
-      industry: '',
-      address: '',
-      legalPerson: '',
     })
   }
 
@@ -316,16 +296,12 @@ export default function EnterprisesPage() {
     try {
       const detail = await request<EnterpriseDetailDTO>(`/api/enterprises/${id}`, { method: 'GET' })
       setEditingID(id)
+      setEditingDetail(detail)
       setModalOpen(true)
       form.setFieldsValue({
         shortName: detail.shortName || '',
         unifiedCreditCode: detail.unifiedCreditCode || '',
-        regionId: detail.regionId,
         admissionStatus: normalizeAdmissionStatus(detail.admissionStatus),
-        enterpriseLevel: detail.enterpriseLevel || '',
-        industry: detail.industry || '',
-        address: detail.address || '',
-        legalPerson: detail.legalPerson || '',
       })
     }
     catch (error) {
@@ -338,20 +314,18 @@ export default function EnterprisesPage() {
       const values = await form.validateFields()
       setSubmitting(true)
       const payload = {
-        shortName: values.shortName,
-        unifiedCreditCode: values.unifiedCreditCode,
-        regionId: Number(values.regionId) || 0,
+        shortName: values.shortName.trim(),
+        unifiedCreditCode: values.unifiedCreditCode.trim(),
         admissionStatus: normalizeAdmissionStatus(values.admissionStatus),
-        enterpriseLevel: values.enterpriseLevel || '',
-        industry: values.industry || '',
-        address: values.address || '',
-        legalPerson: values.legalPerson || '',
       }
 
-      if (editingID) {
+      if (editingID && editingDetail) {
         await request<EnterpriseDetailDTO>(`/api/enterprises/${editingID}`, {
           method: 'PUT',
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            ...editingDetail,
+            ...payload,
+          }),
         })
         msgApi.success('更新企业成功')
       }
@@ -364,6 +338,7 @@ export default function EnterprisesPage() {
       }
 
       setModalOpen(false)
+      setEditingDetail(null)
       lastQueryRef.current = ''
       fetchList()
     }
@@ -401,40 +376,16 @@ export default function EnterprisesPage() {
     },
   }), [page, pageSize, total])
 
-  const regionLabelMap = useMemo(() => {
-    const out = new Map<number, string>()
-    for (const item of items) {
-      if (!item.regionId || out.has(item.regionId))
-        continue
-      const regionCode = item.regionCode || item.regionAdminCode || String(item.regionId)
-      const regionName = item.regionName || `区域#${item.regionId}`
-      out.set(item.regionId, `${regionName}（${regionCode}）`)
-    }
-    return out
-  }, [items])
-
-  const regionOptions = useMemo(
-    () => Array.from(regionLabelMap.entries()).map(([value, label]) => ({ value, label })),
-    [regionLabelMap],
-  )
-
   return (
     <div className="space-y-3">
       {contextHolder}
 
       <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="mb-3 grid gap-2 md:grid-cols-4">
+        <div className="mb-3 grid gap-2 md:grid-cols-3">
           <Input
-            placeholder="简称/统一信用代码"
+            placeholder="企业名称/统一信用代码"
             value={filters.keyword}
             onChange={event => setFilters(prev => ({ ...prev, keyword: event.target.value }))}
-          />
-          <Select
-            allowClear
-            placeholder="所在区域"
-            value={filters.regionId}
-            options={regionOptions}
-            onChange={value => setFilters(prev => ({ ...prev, regionId: value }))}
           />
           <Select
             allowClear
@@ -470,14 +421,8 @@ export default function EnterprisesPage() {
           pagination={pagination}
           columns={[
             { title: 'ID', dataIndex: 'id', width: 80 },
-            { title: '企业简称', dataIndex: 'shortName', width: 180 },
+            { title: '企业名称', dataIndex: 'shortName', width: 180 },
             { title: '统一信用代码', dataIndex: 'unifiedCreditCode', width: 220 },
-            {
-              title: '所在区域',
-              dataIndex: 'regionId',
-              width: 180,
-              render: (value: number) => regionLabelMap.get(value) || `#${value}`,
-            },
             {
               title: '准入状态',
               dataIndex: 'admissionStatus',
@@ -509,34 +454,22 @@ export default function EnterprisesPage() {
       <Modal
         title={editingID ? '编辑企业' : '新增企业'}
         open={modalOpen}
-        onCancel={() => setModalOpen(false)}
+        onCancel={() => {
+          setModalOpen(false)
+          setEditingDetail(null)
+        }}
         onOk={submit}
         confirmLoading={submitting}
         width={680}
         getContainer={false}
-        destroyOnHidden
+        forceRender
       >
         <Form form={form} layout="vertical" initialValues={{ admissionStatus: 'pending' }}>
-          <Form.Item label="企业简称" name="shortName" rules={[{ required: true, message: '请输入企业简称' }]}>
-            <Input placeholder="请输入企业简称" />
+          <Form.Item label="企业名称" name="shortName" rules={[{ required: true, message: '请输入企业名称' }]}>
+            <Input placeholder="请输入企业名称" />
           </Form.Item>
           <Form.Item label="统一信用代码" name="unifiedCreditCode" rules={[{ required: true, message: '请输入统一信用代码' }]}>
-            <Input placeholder="请输入统一信用代码" disabled={!!editingID} />
-          </Form.Item>
-          <Form.Item label="所在区域" name="regionId" rules={[{ required: true, message: '请选择所在区域' }]}>
-            <Select placeholder="请选择所在区域" options={regionOptions} />
-          </Form.Item>
-          <Form.Item label="企业层级" name="enterpriseLevel">
-            <Input placeholder="请输入企业层级" />
-          </Form.Item>
-          <Form.Item label="所属行业" name="industry">
-            <Input placeholder="请输入所属行业" />
-          </Form.Item>
-          <Form.Item label="法人" name="legalPerson">
-            <Input placeholder="请输入法人" />
-          </Form.Item>
-          <Form.Item label="地址" name="address">
-            <Input.TextArea rows={2} placeholder="请输入地址" />
+            <Input placeholder="请输入统一信用代码" />
           </Form.Item>
           <Form.Item label="准入状态" name="admissionStatus">
             <Select options={admissionStatusOptions} />

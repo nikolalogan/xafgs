@@ -18,10 +18,25 @@ type userConfigService struct {
 	repository repository.UserConfigRepository
 }
 
+const (
+	defaultAIBaseURL = "https://api.siliconflow.cn"
+	defaultAIApiKey  = "sk-dninauetsqzfirndyjutohuztdwhevpwfvhmejahsunzcxxn"
+)
+
 func NewUserConfigService(repository repository.UserConfigRepository) UserConfigService {
 	return &userConfigService{
 		repository: repository,
 	}
+}
+
+func withDefaultAIConfig(config model.UserConfigDTO) model.UserConfigDTO {
+	if strings.TrimSpace(config.AIBaseURL) == "" {
+		config.AIBaseURL = defaultAIBaseURL
+	}
+	if strings.TrimSpace(config.AIApiKey) == "" {
+		config.AIApiKey = defaultAIApiKey
+	}
+	return config
 }
 
 func (service *userConfigService) GetByUserID(_ context.Context, userID int64) (model.UserConfigDTO, *model.APIError) {
@@ -30,9 +45,9 @@ func (service *userConfigService) GetByUserID(_ context.Context, userID int64) (
 	}
 	config, ok := service.repository.FindByUserID(userID)
 	if ok {
-		return config, nil
+		return withDefaultAIConfig(config), nil
 	}
-	return model.UserConfigDTO{
+	return withDefaultAIConfig(model.UserConfigDTO{
 		UserID:               userID,
 		WarningAccount:       "",
 		WarningPassword:      "",
@@ -40,7 +55,7 @@ func (service *userConfigService) GetByUserID(_ context.Context, userID int64) (
 		AIApiKey:             "",
 		SearchServiceBaseURL: "",
 		SearchServiceAPIKey:  "",
-	}, nil
+	}), nil
 }
 
 func (service *userConfigService) UpdateByUserID(

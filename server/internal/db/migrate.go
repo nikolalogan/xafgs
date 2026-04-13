@@ -167,6 +167,32 @@ CREATE INDEX IF NOT EXISTS idx_file_status ON file(status);
 CREATE INDEX IF NOT EXISTS idx_file_version_file_version ON file_version(file_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_upload_session_status_expires_at ON upload_session(status, expires_at);
 
+CREATE TABLE IF NOT EXISTS debug_feedback (
+  id BIGSERIAL PRIMARY KEY,
+  title VARCHAR(256) NOT NULL,
+  type VARCHAR(32) NOT NULL CHECK (type IN ('requirement', 'bug')),
+  description TEXT NOT NULL DEFAULT '',
+  status VARCHAR(32) NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
+  submitter_id BIGINT NOT NULL REFERENCES app_user(id),
+  completed_at TIMESTAMPTZ,
+  completed_by_user_id BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS debug_feedback_attachment (
+  id BIGSERIAL PRIMARY KEY,
+  feedback_id BIGINT NOT NULL REFERENCES debug_feedback(id) ON DELETE CASCADE,
+  file_id BIGINT NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+  version_no INT NOT NULL CHECK (version_no > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_debug_feedback_status_created ON debug_feedback(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_debug_feedback_submitter_created ON debug_feedback(submitter_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_debug_feedback_attachment_feedback ON debug_feedback_attachment(feedback_id, id ASC);
+
 CREATE TABLE IF NOT EXISTS region (
   id BIGSERIAL PRIMARY KEY,
   admin_code VARCHAR(64) NOT NULL UNIQUE,
@@ -1009,12 +1035,12 @@ ON CONFLICT (username) DO NOTHING
 )
 	ON CONFLICT (template_key) DO NOTHING
 	`, now)
-		if err != nil {
-			return fmt.Errorf("seed template: %w", err)
-		}
+	if err != nil {
+		return fmt.Errorf("seed template: %w", err)
+	}
 
-		// admission template (modern + minimal)
-		_, err = conn.ExecContext(ctx, `
+	// admission template (modern + minimal)
+	_, err = conn.ExecContext(ctx, `
 	INSERT INTO template (template_key, name, description, engine, output_type, status, content, default_context_json, created_at, updated_at, created_by, updated_by)
 	VALUES (
 	  'admission-template-modern',
@@ -1276,13 +1302,13 @@ ON CONFLICT (username) DO NOTHING
 	  updated_at = EXCLUDED.updated_at,
 	  updated_by = EXCLUDED.updated_by
 	`, now)
-		if err != nil {
-			return fmt.Errorf("seed admission template: %w", err)
-		}
+	if err != nil {
+		return fmt.Errorf("seed admission template: %w", err)
+	}
 
-		// demo workflow
-		defaultDSL := map[string]any{
-			"nodes": []any{
+	// demo workflow
+	defaultDSL := map[string]any{
+		"nodes": []any{
 			map[string]any{
 				"id":       "start",
 				"type":     "custom",

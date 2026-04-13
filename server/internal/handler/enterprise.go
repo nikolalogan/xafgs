@@ -31,7 +31,7 @@ type enterpriseShortNameRequest struct {
 
 type createEnterpriseRequest struct {
 	ShortName                         string                          `json:"shortName" validate:"required"`
-	RegionID                          int64                           `json:"regionId" validate:"required,min=1"`
+	RegionID                          int64                           `json:"regionId" validate:"omitempty,min=1"`
 	InHiddenDebtList                  bool                            `json:"inHiddenDebtList"`
 	In3899List                        bool                            `json:"in3899List"`
 	Meets335Indicator                 bool                            `json:"meets335Indicator"`
@@ -73,7 +73,7 @@ type createEnterpriseRequest struct {
 type enterpriseValidateConflictRequest struct {
 	ExcludeEnterpriseID               *int64                          `json:"excludeEnterpriseId" validate:"omitempty,min=1"`
 	ShortName                         string                          `json:"shortName" validate:"required"`
-	RegionID                          int64                           `json:"regionId" validate:"required,min=1"`
+	RegionID                          int64                           `json:"regionId" validate:"omitempty,min=1"`
 	InHiddenDebtList                  bool                            `json:"inHiddenDebtList"`
 	In3899List                        bool                            `json:"in3899List"`
 	Meets335Indicator                 bool                            `json:"meets335Indicator"`
@@ -115,7 +115,7 @@ type enterpriseValidateConflictRequest struct {
 type updateEnterpriseRequest struct {
 	EnterpriseID                      int64                           `path:"enterpriseId" validate:"required,min=1"`
 	ShortName                         string                          `json:"shortName" validate:"required"`
-	RegionID                          int64                           `json:"regionId" validate:"required,min=1"`
+	RegionID                          int64                           `json:"regionId" validate:"omitempty,min=1"`
 	InHiddenDebtList                  bool                            `json:"inHiddenDebtList"`
 	In3899List                        bool                            `json:"in3899List"`
 	Meets335Indicator                 bool                            `json:"meets335Indicator"`

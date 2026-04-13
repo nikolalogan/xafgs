@@ -16,9 +16,9 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 
 	"sxfgssever/server/internal/ai"
+	"sxfgssever/server/internal/apimeta"
 	"sxfgssever/server/internal/db"
 	"sxfgssever/server/internal/handler"
-	"sxfgssever/server/internal/apimeta"
 	"sxfgssever/server/internal/middleware"
 	"sxfgssever/server/internal/model"
 	"sxfgssever/server/internal/repository"
@@ -47,6 +47,7 @@ func NewApp() (*fiber.App, Config) {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  30 * time.Second,
 		AppName:      cfg.AppName,
+		BodyLimit:    200 * 1024 * 1024,
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			var apiError *model.APIError
 			if errors.As(err, &apiError) {
@@ -97,6 +98,7 @@ func NewApp() (*fiber.App, Config) {
 	templateRepository := repository.NewTemplateRepository()
 	reportingRepository := repository.NewReportingRepository()
 	chatRepository := repository.NewChatRepository()
+	debugFeedbackRepository := repository.NewDebugFeedbackRepository()
 	authRepository := repository.NewAuthRepository(cfg.APIToken)
 
 	dsnConfigured := strings.TrimSpace(os.Getenv("DATABASE_URL")) != ""
@@ -126,6 +128,7 @@ func NewApp() (*fiber.App, Config) {
 			fileRepository = repository.NewPostgresFileRepository(result.DB)
 			templateRepository = repository.NewPostgresTemplateRepository(result.DB)
 			chatRepository = repository.NewPostgresChatRepository(result.DB)
+			debugFeedbackRepository = repository.NewPostgresDebugFeedbackRepository(result.DB)
 			if err := db.Seed(ctx, result.DB); err != nil {
 				log.Printf("PostgreSQL Seed 失败: %v", err)
 			}
@@ -150,6 +153,7 @@ func NewApp() (*fiber.App, Config) {
 	aiClient := ai.NewOpenAICompatClient(nil)
 	webSearchClient := service.NewTavilySearchClient(nil)
 	chatService := service.NewChatService(chatRepository, systemConfigService, userConfigService, fileService, webSearchClient, aiClient)
+	debugFeedbackService := service.NewDebugFeedbackService(debugFeedbackRepository, userRepository, fileRepository, fileService)
 	workflowCodeGenerateService := service.NewWorkflowCodeGenerateService(userConfigService, systemConfigService, aiClient)
 	workflowNodeGenerateService := service.NewWorkflowNodeGenerateService(userConfigService, systemConfigService, aiClient)
 	workflowDSLGenerateService := service.NewWorkflowDSLGenerateService(userConfigService, systemConfigService, fileService, aiClient)
@@ -173,10 +177,11 @@ func NewApp() (*fiber.App, Config) {
 	regionHandler := handler.NewRegionHandler(regionService, apiRegistry)
 	adminDivisionHandler := handler.NewAdminDivisionHandler(adminDivisionService, apiRegistry)
 	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, workflowService, workflowExecutionRateLimiter, userConfigService, apiRegistry)
-	fileHandler := handler.NewFileHandler(fileService, apiRegistry)
+	fileHandler := handler.NewFileHandler(fileService, documentParseService, apiRegistry)
 	templateHandler := handler.NewTemplateHandler(templateService, apiRegistry)
 	reportingHandler := handler.NewReportingHandler(reportingService, apiRegistry)
 	chatHandler := handler.NewChatHandler(chatService, apiRegistry)
+	debugFeedbackHandler := handler.NewDebugFeedbackHandler(debugFeedbackService, apiRegistry)
 	workflowCodeGenerateHandler := handler.NewWorkflowCodeGenerateHandler(workflowCodeGenerateService, apiRegistry)
 	workflowNodeGenerateHandler := handler.NewWorkflowNodeGenerateHandler(workflowNodeGenerateService, apiRegistry)
 	workflowDSLGenerateHandler := handler.NewWorkflowDSLGenerateHandler(workflowDSLGenerateService, apiRegistry)
@@ -186,7 +191,7 @@ func NewApp() (*fiber.App, Config) {
 	app.Use(traceMiddleware.Handler())
 
 	apiMetaHandler := handler.NewAPIMetaHandler(apiRegistry, traceStore)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, reportingHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, reportingHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, debugFeedbackHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

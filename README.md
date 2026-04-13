@@ -197,3 +197,7 @@ make down
 - 请求拦截器：自动注入 `Authorization` 与 `X-Request-ID`
 - 响应拦截器：统一解析响应格式与错误结构
 - Token 管理：`setAccessToken/getAccessToken/clearAccessToken`
+
+## 报告案例文档
+
+- 报告案例使用说明（含附件下载、PDF 解析验证）：`docs/report-cases-usage.md`

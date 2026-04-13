@@ -36,7 +36,11 @@ type fileService struct {
 	sessionTTL     time.Duration
 }
 
-const maxUploadSizeBytes int64 = 50 * 1024 * 1024
+const (
+	maxUploadSizeBytes              int64 = 10 * 1024 * 1024
+	maxDebugFeedbackUploadSizeBytes int64 = 10 * 1024 * 1024
+	debugFeedbackBizKeyPrefix             = "debug-feedback_"
+)
 
 func NewFileService(fileRepository repository.FileRepository, fileStorage FileStorage) FileService {
 	return &fileService{
@@ -112,6 +116,10 @@ func (service *fileService) UploadBySession(_ context.Context, operatorID int64,
 	if time.Now().UTC().After(session.ExpiresAt) {
 		log.Printf("file-upload session failed operator=%d session=%s reason=session_expired", operatorID, cleanSessionID)
 		return model.FileUploadResultDTO{}, model.NewAPIError(409, response.CodeBadRequest, "上传会话已过期")
+	}
+	if apiError := service.validateSessionUploadSize(session, fileHeader); apiError != nil {
+		log.Printf("file-upload session failed operator=%d session=%s reason=size_exceeded err=%s", operatorID, cleanSessionID, apiError.Message)
+		return model.FileUploadResultDTO{}, apiError
 	}
 	if _, ok := service.fileRepository.MarkSessionUploading(session.ID, operatorID); !ok {
 		log.Printf("file-upload session failed operator=%d session=%s reason=session_state_unavailable", operatorID, cleanSessionID)
@@ -256,7 +264,7 @@ func (service *fileService) persistUploadedFile(fileID int64, versionNo int, fil
 		return model.UploadedFileMeta{}, model.NewAPIError(400, response.CodeBadRequest, "缺少上传文件")
 	}
 	if fileHeader.Size > 0 && fileHeader.Size > maxUploadSizeBytes {
-		return model.UploadedFileMeta{}, model.NewAPIError(400, response.CodeBadRequest, "上传文件大小不能超过 50MB")
+		return model.UploadedFileMeta{}, model.NewAPIError(400, response.CodeBadRequest, "上传文件大小不能超过 10MB")
 	}
 	fileName := sanitizeFileName(fileHeader.Filename)
 	openedFile, err := fileHeader.Open()
@@ -283,6 +291,20 @@ func (service *fileService) persistUploadedFile(fileID int64, versionNo int, fil
 		Checksum:   checksum,
 		StorageKey: storageKey,
 	}, nil
+}
+
+func (service *fileService) validateSessionUploadSize(session model.UploadSession, fileHeader *multipart.FileHeader) *model.APIError {
+	if fileHeader == nil || fileHeader.Size <= maxDebugFeedbackUploadSizeBytes {
+		return nil
+	}
+	fileEntity, ok := service.fileRepository.FindFileByID(session.FileID)
+	if !ok {
+		return nil
+	}
+	if strings.HasPrefix(fileEntity.BizKey, debugFeedbackBizKeyPrefix) {
+		return model.NewAPIError(400, response.CodeBadRequest, "提交 Bug 的单个附件不能超过 10MB")
+	}
+	return nil
 }
 
 func (service *fileService) expireSessions() {
@@ -341,8 +363,18 @@ func mimeTypeByExt(fileName string) string {
 	switch ext {
 	case ".txt":
 		return "text/plain"
+	case ".md":
+		return "text/markdown"
+	case ".csv":
+		return "text/csv"
+	case ".tsv":
+		return "text/tab-separated-values"
 	case ".pdf":
 		return "application/pdf"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 	case ".jpg", ".jpeg":
 		return "image/jpeg"
 	case ".png":

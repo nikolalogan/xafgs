@@ -7,7 +7,9 @@ ENV CGO_ENABLED=0
 ENV AIR_VERSION=v1.64.5
 ENV GOPROXY=https://goproxy.cn,direct
 ENV GOSUMDB=sum.golang.google.cn
+ENV TZ=Asia/Shanghai
 
+RUN apk add --no-cache tzdata mupdf-tools
 RUN go install github.com/air-verse/air@${AIR_VERSION}
 
 CMD ["air", "-c", ".air.toml"]

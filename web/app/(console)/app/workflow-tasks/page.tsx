@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Checkbox, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, message } from 'antd'
 import { buildExternalRuleInputs, buildLocalRuleInputs, buildPreparedFields, evaluateDynamicFieldStates, evaluateDynamicFieldValidations, validateDynamicInput, type DynamicField, type DynamicFieldState } from '@/components/workflow/dify/core/dynamic-form-rules'
+import { formatShanghaiDateTime } from '@/lib/time'
 
 type ConsoleRole = 'admin' | 'user' | 'guest'
 type ExecutionStatus = 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled'
@@ -312,6 +313,17 @@ export default function WorkflowTasksPage() {
   const [templatePreview, setTemplatePreview] = useState<{ templateName: string, outputType: 'text' | 'html', html: string } | null>(null)
   const [templateError, setTemplateError] = useState('')
 
+  const visibleMenuFilterOptions = useMemo(() => {
+    const reserveOption = { label: '储备', value: 'reserve' }
+    if (role !== 'admin')
+      return [reserveOption]
+    return [
+      reserveOption,
+      { label: '评审', value: 'review' },
+      { label: '保后', value: 'postloan' },
+    ]
+  }, [role])
+
   useEffect(() => {
     const raw = (window.localStorage.getItem('sxfg_user_role') || window.localStorage.getItem('user_role') || 'guest').toLowerCase()
     if (raw === 'admin' || raw === 'user') {
@@ -322,6 +334,13 @@ export default function WorkflowTasksPage() {
     }
     setHydrated(true)
   }, [])
+
+  useEffect(() => {
+    if (role === 'admin')
+      return
+    if (menuFilter === 'review' || menuFilter === 'postloan')
+      setMenuFilter('')
+  }, [menuFilter, role])
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
@@ -356,8 +375,9 @@ export default function WorkflowTasksPage() {
       params.set('pageSize', String(nextPageSize))
       if (statusFilter)
         params.set('status', statusFilter)
-      if (menuFilter)
-        params.set('menuKey', menuFilter)
+      const effectiveMenuFilter = role === 'admin' ? menuFilter : 'reserve'
+      if (effectiveMenuFilter)
+        params.set('menuKey', effectiveMenuFilter)
       if (keyword.trim())
         params.set('keyword', keyword.trim())
       const data = await request<WorkflowTaskPage>(`/api/workflow/tasks?${params.toString()}`, { method: 'GET' })
@@ -709,11 +729,7 @@ export default function WorkflowTasksPage() {
               setMenuFilter(value || '')
               setPage(1)
             }}
-            options={[
-              { label: '储备', value: 'reserve' },
-              { label: '评审', value: 'review' },
-              { label: '保后', value: 'postloan' },
-            ]}
+            options={visibleMenuFilterOptions}
           />
           <Input
             style={{ width: 260 }}
@@ -761,11 +777,13 @@ export default function WorkflowTasksPage() {
               title: '创建时间',
               dataIndex: 'createdAt',
               width: 180,
+              render: (value: string) => formatShanghaiDateTime(value),
             },
             {
               title: '更新时间',
               dataIndex: 'updatedAt',
               width: 180,
+              render: (value: string) => formatShanghaiDateTime(value),
             },
             {
               title: '操作',
@@ -852,7 +870,7 @@ export default function WorkflowTasksPage() {
               <div>任务ID：{selectedExecution.id}</div>
               <div>流程：{selectedExecution.workflowName || '-'}</div>
               <div>状态：{renderStatus(selectedExecution.status)}</div>
-              <div>更新时间：{selectedExecution.updatedAt}</div>
+              <div>更新时间：{formatShanghaiDateTime(selectedExecution.updatedAt)}</div>
             </div>
 
             {(templatePreview || templateError) && (

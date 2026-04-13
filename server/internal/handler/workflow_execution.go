@@ -199,7 +199,6 @@ func (handler *WorkflowExecutionHandler) Start(c *fiber.Ctx, request *startWorkf
 	}
 
 	ctx := workflowruntime.WithRequestID(c.UserContext(), requestID(c))
-	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
 	window := time.Duration(workflow.BreakerWindowMinutes) * time.Minute
 	limiterKey := fmt.Sprintf("%d:%d", userID, request.WorkflowID)
 	if !handler.rateLimiter.Allow(limiterKey, time.Now().UTC(), window, workflow.BreakerMaxRequests) {
@@ -268,7 +267,6 @@ func (handler *WorkflowExecutionHandler) Get(c *fiber.Ctx, request *executionIDP
 	}
 
 	ctx := workflowruntime.WithRequestID(c.UserContext(), requestID(c))
-	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
 	data, apiError := handler.service.Get(ctx, request.ID, userID, role)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
@@ -288,7 +286,6 @@ func (handler *WorkflowExecutionHandler) Stream(c *fiber.Ctx) error {
 	}
 
 	ctx := workflowruntime.WithRequestID(c.UserContext(), requestID(c))
-	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
 	current, updates, unsubscribe, apiError := handler.service.Subscribe(ctx, request.ID, userID, role)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
@@ -380,7 +377,6 @@ func (handler *WorkflowExecutionHandler) Resume(c *fiber.Ctx, request *resumeWor
 	}
 
 	ctx := workflowruntime.WithRequestID(c.UserContext(), requestID(c))
-	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
 	data, apiError := handler.service.Resume(ctx, request.ID, request.NodeID, request.Input, userID, role)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
@@ -395,7 +391,6 @@ func (handler *WorkflowExecutionHandler) Cancel(c *fiber.Ctx, request *execution
 	}
 
 	ctx := workflowruntime.WithRequestID(c.UserContext(), requestID(c))
-	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
 	data, apiError := handler.service.Cancel(ctx, request.ID, userID, role)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)

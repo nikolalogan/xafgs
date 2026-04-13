@@ -60,6 +60,7 @@ type ReportCaseFileDTO = {
   parseStatus: string
   ocrPending: boolean
   isScannedSuspected: boolean
+  processingNotes?: unknown
 }
 
 type ExtractionFactDTO = {
@@ -82,6 +83,7 @@ type FactSourceRefDTO = {
   fragmentId: number
   cellId: number
   pageNo: number
+  bbox?: unknown
   quoteText: string
   tableCellRef?: string
 }
@@ -109,6 +111,25 @@ type DocumentTableDTO = {
   parseStatus: string
 }
 
+type DocumentTableFragmentDTO = {
+  id: number
+  tableId: number
+  pageNo: number
+  rowStart: number
+  rowEnd: number
+  fragmentOrder: number
+}
+
+type DocumentTableCellDTO = {
+  id: number
+  tableId: number
+  fragmentId: number
+  rowIndex: number
+  colIndex: number
+  rawText: string
+  normalizedValue: string
+}
+
 type AssemblyItemDTO = {
   id: number
   templateSlotKey: string
@@ -129,6 +150,8 @@ type ReportCaseDetailDTO = {
   files: ReportCaseFileDTO[]
   slices: DocumentSliceDTO[]
   tables: DocumentTableDTO[]
+  tableFragments: DocumentTableFragmentDTO[]
+  tableCells: DocumentTableCellDTO[]
   facts: ExtractionFactDTO[]
   sourceRefs: FactSourceRefDTO[]
   assemblyItems: AssemblyItemDTO[]
@@ -160,6 +183,80 @@ const getToken = () => {
     || window.localStorage.getItem('access_token')
     || window.localStorage.getItem('token')
     || ''
+}
+
+const parseBBoxMeta = (bbox: unknown): Record<string, unknown> => {
+  if (!bbox)
+    return {}
+  if (typeof bbox === 'object')
+    return bbox as Record<string, unknown>
+  if (typeof bbox !== 'string')
+    return {}
+  try {
+    return JSON.parse(bbox) as Record<string, unknown>
+  }
+  catch {
+    return {}
+  }
+}
+
+const parseProcessingNotes = (notes: unknown): Record<string, unknown> => {
+  if (!notes)
+    return {}
+  if (typeof notes === 'object')
+    return notes as Record<string, unknown>
+  if (typeof notes !== 'string')
+    return {}
+  try {
+    return JSON.parse(notes) as Record<string, unknown>
+  }
+  catch {
+    return {}
+  }
+}
+
+const formatPdfDiagnosticSummary = (notes: unknown) => {
+  const parsed = parseProcessingNotes(notes)
+  const diagnostics = parsed.pdfDiagnostics as Record<string, unknown> | undefined
+  if (!diagnostics)
+    return '-'
+  const pageCount = Number(diagnostics.pageCount || 0)
+  const decodeMode = String(diagnostics.decodeMode || '-')
+  const hasTextOperators = diagnostics.hasTextOperators ? '有文本操作符' : '无文本操作符'
+  const decodeFailed = diagnostics.decodeFailed ? '解码失败' : '解码正常'
+  const pages = Array.isArray(diagnostics.pages) ? diagnostics.pages as Array<Record<string, unknown>> : []
+  const pageSummary = pages.slice(0, 3).map(page => `P${page.pageNo}: ${page.charCount || 0}字`).join('，')
+  return `${decodeMode} / ${hasTextOperators} / ${decodeFailed}${pageCount > 0 ? ` / ${pageCount}页` : ''}${pageSummary ? ` / ${pageSummary}` : ''}`
+}
+
+const formatSourceLocator = (ref: FactSourceRefDTO) => {
+  const bbox = parseBBoxMeta(ref.bbox)
+  const pageNo = Number(bbox.page ?? ref.pageNo ?? 0)
+  const blockNo = Number(bbox.block ?? 0)
+  const parts: string[] = []
+  if (pageNo > 0)
+    parts.push(`第${pageNo}页`)
+  if (blockNo > 0)
+    parts.push(`块${blockNo}`)
+  if (ref.cellId) {
+    const cellRef = ref.tableCellRef?.includes('!')
+      ? ref.tableCellRef.split('!').pop()
+      : ref.tableCellRef
+    if (cellRef)
+      parts.push(`单元格${cellRef}`)
+    else
+      parts.push('表格单元格')
+    return parts.join(' / ')
+  }
+  if (ref.sliceId) {
+    parts.push('文本切片')
+    return parts.join(' / ')
+  }
+  if (ref.tableId) {
+    parts.push('表格')
+    return parts.join(' / ')
+  }
+  return parts.join(' / ') || `文件#${ref.fileId}`
 }
 
   const statusColorMap: Record<string, string> = {
@@ -321,6 +418,48 @@ export default function ReportCasesPage() {
     }
   }
 
+  const downloadCaseFile = async (fileId: number, versionNo: number) => {
+    const token = getToken()
+    if (!token) {
+      msgApi.error('缺少登录令牌，请重新登录后再试')
+      return
+    }
+    const query = versionNo > 0 ? `?versionNo=${encodeURIComponent(String(versionNo))}` : ''
+    try {
+      const response = await fetch(`/api/files/${fileId}/download${query}`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: 'include',
+      })
+      if (!response.ok) {
+        let message = '下载失败'
+        const contentType = response.headers.get('content-type') || ''
+        if (contentType.includes('application/json')) {
+          const payload = await response.json() as ApiResponse<unknown>
+          message = payload.message || message
+        }
+        throw new Error(message)
+      }
+      const blob = await response.blob()
+      const disposition = response.headers.get('content-disposition') || ''
+      const matched = disposition.match(/filename="?([^"]+)"?/)
+      const fileName = matched?.[1] || `file-${fileId}-v${versionNo || 1}`
+      const objectURL = window.URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectURL
+      anchor.download = decodeURIComponent(fileName)
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.URL.revokeObjectURL(objectURL)
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '下载失败')
+    }
+  }
+
   const submitReview = async () => {
     if (!selectedCase) {
       msgApi.warning('请先选择报告实例')
@@ -426,14 +565,25 @@ export default function ReportCasesPage() {
                 dataSource={selectedCase.files}
                 columns={[
                   { title: '文件ID', dataIndex: 'fileId', width: 90 },
+                  { title: '版本', dataIndex: 'versionNo', width: 80 },
                   { title: '大类', dataIndex: 'manualCategory', width: 90 },
                   { title: '建议细类', dataIndex: 'suggestedSubCategory' },
                   { title: '最终细类', dataIndex: 'finalSubCategory' },
                   { title: '文件类型', dataIndex: 'fileType', width: 100 },
                   { title: '来源类型', dataIndex: 'sourceType', width: 110 },
                   { title: '解析状态', dataIndex: 'parseStatus', width: 110, render: value => <Tag color={statusColorMap[value] || 'default'}>{value}</Tag> },
+                  { title: '诊断摘要', width: 320, render: (_, record) => <span className="text-xs text-gray-600">{formatPdfDiagnosticSummary(record.processingNotes)}</span> },
                   { title: '置信度', dataIndex: 'confidence', width: 100, render: value => Number(value || 0).toFixed(2) },
                   { title: '复核', dataIndex: 'reviewStatus', width: 110, render: value => <Tag color={statusColorMap[value] || 'default'}>{value}</Tag> },
+                  {
+                    title: '操作',
+                    width: 100,
+                    render: (_, record) => (
+                      <Button size="small" onClick={() => downloadCaseFile(record.fileId, record.versionNo)}>
+                        下载
+                      </Button>
+                    ),
+                  },
                 ]}
               />
             </div>
@@ -441,7 +591,7 @@ export default function ReportCasesPage() {
 
           <Card title="切片与表格">
             <div className="mb-3 text-xs text-gray-500">
-              电子文档可生成段落/表格切片；扫描件当前只保留页级占位并标记为待 OCR。
+              PDF 现按页输出，并补充页内表格候选块；扫描件当前只保留页级占位并标记为待 OCR。
             </div>
             <div className="mb-2 text-sm font-semibold text-gray-900">DocumentSlice</div>
             <Table
@@ -453,6 +603,7 @@ export default function ReportCasesPage() {
                 { title: 'ID', dataIndex: 'id', width: 70 },
                 { title: '类型', dataIndex: 'sliceType', width: 110 },
                 { title: '来源', dataIndex: 'sourceType', width: 110 },
+                { title: '标题', dataIndex: 'title', width: 220, ellipsis: true },
                 { title: '页码', render: (_, record) => `${record.pageStart}-${record.pageEnd}`, width: 90 },
                 { title: '状态', dataIndex: 'parseStatus', width: 110, render: value => <Tag color={statusColorMap[value] || 'default'}>{value}</Tag> },
                 {
@@ -477,6 +628,34 @@ export default function ReportCasesPage() {
                 { title: '表头行', dataIndex: 'headerRowCount', width: 90 },
                 { title: '来源', dataIndex: 'sourceType', width: 110 },
                 { title: '状态', dataIndex: 'parseStatus', width: 110, render: value => <Tag color={statusColorMap[value] || 'default'}>{value}</Tag> },
+              ]}
+            />
+            <div className="mt-4 mb-2 text-sm font-semibold text-gray-900">DocumentTableFragment</div>
+            <Table
+              rowKey="id"
+              size="small"
+              pagination={false}
+              dataSource={selectedCase.tableFragments}
+              columns={[
+                { title: 'ID', dataIndex: 'id', width: 70 },
+                { title: '表格ID', dataIndex: 'tableId', width: 90 },
+                { title: '页码', dataIndex: 'pageNo', width: 80 },
+                { title: '行范围', render: (_, record) => `${record.rowStart}-${record.rowEnd}`, width: 100 },
+                { title: '顺序', dataIndex: 'fragmentOrder', width: 80 },
+              ]}
+            />
+            <div className="mt-4 mb-2 text-sm font-semibold text-gray-900">DocumentTableCell</div>
+            <Table
+              rowKey="id"
+              size="small"
+              pagination={{ pageSize: 10 }}
+              dataSource={selectedCase.tableCells}
+              columns={[
+                { title: 'ID', dataIndex: 'id', width: 70 },
+                { title: '表格ID', dataIndex: 'tableId', width: 90 },
+                { title: '片段ID', dataIndex: 'fragmentId', width: 90 },
+                { title: '坐标', render: (_, record) => `R${record.rowIndex}C${record.colIndex}`, width: 100 },
+                { title: '内容', dataIndex: 'normalizedValue' },
               ]}
             />
           </Card>
@@ -510,12 +689,8 @@ export default function ReportCasesPage() {
                         render: (_, record) => {
                           const refs = item.sourceRefs.filter(ref => ref.factId === record.id)
                           return refs.map((ref) => {
-                            const locator = ref.cellId
-                              ? `table#${ref.tableId}/cell#${ref.cellId}`
-                              : ref.sliceId
-                                ? `slice#${ref.sliceId}`
-                                : `p${ref.pageNo}`
-                            return `file#${ref.fileId}/v${ref.versionNo}/${locator}: ${ref.quoteText || ref.tableCellRef || '-'}`
+                            const locator = formatSourceLocator(ref)
+                            return `文件#${ref.fileId}/v${ref.versionNo} / ${locator}: ${ref.quoteText || ref.tableCellRef || '-'}`
                           }).join('；') || '-'
                         },
                       },

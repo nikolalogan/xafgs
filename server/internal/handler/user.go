@@ -30,6 +30,11 @@ type updateUserRequest struct {
 	Role     string `json:"role" validate:"required,oneof=admin user"`
 }
 
+type changeCurrentPasswordRequest struct {
+	CurrentPassword string `json:"currentPassword" validate:"required"`
+	NewPassword     string `json:"newPassword" validate:"required"`
+}
+
 type UserHandler struct {
 	userService service.UserService
 	registry    *apimeta.Registry
@@ -50,6 +55,13 @@ func (handler *UserHandler) Register(router fiber.Router, adminMiddleware fiber.
 		Auth:               "auth",
 		SuccessDataExample: apimeta.ExampleFromType[model.UserDTO](),
 	}, handler.GetCurrentUser)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[changeCurrentPasswordRequest]{
+		Method:             fiber.MethodPut,
+		Path:               "/users/me/password",
+		Summary:            "当前用户修改密码",
+		Auth:               "auth",
+		SuccessDataExample: true,
+	}, handler.ChangeCurrentUserPassword)
 
 	adminMiddlewares := []fiber.Handler{adminMiddleware}
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[struct{}]{
@@ -169,4 +181,20 @@ func (handler *UserHandler) DeleteUser(c *fiber.Ctx, request *userIDPathRequest)
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, true, "删除用户成功")
+}
+
+func (handler *UserHandler) ChangeCurrentUserPassword(c *fiber.Ctx, request *changeCurrentPasswordRequest) error {
+	operatorID, ok := c.Locals(middleware.LocalAuthUserID).(int64)
+	if !ok || operatorID <= 0 {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+
+	apiError := handler.userService.ChangeCurrentPassword(c.UserContext(), operatorID, model.ChangeCurrentUserPasswordRequest{
+		CurrentPassword: strings.TrimSpace(request.CurrentPassword),
+		NewPassword:     strings.TrimSpace(request.NewPassword),
+	}, operatorID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, true, "修改密码成功")
 }

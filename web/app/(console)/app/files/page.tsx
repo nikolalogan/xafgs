@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Form, Input, Modal, Space, Table, Tag, message } from 'antd'
+import { Button, Descriptions, Form, Input, Modal, Space, Table, Tabs, Tag, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
 
 type FileVersionDTO = {
@@ -44,6 +44,80 @@ type ApiResponse<T> = {
   data?: T
 }
 
+type FileParseResultDTO = {
+  version: FileVersionDTO
+  profile: {
+    parseStrategy?: string
+    fileType?: string
+    sourceType?: string
+    pageCount?: number
+    hasTextLayer?: boolean
+  }
+  sliceCount: number
+  tableCount: number
+  figureCount: number
+  fragmentCount: number
+  cellCount: number
+  slices: FileParseSlicePreviewDTO[]
+  tables: FileParseTablePreviewDTO[]
+  figures: FileParseFigurePreviewDTO[]
+}
+
+type ParseProfile = FileParseResultDTO['profile']
+
+type FileParseSlicePreviewDTO = {
+  sliceType: string
+  title: string
+  pageStart: number
+  pageEnd: number
+  sourceRef: string
+  bbox: Record<string, unknown> | null
+  cleanText: string
+  confidence: number
+  parseStatus: string
+}
+
+type FileParseTableCellPreviewDTO = {
+  text: string
+  sourceRef: string
+}
+
+type FileParseTableRowPreviewDTO = {
+  rowIndex: number
+  cells: FileParseTableCellPreviewDTO[]
+}
+
+type FileParseTablePreviewDTO = {
+  title: string
+  pageStart: number
+  pageEnd: number
+  headerRowCount: number
+  columnCount: number
+  sourceRef: string
+  bbox: Record<string, unknown> | null
+  previewRows: FileParseTableRowPreviewDTO[]
+}
+
+type FileParseFigurePreviewDTO = {
+  title: string
+  figureType: string
+  pageNo: number
+  sourceRef: string
+  bbox: Record<string, unknown> | null
+  cleanText: string
+  regions: FileParseFigureRegionPreviewDTO[]
+  confidence: number
+  parseStatus: string
+}
+
+type FileParseFigureRegionPreviewDTO = {
+  rowIndex: number
+  region: string
+  text: string
+  sourceRef: string
+  bbox: Record<string, unknown> | null
+}
+
 const getToken = () => {
   if (typeof window === 'undefined')
     return ''
@@ -63,6 +137,62 @@ const formatSize = (value: number) => {
   return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
+const formatBoolean = (value?: boolean) => {
+  if (value === true)
+    return '是'
+  if (value === false)
+    return '否'
+  return '-'
+}
+
+const getParseTaskKey = (fileID: number, versionNo: number) => `${fileID}:${versionNo}`
+
+const getParseStrategyLabel = (profile?: ParseProfile) => {
+  if (!profile)
+    return '-'
+  return profile.parseStrategy || '-'
+}
+
+const formatFigureType = (value?: string) => {
+  if (!value)
+    return '-'
+  switch (value) {
+    case 'structure_chart':
+      return '结构图'
+    case 'flow_chart':
+      return '流程图'
+    case 'org_chart':
+      return '组织结构图'
+    default:
+      return '图表示意'
+  }
+}
+
+const formatFigureRegion = (value?: string) => {
+  switch (value) {
+    case 'left':
+      return '左区'
+    case 'right':
+      return '右区'
+    case 'center':
+      return '中区'
+    default:
+      return value || '-'
+  }
+}
+
+const copyText = async (value: string) => {
+  if (typeof navigator === 'undefined' || !navigator.clipboard)
+    throw new Error('当前环境不支持复制')
+  await navigator.clipboard.writeText(value)
+}
+
+const buildSliceRowKey = (row: FileParseSlicePreviewDTO) => `${row.sliceType}-${row.sourceRef}-${row.title || 'untitled'}-${row.pageStart}-${row.pageEnd}`
+
+const buildTableRowKey = (row: FileParseTablePreviewDTO) => `${row.title}-${row.sourceRef}-${row.pageStart}-${row.pageEnd}`
+
+const buildFigureRowKey = (row: FileParseFigurePreviewDTO) => `${row.figureType}-${row.sourceRef}-${row.title}-${row.pageNo}`
+
 export default function FilesPage() {
   const router = useRouter()
   const [msgApi, contextHolder] = message.useMessage()
@@ -80,6 +210,9 @@ export default function FilesPage() {
   const [versionLoading, setVersionLoading] = useState(false)
   const [versionRows, setVersionRows] = useState<FileVersionDTO[]>([])
   const [versionTargetFileID, setVersionTargetFileID] = useState<number>(0)
+  const [parseLoadingMap, setParseLoadingMap] = useState<Record<string, boolean>>({})
+  const [parseResultModalOpen, setParseResultModalOpen] = useState(false)
+  const [parseResult, setParseResult] = useState<FileParseResultDTO | null>(null)
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
@@ -218,6 +351,35 @@ export default function FilesPage() {
     }
   }
 
+  const parseVersion = async (fileID: number, versionNo: number) => {
+    const taskKey = getParseTaskKey(fileID, versionNo)
+    setParseLoadingMap(prev => ({ ...prev, [taskKey]: true }))
+    try {
+      const data = await request<FileParseResultDTO>(`/api/files/${fileID}/parse?versionNo=${versionNo}`, { method: 'POST' })
+      setParseResult(data)
+      setParseResultModalOpen(true)
+      msgApi.success(`解析完成：v${data.version.versionNo}，strategy=${getParseStrategyLabel(data.profile)}，table=${data.tableCount}，figure=${data.figureCount}`)
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '触发解析失败')
+    }
+    finally {
+      setParseLoadingMap(prev => ({ ...prev, [taskKey]: false }))
+    }
+  }
+
+  const copyParseSummary = async () => {
+    if (!parseResult)
+      return
+    try {
+      await copyText(JSON.stringify(parseResult, null, 2))
+      msgApi.success('解析摘要已复制')
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '复制失败')
+    }
+  }
+
   if (!hydrated) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-6">
@@ -307,6 +469,14 @@ export default function FilesPage() {
                   <Button size="small" loading={uploading} onClick={() => uploadNewVersion(record.id)}>上传新版本</Button>
                   <Button size="small" onClick={() => openVersions(record.id)}>查看版本</Button>
                   <Button size="small" onClick={() => resolveVersion(record.id, 0)}>解析最新引用</Button>
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={Boolean(parseLoadingMap[getParseTaskKey(record.id, 0)])}
+                    onClick={() => parseVersion(record.id, 0)}
+                  >
+                    解析
+                  </Button>
                 </Space>
               ),
             },
@@ -335,11 +505,162 @@ export default function FilesPage() {
             { title: '上传时间', dataIndex: 'createdAt', width: 180 },
             {
               title: '操作',
-              width: 120,
-              render: (_, row) => <Button size="small" onClick={() => resolveVersion(row.fileId, row.versionNo)}>解析</Button>,
+              width: 220,
+              render: (_, row) => (
+                <Space wrap>
+                  <Button size="small" onClick={() => resolveVersion(row.fileId, row.versionNo)}>解析引用</Button>
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={Boolean(parseLoadingMap[getParseTaskKey(row.fileId, row.versionNo)])}
+                    onClick={() => parseVersion(row.fileId, row.versionNo)}
+                  >
+                    解析
+                  </Button>
+                </Space>
+              ),
             },
           ]}
         />
+      </Modal>
+
+      <Modal
+        title={parseResult ? `解析结果 · 文件 ${parseResult.version.fileId} / v${parseResult.version.versionNo}` : '解析结果'}
+        open={parseResultModalOpen}
+        onCancel={() => setParseResultModalOpen(false)}
+        footer={[
+          <Button key="close" type="primary" onClick={() => setParseResultModalOpen(false)}>
+            关闭
+          </Button>,
+        ]}
+        width={880}
+      >
+        {parseResult
+          ? (
+              <div className="space-y-4">
+                <Descriptions bordered size="small" column={2}>
+                  <Descriptions.Item label="文件名" span={2}>{parseResult.version.originName}</Descriptions.Item>
+                  <Descriptions.Item label="文件ID">{parseResult.version.fileId}</Descriptions.Item>
+                  <Descriptions.Item label="版本号">{parseResult.version.versionNo}</Descriptions.Item>
+                  <Descriptions.Item label="MIME">{parseResult.version.mimeType}</Descriptions.Item>
+                  <Descriptions.Item label="大小">{formatSize(parseResult.version.sizeBytes)}</Descriptions.Item>
+                  <Descriptions.Item label="解析策略">{getParseStrategyLabel(parseResult.profile)}</Descriptions.Item>
+                  <Descriptions.Item label="来源类型">{parseResult.profile?.sourceType || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="文件类型">{parseResult.profile?.fileType || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="页数">{parseResult.profile?.pageCount ?? '-'}</Descriptions.Item>
+                  <Descriptions.Item label="文本层">{formatBoolean(parseResult.profile?.hasTextLayer)}</Descriptions.Item>
+                </Descriptions>
+                <Descriptions bordered size="small" column={2}>
+                  <Descriptions.Item label="Slice 数">{parseResult.sliceCount}</Descriptions.Item>
+                  <Descriptions.Item label="表格数">{parseResult.tableCount}</Descriptions.Item>
+                  <Descriptions.Item label="图表候选数">{parseResult.figureCount}</Descriptions.Item>
+                  <Descriptions.Item label="表格片段数">{parseResult.fragmentCount}</Descriptions.Item>
+                  <Descriptions.Item label="单元格数">{parseResult.cellCount}</Descriptions.Item>
+                </Descriptions>
+                <div className="flex justify-end">
+                  <Button onClick={copyParseSummary}>复制解析摘要</Button>
+                </div>
+                <Tabs
+                  items={[
+                    {
+                      key: 'slices',
+                      label: `Slices (${parseResult.slices.length})`,
+                      children: (
+                        <Table<FileParseSlicePreviewDTO>
+                          rowKey={buildSliceRowKey}
+                          size="small"
+                          pagination={{ pageSize: 6, showSizeChanger: false }}
+                          dataSource={parseResult.slices}
+                          columns={[
+                            { title: '类型', dataIndex: 'sliceType', width: 140 },
+                            { title: '标题', dataIndex: 'title', width: 220, render: value => value || '-' },
+                            { title: '来源', dataIndex: 'sourceRef', width: 160 },
+                            { title: '状态', dataIndex: 'parseStatus', width: 110 },
+                            { title: '置信度', dataIndex: 'confidence', width: 100, render: value => Number(value || 0).toFixed(2) },
+                            { title: '内容摘要', dataIndex: 'cleanText', render: value => value || '-' },
+                          ]}
+                        />
+                      ),
+                    },
+                    {
+                      key: 'tables',
+                      label: `Tables (${parseResult.tables.length})`,
+                      children: (
+                        <Table<FileParseTablePreviewDTO>
+                          rowKey={buildTableRowKey}
+                          size="small"
+                          pagination={{ pageSize: 6, showSizeChanger: false }}
+                          expandable={{
+                            expandedRowRender: record => (
+                              <Table<FileParseTableRowPreviewDTO>
+                                rowKey={row => `${record.sourceRef}-${row.rowIndex}`}
+                                size="small"
+                                pagination={false}
+                                dataSource={record.previewRows}
+                                columns={[
+                                  { title: '行', dataIndex: 'rowIndex', width: 80 },
+                                  {
+                                    title: '单元格预览',
+                                    render: (_, row) => row.cells.map(cell => `${cell.text} (${cell.sourceRef})`).join(' | ') || '-',
+                                  },
+                                ]}
+                              />
+                            ),
+                            rowExpandable: record => record.previewRows.length > 0,
+                          }}
+                          dataSource={parseResult.tables}
+                          columns={[
+                            { title: '标题', dataIndex: 'title', width: 220 },
+                            { title: '来源', dataIndex: 'sourceRef', width: 160 },
+                            { title: '列数', dataIndex: 'columnCount', width: 90 },
+                            { title: '表头行', dataIndex: 'headerRowCount', width: 90 },
+                            { title: '页码', render: (_, row) => row.pageStart === row.pageEnd ? `第${row.pageStart}页` : `第${row.pageStart}-${row.pageEnd}页`, width: 120 },
+                          ]}
+                        />
+                      ),
+                    },
+                    {
+                      key: 'figures',
+                      label: `图表候选 (${parseResult.figures.length})`,
+                      children: (
+                        <Table<FileParseFigurePreviewDTO>
+                          rowKey={buildFigureRowKey}
+                          size="small"
+                          pagination={{ pageSize: 6, showSizeChanger: false }}
+                          expandable={{
+                            expandedRowRender: record => (
+                              <Table<FileParseFigureRegionPreviewDTO>
+                                rowKey={row => `${record.sourceRef}-${row.rowIndex}-${row.region}-${row.text}`}
+                                size="small"
+                                pagination={false}
+                                dataSource={record.regions}
+                                columns={[
+                                  { title: '行', dataIndex: 'rowIndex', width: 80 },
+                                  { title: '区域', dataIndex: 'region', width: 100, render: value => formatFigureRegion(value) },
+                                  { title: '来源', dataIndex: 'sourceRef', width: 160 },
+                                  { title: '节点文本', dataIndex: 'text', render: value => value || '-' },
+                                ]}
+                              />
+                            ),
+                            rowExpandable: record => record.regions.length > 0,
+                          }}
+                          dataSource={parseResult.figures}
+                          columns={[
+                            { title: '标题', dataIndex: 'title', width: 260 },
+                            { title: '图示类型', dataIndex: 'figureType', width: 120, render: value => formatFigureType(value) },
+                            { title: '来源', dataIndex: 'sourceRef', width: 160 },
+                            { title: '状态', dataIndex: 'parseStatus', width: 110 },
+                            { title: '置信度', dataIndex: 'confidence', width: 100, render: value => Number(value || 0).toFixed(2) },
+                            { title: '内容摘要', dataIndex: 'cleanText', render: value => value || '-' },
+                          ]}
+                        />
+                      ),
+                    },
+                  ]}
+                />
+              </div>
+            )
+          : null}
       </Modal>
     </div>
   )

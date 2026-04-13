@@ -2,8 +2,10 @@
 
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
-import { Breadcrumb, Button, Drawer, Grid, Layout, Menu, Space, Tag, Typography } from 'antd'
+import { Breadcrumb, Button, Drawer, Grid, Layout, Menu, Modal, Space, Tag, Typography } from 'antd'
 import type { MenuProps } from 'antd'
+import DebugFeedbackEntry from './DebugFeedbackEntry'
+import { clearStoredCurrentUser } from '@/lib/current-user'
 
 type ConsoleRole = 'admin' | 'user' | 'guest'
 
@@ -36,10 +38,10 @@ const menuItems: MenuItem[] = [
   { key: 'workflow-tasks', label: '任务中心', href: '/app/workflow-tasks', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'workflow-config', label: '工作流配置', href: '/app/workflows', roles: ['admin'] as ConsoleRole[] },
   { key: 'reserve', label: '储备', href: '/app/workflows?menuKey=reserve', roles: ['admin', 'user'] as ConsoleRole[] },
-  { key: 'review', label: '评审', href: '/app/workflows?menuKey=review', roles: ['admin', 'user'] as ConsoleRole[] },
-  { key: 'postloan', label: '保后', href: '/app/workflows?menuKey=postloan', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'review', label: '评审', href: '/app/workflows?menuKey=review', roles: ['admin'] as ConsoleRole[] },
+  { key: 'postloan', label: '保后', href: '/app/workflows?menuKey=postloan', roles: ['admin'] as ConsoleRole[] },
   { key: 'templates', label: '模板配置', href: '/app/templates', roles: ['admin'] as ConsoleRole[] },
-  { key: 'report-cases', label: '报告组装', href: '/app/report-cases', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'report-cases', label: '报告组装', href: '/app/report-cases', roles: ['admin'] as ConsoleRole[] },
   { key: 'files', label: '文件管理', href: '/app/files', roles: ['admin'] as ConsoleRole[] },
   { key: 'enterprises', label: '企业管理', href: '/app/enterprises', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'admin-divisions', label: '行政区划', href: '/app/admin-divisions', roles: ['admin'] as ConsoleRole[] },
@@ -95,6 +97,8 @@ const getPageTitle = (pathname: string, search: string) => {
     return '用户配置'
   if (pathname.startsWith('/app/api-meta'))
     return 'API 查询'
+  if (pathname.startsWith('/app/debug-feedback'))
+    return 'Debug 列表'
   if (pathname.startsWith('/app/workflows'))
     return '工作流配置'
   if (pathname.startsWith('/app/workflow'))
@@ -189,6 +193,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['控制台', '用户配置']
     if (pathname.startsWith('/app/api-meta'))
       return ['控制台', 'API 查询']
+    if (pathname.startsWith('/app/debug-feedback'))
+      return ['控制台', 'Debug 列表']
     if (pathname.startsWith('/app/workflows'))
       return ['控制台', '工作流配置']
     if (pathname.startsWith('/app/workflow'))
@@ -204,6 +210,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     window.localStorage.removeItem('token')
     window.localStorage.removeItem('sxfg_user_role')
     window.localStorage.removeItem('user_role')
+    clearStoredCurrentUser()
     setRole('guest')
     router.push('/login?redirect=/app')
   }
@@ -261,6 +268,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     run()
   }, [role])
 
+  useEffect(() => {
+    if (typeof window === 'undefined')
+      return
+    if (role !== 'admin' && role !== 'user')
+      return
+    if (window.sessionStorage.getItem('sxfg_default_password_prompt') !== '1')
+      return
+
+    window.sessionStorage.removeItem('sxfg_default_password_prompt')
+    Modal.confirm({
+      title: '请尽快修改默认密码',
+      content: '当前账号仍在使用默认密码 123456，建议立即前往用户配置修改密码。',
+      okText: '去修改',
+      cancelText: '稍后再说',
+      onOk: () => router.push('/app/user-config#change-password'),
+    })
+  }, [role, router])
+
   const workflowChildren = useMemo(() => {
     const safeWorkflows = Array.isArray(workflows) ? workflows : []
     const activeWorkflows = safeWorkflows.filter(w => w && w.status === 'active' && Number(w.currentPublishedVersionNo) > 0)
@@ -277,6 +302,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return childrenByKey
   }, [workflows])
 
+  const globalConfigKeys = useMemo(() => ([
+    'chat',
+    'workflow-config',
+    'templates',
+    'admin-divisions',
+    'system-settings',
+    'api-meta',
+    'users',
+    'files',
+    'report-cases',
+  ]), [])
+
     const menuTree = useMemo(() => {
       const items: MenuProps['items'] = []
       const pushIfVisible = (key: string) => {
@@ -287,9 +324,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       }
 
       pushIfVisible('home')
-      pushIfVisible('chat')
       pushIfVisible('workflow-tasks')
-      pushIfVisible('workflow-config')
 
     if (role === 'admin' || role === 'user') {
       const buildSubMenu = (menuKey: Exclude<WorkflowMenuKey, ''>, title: string) => {
@@ -302,22 +337,32 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         return { key: `${menuKey}-submenu`, label: title, children }
       }
       items.push(buildSubMenu('reserve', '储备'))
-      items.push(buildSubMenu('review', '评审'))
-      items.push(buildSubMenu('postloan', '保后'))
+      if (role === 'admin') {
+        items.push(buildSubMenu('review', '评审'))
+        items.push(buildSubMenu('postloan', '保后'))
+      }
     }
 
-    pushIfVisible('templates')
-    pushIfVisible('report-cases')
-    pushIfVisible('files')
+    const globalConfigChildren: NonNullable<MenuProps['items']> = []
+    for (const key of globalConfigKeys) {
+      const item = visibleMenuItems.find(entry => entry.key === key)
+      if (!item)
+        continue
+      globalConfigChildren.push({ key: item.key, label: item.label })
+    }
+    if (globalConfigChildren.length > 0) {
+      items.push({
+        key: 'global-config-submenu',
+        label: '全局配置',
+        children: globalConfigChildren,
+      })
+    }
+
     pushIfVisible('enterprises')
-    pushIfVisible('admin-divisions')
-    pushIfVisible('system-settings')
     pushIfVisible('user-config')
-    pushIfVisible('api-meta')
-    pushIfVisible('users')
 
     return items
-  }, [role, visibleMenuItems, workflowChildren])
+  }, [globalConfigKeys, role, visibleMenuItems, workflowChildren])
 
   const selectedMenuKeys = useMemo(() => {
     if (pathname === '/app')
@@ -364,6 +409,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       setOpenKeys([`${selected}-submenu`])
       return
     }
+    if (globalConfigKeys.includes(selected)) {
+      setOpenKeys(['global-config-submenu'])
+      return
+    }
     if (selected.startsWith('workflow-run-')) {
       const id = Number(selected.slice('workflow-run-'.length))
       const matched = workflows.find(w => Number(w.id) === id)
@@ -372,7 +421,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         return
       }
     }
-  }, [selectedMenuKeys, workflows])
+  }, [globalConfigKeys, selectedMenuKeys, workflows])
 
   const handleMenuClick: MenuProps['onClick'] = (info) => {
     const key = String(info.key)
@@ -487,6 +536,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </Space>
 
             <Space size={8}>
+              <DebugFeedbackEntry />
               <Tag color={role === 'admin' ? 'blue' : role === 'user' ? 'default' : 'orange'}>
                 {roleLabelMap[role]}
               </Tag>

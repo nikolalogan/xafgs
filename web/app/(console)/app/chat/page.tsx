@@ -62,7 +62,7 @@ type SystemConfigDTO = {
   defaultModel: string
 }
 
-const MAX_CHAT_UPLOAD_BYTES = 50 * 1024 * 1024
+const MAX_CHAT_UPLOAD_BYTES = 10 * 1024 * 1024
 const SEARCH_REFERENCES_MARKER = '[WEB_SEARCH_REFERENCES]'
 
 type ChatReference = {
@@ -509,7 +509,7 @@ export default function ChatPage() {
               disabled={sending || !activeConversationID}
               beforeUpload={(file) => {
                 if (file.size > MAX_CHAT_UPLOAD_BYTES) {
-                  msgApi.warning(`文件过大，单文件上限 50MB，当前 ${formatSize(file.size)}`)
+                  msgApi.warning(`文件过大，单文件上限 10MB，当前 ${formatSize(file.size)}`)
                   return Upload.LIST_IGNORE
                 }
                 setPendingFiles(prev => [...prev, file as File])

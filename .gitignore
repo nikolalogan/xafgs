@@ -11,3 +11,4 @@ server/tmp
 /.spec-workflow
 /server/.gocache
 /server/.gomodcache
+/server/.cache

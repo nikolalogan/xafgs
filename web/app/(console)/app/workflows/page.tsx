@@ -6,6 +6,7 @@ import { UploadOutlined } from '@ant-design/icons'
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Upload, message } from 'antd'
 import { parseDifyWorkflowDSL } from '@/components/workflow/dify/core/dsl'
 import { validateWorkflow } from '@/components/workflow/dify/core/validation'
+import { formatShanghaiDateTime } from '@/lib/time'
 
 type WorkflowStatus = 'active' | 'disabled'
 type WorkflowMenuKey = '' | 'reserve' | 'review' | 'postloan'
@@ -72,7 +73,7 @@ const statusLabelMap: Record<WorkflowStatus, string> = {
   disabled: '停用',
 }
 
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 const getToken = () => {
   if (typeof window === 'undefined')
@@ -492,7 +493,7 @@ function WorkflowsPageInner() {
               title: '更新时间',
               dataIndex: 'updatedAt',
               width: 200,
-              render: (value: string) => new Date(value).toLocaleString(),
+              render: (value: string) => formatShanghaiDateTime(value),
             },
             {
               title: '操作',
@@ -551,7 +552,7 @@ function WorkflowsPageInner() {
             <Select
               placeholder="请选择回滚版本"
               options={versionOptions.map(item => ({
-                label: `v${item.versionNo}${item.isPublished ? '（已发布）' : ''}${item.isDraft ? '（当前草稿）' : ''} - ${new Date(item.createdAt).toLocaleString()}`,
+                label: `v${item.versionNo}${item.isPublished ? '（已发布）' : ''}${item.isDraft ? '（当前草稿）' : ''} - ${formatShanghaiDateTime(item.createdAt)}`,
                 value: item.versionNo,
               }))}
             />
@@ -630,7 +631,7 @@ function WorkflowsPageInner() {
               multiple={false}
               beforeUpload={(file) => {
                 if (file.size > MAX_UPLOAD_BYTES) {
-                  msgApi.warning('文件不能超过 50MB')
+                  msgApi.warning('文件不能超过 10MB')
                   return Upload.LIST_IGNORE
                 }
                 setAIUploadFile(file as File)

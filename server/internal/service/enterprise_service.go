@@ -83,24 +83,40 @@ func (service *enterpriseService) Create(_ context.Context, request model.Create
 		return model.EnterpriseDetailDTO{}, model.NewAPIError(400, response.CodeBadRequest, "企业简称、统一信用代码不能为空")
 	}
 	if normalized.RegionID <= 0 {
-		return model.EnterpriseDetailDTO{}, model.NewAPIError(400, response.CodeBadRequest, "区域ID不能为空")
-	}
-	if _, exists := service.regionRepository.FindByID(normalized.RegionID); !exists {
+		defaultRegion, exists := service.regionRepository.FindByAdminCode("000000")
+		if !exists {
+			return model.EnterpriseDetailDTO{}, model.NewAPIError(500, response.CodeInternal, "默认区域不存在")
+		}
+		normalized.RegionID = defaultRegion.ID
+	} else if _, exists := service.regionRepository.FindByID(normalized.RegionID); !exists {
 		return model.EnterpriseDetailDTO{}, model.NewAPIError(400, response.CodeBadRequest, "区域不存在")
 	}
-	if existingByName, exists := service.repository.FindByShortName(normalized.ShortName); exists {
-		if duplicated, duplicatedExists := service.repository.FindByUnifiedCreditCode(normalized.UnifiedCreditCode); duplicatedExists && duplicated.ID != existingByName.ID {
-			return model.EnterpriseDetailDTO{}, model.NewAPIError(400, response.CodeBadRequest, "统一信用代码已存在")
+
+	if existingByCode, exists := service.repository.FindByUnifiedCreditCode(normalized.UnifiedCreditCode); exists {
+		existingDetail, detailExists := service.repository.FindByID(existingByCode.ID)
+		if !detailExists {
+			return model.EnterpriseDetailDTO{}, model.NewAPIError(404, response.CodeNotFound, "企业不存在")
 		}
-		aggregate := toAggregate(normalized, operatorID)
-		updated, ok := service.repository.Update(existingByName.ID, aggregate)
+		merged := enterpriseDetailToCreateRequest(existingDetail)
+		if normalized.ShortName != "" {
+			merged.ShortName = normalized.ShortName
+		}
+		if normalized.AdmissionStatus != "" {
+			merged.AdmissionStatus = normalized.AdmissionStatus
+		}
+		aggregate := toAggregate(merged, operatorID)
+		updated, ok := service.repository.Update(existingByCode.ID, aggregate)
 		if !ok {
 			return model.EnterpriseDetailDTO{}, model.NewAPIError(500, response.CodeInternal, "更新企业失败")
 		}
 		return updated, nil
 	}
-	if _, exists := service.repository.FindByUnifiedCreditCode(normalized.UnifiedCreditCode); exists {
-		return model.EnterpriseDetailDTO{}, model.NewAPIError(400, response.CodeBadRequest, "统一信用代码已存在")
+
+	if _, exists := service.repository.FindByShortName(normalized.ShortName); exists {
+		return model.EnterpriseDetailDTO{}, model.NewAPIError(400, response.CodeBadRequest, "企业简称已存在")
+	}
+	if normalized.AdmissionStatus == "" {
+		normalized.AdmissionStatus = model.EnterpriseAdmissionStatusPending
 	}
 
 	aggregate := toAggregate(normalized, operatorID)
@@ -136,6 +152,9 @@ func (service *enterpriseService) Update(_ context.Context, enterpriseID int64, 
 		if duplicatedByName, exists := service.repository.FindByShortName(normalized.ShortName); exists && duplicatedByName.ID != enterpriseID {
 			return model.EnterpriseDetailDTO{}, model.NewAPIError(400, response.CodeBadRequest, "企业简称已存在")
 		}
+	}
+	if normalized.AdmissionStatus == "" {
+		normalized.AdmissionStatus = existing.AdmissionStatus
 	}
 
 	aggregate := toAggregate(normalized, operatorID)
@@ -201,7 +220,10 @@ func normalizeEnterpriseRequest(request model.CreateEnterpriseRequest) model.Cre
 	request.IssuerRatingAgency = strings.TrimSpace(request.IssuerRatingAgency)
 	request.UnifiedCreditCode = strings.TrimSpace(request.UnifiedCreditCode)
 	request.LegalPersonIDCard = strings.TrimSpace(request.LegalPersonIDCard)
-	request.AdmissionStatus = model.NormalizeEnterpriseAdmissionStatus(strings.TrimSpace(request.AdmissionStatus))
+	request.AdmissionStatus = strings.TrimSpace(request.AdmissionStatus)
+	if request.AdmissionStatus != "" {
+		request.AdmissionStatus = model.NormalizeEnterpriseAdmissionStatus(request.AdmissionStatus)
+	}
 
 	for i := range request.Tags {
 		request.Tags[i].Title = strings.TrimSpace(request.Tags[i].Title)

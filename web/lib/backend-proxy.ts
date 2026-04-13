@@ -96,3 +96,41 @@ export const proxyStreamToBackend = async (options: ProxyOptions) => {
     return NextResponse.json({ message }, { status: 502 })
   }
 }
+
+export const proxyBinaryToBackend = async (options: ProxyOptions) => {
+  const baseURL = resolveBackendBaseURL()
+  const url = `${baseURL}${options.path.startsWith('/') ? '' : '/'}${options.path}`
+
+  const headers: Record<string, string> = {}
+  const authorization = options.request.headers.get('authorization')
+  if (authorization)
+    headers.authorization = authorization
+  const cookie = options.request.headers.get('cookie')
+  if (cookie)
+    headers.cookie = cookie
+  const requestID = options.request.headers.get('x-request-id')
+  if (requestID)
+    headers['x-request-id'] = requestID
+
+  try {
+    const response = await fetch(url, {
+      method: options.method,
+      headers,
+    })
+    const nextHeaders = new Headers()
+    const contentType = response.headers.get('content-type')
+    const contentDisposition = response.headers.get('content-disposition')
+    if (contentType)
+      nextHeaders.set('content-type', contentType)
+    if (contentDisposition)
+      nextHeaders.set('content-disposition', contentDisposition)
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers: nextHeaders,
+    })
+  }
+  catch (error) {
+    const message = error instanceof Error ? error.message : '后端不可用'
+    return NextResponse.json({ message }, { status: 502 })
+  }
+}

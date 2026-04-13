@@ -1,34 +1,46 @@
-name: sxfgssever
+name: sxfgssever-prod
 
 services:
   frontend:
     build:
       context: ./web
       dockerfile: Dockerfile
+    image: sxfgssever-frontend-prod:latest
+    environment:
+      TZ: "Asia/Shanghai"
+      NODE_ENV: "production"
+    expose:
+      - "3000"
     restart: unless-stopped
 
   backend:
     build:
       context: ./server
       dockerfile: Dockerfile
-    volumes:
-      - /Users/logan/Documents/code/pgfile:/data/uploads
+    image: sxfgssever-backend-prod:latest
     environment:
+      TZ: "Asia/Shanghai"
       PORT: "8080"
       APP_NAME: "sxfgssever-api"
       API_TOKEN: "dev-token"
       FILE_STORAGE_ROOT: "/data/uploads"
-      DATABASE_URL: "postgres://sxfg:sxfg_password@postgres:5432/sxfg?sslmode=disable"
+      GOPROXY: "https://goproxy.cn,direct"
+      GOSUMDB: "sum.golang.google.cn"
+      DATABASE_URL: "postgres://sxfgs:Jbb%401234@192.168.109.4:5432/sxfgs?sslmode=disable"
+    volumes:
+      - /home/logan/sxfgs/file:/data/uploads
+    expose:
+      - "8080"
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_started
     restart: unless-stopped
 
   gateway:
     image: nginx:1.27-alpine
-    container_name: sxfgssever-gateway
+    container_name: sxfgssever-prod-gateway
+    environment:
+      TZ: "Asia/Shanghai"
     ports:
       - "325:80"
     volumes:
@@ -38,27 +50,10 @@ services:
       - backend
     restart: unless-stopped
 
-  postgres:
-    image: postgres:17-alpine
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_DB: sxfg
-      POSTGRES_USER: sxfg
-      POSTGRES_PASSWORD: sxfg_password
-    volumes:
-      - /Users/logan/Documents/code/pgsql:/var/lib/postgresql/data
-      - ./deploy/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
-    command: ["postgres", "-c", "listen_addresses=*", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sxfg -d sxfg"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
-
   redis:
     image: redis:8-alpine
+    environment:
+      TZ: "Asia/Shanghai"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
