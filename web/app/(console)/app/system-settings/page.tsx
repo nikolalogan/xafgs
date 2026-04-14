@@ -21,6 +21,10 @@ type SystemConfigDTO = {
   defaultModel: string
   codeDefaultModel: string
   searchService: string
+  localEmbeddingBaseUrl: string
+  localEmbeddingApiKey: string
+  localEmbeddingModel: string
+  localEmbeddingDimension: number
   updatedAt?: string
 }
 
@@ -48,6 +52,10 @@ const normalizeConfig = (raw?: SystemConfigDTO): SystemConfigDTO => {
       defaultModel: 'gpt-4o-mini',
       codeDefaultModel: 'gpt-4o-mini',
       searchService: 'tavily',
+      localEmbeddingBaseUrl: String(raw?.localEmbeddingBaseUrl || '').trim(),
+      localEmbeddingApiKey: String(raw?.localEmbeddingApiKey || '').trim(),
+      localEmbeddingModel: String(raw?.localEmbeddingModel || '').trim(),
+      localEmbeddingDimension: Number(raw?.localEmbeddingDimension || 0) > 0 ? Number(raw?.localEmbeddingDimension || 0) : 0,
       updatedAt: raw?.updatedAt,
     }
   }
@@ -60,6 +68,10 @@ const normalizeConfig = (raw?: SystemConfigDTO): SystemConfigDTO => {
     defaultModel: enabledNames.has(defaultModel) ? defaultModel : fallbackDefault,
     codeDefaultModel: enabledNames.has(String(raw?.codeDefaultModel || '').trim()) ? String(raw?.codeDefaultModel || '').trim() : (enabledNames.has(defaultModel) ? defaultModel : fallbackDefault),
     searchService: String(raw?.searchService || '').trim() || 'tavily',
+    localEmbeddingBaseUrl: String(raw?.localEmbeddingBaseUrl || '').trim(),
+    localEmbeddingApiKey: String(raw?.localEmbeddingApiKey || '').trim(),
+    localEmbeddingModel: String(raw?.localEmbeddingModel || '').trim(),
+    localEmbeddingDimension: Number(raw?.localEmbeddingDimension || 0) > 0 ? Number(raw?.localEmbeddingDimension || 0) : 0,
     updatedAt: raw?.updatedAt,
   }
 }
@@ -69,6 +81,10 @@ type SystemConfigForm = {
   codeDefaultModel: string
   searchService: string
   models: SystemModelOption[]
+  localEmbeddingBaseUrl: string
+  localEmbeddingApiKey: string
+  localEmbeddingModel: string
+  localEmbeddingDimension: string
 }
 
 export default function SystemSettingsPage() {
@@ -120,6 +136,10 @@ export default function SystemSettingsPage() {
         defaultModel: config.defaultModel,
         codeDefaultModel: config.codeDefaultModel,
         searchService: config.searchService,
+        localEmbeddingBaseUrl: config.localEmbeddingBaseUrl,
+        localEmbeddingApiKey: config.localEmbeddingApiKey,
+        localEmbeddingModel: config.localEmbeddingModel,
+        localEmbeddingDimension: String(config.localEmbeddingDimension || 0),
       })
     }
     catch (error) {
@@ -143,6 +163,10 @@ export default function SystemSettingsPage() {
       defaultModel: values.defaultModel,
       codeDefaultModel: values.codeDefaultModel,
       searchService: values.searchService,
+      localEmbeddingBaseUrl: String(values.localEmbeddingBaseUrl || '').trim(),
+      localEmbeddingApiKey: String(values.localEmbeddingApiKey || '').trim(),
+      localEmbeddingModel: String(values.localEmbeddingModel || '').trim(),
+      localEmbeddingDimension: Number.parseInt(String(values.localEmbeddingDimension || '').trim(), 10) || 0,
     })
     const names = normalized.models.map(item => item.name)
     if (new Set(names).size !== names.length) {
@@ -167,6 +191,10 @@ export default function SystemSettingsPage() {
           defaultModel: normalized.defaultModel,
           codeDefaultModel: normalized.codeDefaultModel,
           searchService: normalized.searchService,
+          localEmbeddingBaseUrl: normalized.localEmbeddingBaseUrl,
+          localEmbeddingApiKey: normalized.localEmbeddingApiKey,
+          localEmbeddingModel: normalized.localEmbeddingModel,
+          localEmbeddingDimension: normalized.localEmbeddingDimension,
         }),
       })
       msgApi.success('保存成功')
@@ -217,6 +245,10 @@ export default function SystemSettingsPage() {
             defaultModel: 'gpt-4o-mini',
             codeDefaultModel: 'gpt-4o-mini',
             searchService: 'tavily',
+            localEmbeddingBaseUrl: '',
+            localEmbeddingApiKey: '',
+            localEmbeddingModel: '',
+            localEmbeddingDimension: '0',
           }}
         >
           <Form.List name="models">
@@ -300,6 +332,34 @@ export default function SystemSettingsPage() {
               disabled={enabledModelOptions.length === 0}
             />
           </Form.Item>
+          <div className="mt-4 rounded-lg border border-gray-200 p-3">
+            <div className="mb-2 text-sm font-semibold text-gray-900">本地 AI 向量服务</div>
+            <Form.Item
+              label="本地向量服务地址"
+              name="localEmbeddingBaseUrl"
+            >
+              <Input placeholder="例如 http://127.0.0.1:11434/v1" autoComplete="off" />
+            </Form.Item>
+            <Form.Item
+              label="本地向量服务 API Key（系统级）"
+              name="localEmbeddingApiKey"
+            >
+              <Input.Password placeholder="请输入系统级 API Key" autoComplete="new-password" />
+            </Form.Item>
+            <Form.Item
+              label="向量模型"
+              name="localEmbeddingModel"
+            >
+              <Input placeholder="例如 jinaai/jina-embeddings-v5-text-small" autoComplete="off" />
+            </Form.Item>
+            <Form.Item
+              label="向量维度"
+              name="localEmbeddingDimension"
+              extra="例如 1024；未配置或 <=0 会导致向量检索不可用"
+            >
+              <Input placeholder="例如 1024" autoComplete="off" />
+            </Form.Item>
+          </div>
         </Form>
       </div>
     </div>

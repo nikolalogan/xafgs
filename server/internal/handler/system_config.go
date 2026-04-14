@@ -13,10 +13,14 @@ import (
 )
 
 type updateSystemConfigRequest struct {
-	Models           []model.SystemModelOption `json:"models"`
-	DefaultModel     string                    `json:"defaultModel"`
-	CodeDefaultModel string                    `json:"codeDefaultModel"`
-	SearchService    string                    `json:"searchService"`
+	Models                  []model.SystemModelOption `json:"models"`
+	DefaultModel            string                    `json:"defaultModel"`
+	CodeDefaultModel        string                    `json:"codeDefaultModel"`
+	SearchService           string                    `json:"searchService"`
+	LocalEmbeddingBaseURL   string                    `json:"localEmbeddingBaseUrl"`
+	LocalEmbeddingAPIKey    string                    `json:"localEmbeddingApiKey"`
+	LocalEmbeddingModel     string                    `json:"localEmbeddingModel"`
+	LocalEmbeddingDimension int                       `json:"localEmbeddingDimension"`
 }
 
 type SystemConfigHandler struct {
@@ -74,10 +78,14 @@ func (handler *SystemConfigHandler) Update(c *fiber.Ctx, request *updateSystemCo
 	}
 
 	config, apiError := handler.service.Update(c.UserContext(), model.UpdateSystemConfigRequest{
-		Models:           models,
-		DefaultModel:     strings.TrimSpace(request.DefaultModel),
-		CodeDefaultModel: strings.TrimSpace(request.CodeDefaultModel),
-		SearchService:    strings.TrimSpace(request.SearchService),
+		Models:                  models,
+		DefaultModel:            strings.TrimSpace(request.DefaultModel),
+		CodeDefaultModel:        strings.TrimSpace(request.CodeDefaultModel),
+		SearchService:           strings.TrimSpace(request.SearchService),
+		LocalEmbeddingBaseURL:   strings.TrimSpace(request.LocalEmbeddingBaseURL),
+		LocalEmbeddingAPIKey:    strings.TrimSpace(request.LocalEmbeddingAPIKey),
+		LocalEmbeddingModel:     strings.TrimSpace(request.LocalEmbeddingModel),
+		LocalEmbeddingDimension: request.LocalEmbeddingDimension,
 	}, operatorID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)

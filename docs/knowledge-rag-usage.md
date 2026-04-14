@@ -147,12 +147,33 @@ keywordScore = ts_rank_cd(...) * 0.7 + similarity(...) * 0.3
 
 ## 6. 运行与验证建议
 
----
+### 6.1 控制台 UI 测试路径（推荐）
 
-1. 上传文件后，检查是否自动入队索引任务。
-2. 调 `index-status` 确认任务 `succeeded`。
-3. 调 `knowledge/search`，核对 `retrievalType/semanticScore/keywordScore/finalScore`。
-4. 调 Chat 接口，验证回复是否体现检索证据语境。
+页面：`/app/files`（管理员）
+
+新增测试区块：**索引与检索测试**
+
+1. 在“文件列表”完成上传并执行“解析”，确认有可用解析结果。
+2. 打开“索引测试”页签，输入 `fileId`（`versionNo=0` 代表最新版本），点击“触发重建”。
+3. 观察状态轮询，直到 `succeeded`（若 `failed`，查看错误信息）。
+4. 切到“检索测试”页签，输入 `query` 并执行检索。
+5. 核对返回字段：`retrievalType/semanticScore/keywordScore/finalScore` 与 `chunkSummary/chunkText`。
+6. 填入 `subjectId` 或 `projectId`，确认返回结果被限定到对应范围。
+7. 在 `/app/chat` 发起同主题提问，确认回答体现检索证据语境。
+
+### 6.2 Chat 发送前检索预览
+
+页面：`/app/chat`
+
+1. 输入问题草稿后，点击输入框旁“检索预览”。
+2. 在弹窗中按需填写 `topK/minScore/fileIds/bizKey/subjectId/projectId`。
+3. 点击“执行预览”，先观察命中片段与打分，再决定是否发送消息。
+
+### 6.3 API 调试路径（可选）
+
+1. `POST /api/files/:fileId/reindex?versionNo=2`
+2. `GET /api/files/:fileId/index-status?versionNo=2`
+3. `POST /api/knowledge/search`
 
 ---
 
@@ -161,4 +182,6 @@ keywordScore = ts_rank_cd(...) * 0.7 + similarity(...) * 0.3
 - 当前实现依赖 PostgreSQL + `pgvector` 扩展。
 - 混合检索还依赖 `pg_trgm` 与 `GIN(to_tsvector(...))` 索引。
 - 检索范围过滤依赖 `biz_key` 前缀约定，请在上传入口保证规范。
+- 若索引/检索返回 “知识检索能力未启用”，优先检查 PostgreSQL 是否安装并启用 `vector` 扩展。
+- 若返回“本地向量配置缺失，请联系管理员在系统设置中补充”，请在 `/app/system-settings` 配置本地向量服务地址/API Key/向量模型/向量维度。
 - 在受限网络沙箱中无法完成全量 `go test ./...` 依赖拉取验证；需在可联网环境复验。

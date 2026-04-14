@@ -10,35 +10,51 @@ type SystemModelOption struct {
 
 type SystemConfig struct {
 	BaseEntity
-	Models           []SystemModelOption `json:"models"`
-	DefaultModel     string              `json:"defaultModel"`
-	CodeDefaultModel string              `json:"codeDefaultModel"`
-	SearchService    string              `json:"searchService"`
+	Models                  []SystemModelOption `json:"models"`
+	DefaultModel            string              `json:"defaultModel"`
+	CodeDefaultModel        string              `json:"codeDefaultModel"`
+	SearchService           string              `json:"searchService"`
+	LocalEmbeddingBaseURL   string              `json:"localEmbeddingBaseUrl"`
+	LocalEmbeddingAPIKey    string              `json:"localEmbeddingApiKey"`
+	LocalEmbeddingModel     string              `json:"localEmbeddingModel"`
+	LocalEmbeddingDimension int                 `json:"localEmbeddingDimension"`
 }
 
 type SystemConfigDTO struct {
-	Models           []SystemModelOption `json:"models"`
-	DefaultModel     string              `json:"defaultModel"`
-	CodeDefaultModel string              `json:"codeDefaultModel"`
-	SearchService    string              `json:"searchService"`
-	UpdatedAt        time.Time           `json:"updatedAt"`
+	Models                  []SystemModelOption `json:"models"`
+	DefaultModel            string              `json:"defaultModel"`
+	CodeDefaultModel        string              `json:"codeDefaultModel"`
+	SearchService           string              `json:"searchService"`
+	LocalEmbeddingBaseURL   string              `json:"localEmbeddingBaseUrl"`
+	LocalEmbeddingAPIKey    string              `json:"localEmbeddingApiKey"`
+	LocalEmbeddingModel     string              `json:"localEmbeddingModel"`
+	LocalEmbeddingDimension int                 `json:"localEmbeddingDimension"`
+	UpdatedAt               time.Time           `json:"updatedAt"`
 }
 
 type UpdateSystemConfigRequest struct {
-	Models           []SystemModelOption `json:"models"`
-	DefaultModel     string              `json:"defaultModel"`
-	CodeDefaultModel string              `json:"codeDefaultModel"`
-	SearchService    string              `json:"searchService"`
+	Models                  []SystemModelOption `json:"models"`
+	DefaultModel            string              `json:"defaultModel"`
+	CodeDefaultModel        string              `json:"codeDefaultModel"`
+	SearchService           string              `json:"searchService"`
+	LocalEmbeddingBaseURL   string              `json:"localEmbeddingBaseUrl"`
+	LocalEmbeddingAPIKey    string              `json:"localEmbeddingApiKey"`
+	LocalEmbeddingModel     string              `json:"localEmbeddingModel"`
+	LocalEmbeddingDimension int                 `json:"localEmbeddingDimension"`
 }
 
 func (config SystemConfig) ToDTO() SystemConfigDTO {
 	models := make([]SystemModelOption, 0, len(config.Models))
 	models = append(models, config.Models...)
 	return SystemConfigDTO{
-		Models:           models,
-		DefaultModel:     config.DefaultModel,
-		CodeDefaultModel: config.CodeDefaultModel,
-		SearchService:    config.SearchService,
-		UpdatedAt:        config.UpdatedAt,
+		Models:                  models,
+		DefaultModel:            config.DefaultModel,
+		CodeDefaultModel:        config.CodeDefaultModel,
+		SearchService:           config.SearchService,
+		LocalEmbeddingBaseURL:   config.LocalEmbeddingBaseURL,
+		LocalEmbeddingAPIKey:    config.LocalEmbeddingAPIKey,
+		LocalEmbeddingModel:     config.LocalEmbeddingModel,
+		LocalEmbeddingDimension: config.LocalEmbeddingDimension,
+		UpdatedAt:               config.UpdatedAt,
 	}
 }

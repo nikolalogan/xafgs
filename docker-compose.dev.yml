@@ -113,7 +113,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: ${BASE_REGISTRY:-docker.m.daocloud.io}/library/postgres:17-alpine
+    image: ${BASE_REGISTRY:-docker.m.daocloud.io}/pgvector/pgvector:pg17
     ports:
       - "5432:5432"
     environment:

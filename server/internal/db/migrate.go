@@ -11,8 +11,19 @@ import (
 )
 
 const schemaSQL = `
-CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+DO $$
+BEGIN
+  BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pg_trgm extension unavailable: %', SQLERRM;
+  END;
+  BEGIN
+    CREATE EXTENSION IF NOT EXISTS vector;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'vector extension unavailable: %', SQLERRM;
+  END;
+END $$;
 
 CREATE TABLE IF NOT EXISTS app_user (
   id BIGSERIAL PRIMARY KEY,
@@ -46,6 +57,10 @@ CREATE TABLE IF NOT EXISTS system_config (
   default_model VARCHAR(128) NOT NULL DEFAULT 'gpt-4o-mini',
   code_default_model VARCHAR(128) NOT NULL DEFAULT 'gpt-4o-mini',
   search_service VARCHAR(64) NOT NULL DEFAULT 'tavily',
+  local_embedding_base_url TEXT NOT NULL DEFAULT '',
+  local_embedding_api_key TEXT NOT NULL DEFAULT '',
+  local_embedding_model VARCHAR(256) NOT NULL DEFAULT '',
+  local_embedding_dimension INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_by BIGINT NOT NULL DEFAULT 0,
@@ -228,22 +243,30 @@ CREATE TABLE IF NOT EXISTS knowledge_chunk (
   UNIQUE (file_id, version_no, chunk_index)
 );
 
-CREATE TABLE IF NOT EXISTS knowledge_embedding (
-  chunk_id BIGINT NOT NULL REFERENCES knowledge_chunk(id) ON DELETE CASCADE,
-  model_name VARCHAR(128) NOT NULL,
-  embedding vector(1536) NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (chunk_id, model_name)
-);
-
 CREATE INDEX IF NOT EXISTS idx_knowledge_job_status_updated ON knowledge_index_job(status, updated_at ASC, id ASC);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_file_version ON knowledge_chunk(file_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_biz_key ON knowledge_chunk(biz_key);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_text_tsv ON knowledge_chunk USING GIN (to_tsvector('simple', coalesce(chunk_text, '')));
-CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_text_trgm ON knowledge_chunk USING GIN (chunk_text gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_model_name ON knowledge_embedding(model_name);
-CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_vector_cosine
-ON knowledge_embedding USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_text_trgm ON knowledge_chunk USING GIN (chunk_text gin_trgm_ops)';
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+	IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+	  EXECUTE 'CREATE TABLE IF NOT EXISTS knowledge_embedding (
+	    chunk_id BIGINT NOT NULL REFERENCES knowledge_chunk(id) ON DELETE CASCADE,
+	    model_name VARCHAR(128) NOT NULL,
+	    embedding vector NOT NULL,
+	    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	    PRIMARY KEY (chunk_id, model_name)
+	  )';
+	  EXECUTE 'CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_model_name ON knowledge_embedding(model_name)';
+	END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS debug_feedback (
   id BIGSERIAL PRIMARY KEY,
@@ -765,6 +788,22 @@ ALTER TABLE system_config
 ADD COLUMN IF NOT EXISTS search_service VARCHAR(64) NOT NULL DEFAULT 'tavily';
 UPDATE system_config SET search_service = 'tavily' WHERE search_service IS NULL OR search_service = '';
 ALTER TABLE system_config ALTER COLUMN search_service SET DEFAULT 'tavily';
+ALTER TABLE system_config
+ADD COLUMN IF NOT EXISTS local_embedding_base_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE system_config
+ADD COLUMN IF NOT EXISTS local_embedding_api_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE system_config
+ADD COLUMN IF NOT EXISTS local_embedding_model VARCHAR(256) NOT NULL DEFAULT '';
+ALTER TABLE system_config
+ADD COLUMN IF NOT EXISTS local_embedding_dimension INT NOT NULL DEFAULT 0;
+UPDATE system_config SET local_embedding_base_url = '' WHERE local_embedding_base_url IS NULL;
+UPDATE system_config SET local_embedding_api_key = '' WHERE local_embedding_api_key IS NULL;
+UPDATE system_config SET local_embedding_model = '' WHERE local_embedding_model IS NULL;
+UPDATE system_config SET local_embedding_dimension = 0 WHERE local_embedding_dimension IS NULL OR local_embedding_dimension < 0;
+ALTER TABLE system_config ALTER COLUMN local_embedding_base_url SET DEFAULT '';
+ALTER TABLE system_config ALTER COLUMN local_embedding_api_key SET DEFAULT '';
+ALTER TABLE system_config ALTER COLUMN local_embedding_model SET DEFAULT '';
+ALTER TABLE system_config ALTER COLUMN local_embedding_dimension SET DEFAULT 0;
 `); err != nil {
 		return fmt.Errorf("migrate system_config code_default_model: %w", err)
 	}
@@ -783,13 +822,21 @@ ADD COLUMN IF NOT EXISTS search_ai_api_key TEXT NOT NULL DEFAULT '';
 		return fmt.Errorf("migrate user_config search ai config: %w", err)
 	}
 	if _, err := conn.ExecContext(ctx, `
-INSERT INTO system_config (id, models_json, default_model, code_default_model, search_service, created_at, updated_at, created_by, updated_by)
+INSERT INTO system_config (
+  id, models_json, default_model, code_default_model, search_service,
+  local_embedding_base_url, local_embedding_api_key, local_embedding_model, local_embedding_dimension,
+  created_at, updated_at, created_by, updated_by
+)
 VALUES (
   1,
   '[{"name":"gpt-4o-mini","label":"GPT-4o mini","enabled":true}]'::jsonb,
   'gpt-4o-mini',
   'gpt-4o-mini',
   'tavily',
+  '',
+  '',
+  '',
+  0,
   NOW(),
   NOW(),
   1,
@@ -798,6 +845,53 @@ VALUES (
 ON CONFLICT (id) DO NOTHING;
 `); err != nil {
 		return fmt.Errorf("migrate system_config: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+DO $$
+DECLARE
+  table_exists BOOLEAN := FALSE;
+  constrained_vector BOOLEAN := FALSE;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+    SELECT EXISTS (
+      SELECT 1
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relname = 'knowledge_embedding'
+        AND n.nspname = current_schema()
+    ) INTO table_exists;
+
+    IF table_exists THEN
+      SELECT COALESCE(a.atttypmod > 0, FALSE)
+      INTO constrained_vector
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relname = 'knowledge_embedding'
+        AND n.nspname = current_schema()
+        AND a.attname = 'embedding'
+        AND a.attnum > 0
+        AND NOT a.attisdropped
+      LIMIT 1;
+    END IF;
+
+	    IF NOT table_exists OR constrained_vector THEN
+	      DROP INDEX IF EXISTS idx_knowledge_embedding_vector_cosine;
+	      DROP INDEX IF EXISTS idx_knowledge_embedding_model_name;
+	      DROP TABLE IF EXISTS knowledge_embedding;
+      CREATE TABLE knowledge_embedding (
+        chunk_id BIGINT NOT NULL REFERENCES knowledge_chunk(id) ON DELETE CASCADE,
+        model_name VARCHAR(128) NOT NULL,
+        embedding vector NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (chunk_id, model_name)
+	      );
+	      CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_model_name ON knowledge_embedding(model_name);
+	    END IF;
+	  END IF;
+END $$;
+`); err != nil {
+		return fmt.Errorf("rebuild knowledge_embedding to dynamic vector: %w", err)
 	}
 	return nil
 }

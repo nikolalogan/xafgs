@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -37,3 +38,19 @@ func OpenFromEnv() (*OpenResult, bool, error) {
 	return &OpenResult{DB: conn}, true, nil
 }
 
+func HasExtension(ctx context.Context, conn *sql.DB, name string) (bool, error) {
+	trimmed := strings.TrimSpace(name)
+	if conn == nil || trimmed == "" {
+		return false, nil
+	}
+	var exists bool
+	err := conn.QueryRowContext(ctx, `
+SELECT EXISTS (
+  SELECT 1 FROM pg_extension WHERE extname = $1
+)
+`, trimmed).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}

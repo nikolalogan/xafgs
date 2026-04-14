@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Descriptions, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, Upload, message } from 'antd'
 import type { UploadFile, UploadProps } from 'antd'
@@ -129,6 +129,54 @@ type FileParseFigureRegionPreviewDTO = {
   bbox: Record<string, unknown> | null
 }
 
+type KnowledgeIndexStatusDTO = {
+  fileId: number
+  versionNo: number
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | string
+  retryCount: number
+  errorMessage?: string
+  startedAt?: string
+  finishedAt?: string
+  updatedAt?: string
+}
+
+type KnowledgeSearchHitDTO = {
+  fileId: number
+  versionNo: number
+  chunkIndex: number
+  chunkText: string
+  chunkSummary: string
+  sourceType: string
+  pageStart: number
+  pageEnd: number
+  sourceRef: string
+  bbox: Record<string, unknown> | null
+  score: number
+  retrievalType: 'semantic' | 'keyword' | 'hybrid' | string
+  semanticScore: number
+  keywordScore: number
+  finalScore: number
+}
+
+type KnowledgeSearchResultDTO = {
+  hits: KnowledgeSearchHitDTO[]
+}
+
+type ReindexFormValue = {
+  fileId: string
+  versionNo: string
+}
+
+type SearchFormValue = {
+  query: string
+  topK: string
+  minScore: string
+  fileIds: string
+  bizKey: string
+  subjectId: string
+  projectId: string
+}
+
 const getToken = () => {
   if (typeof window === 'undefined')
     return ''
@@ -224,6 +272,34 @@ const buildTableRowKey = (row: FileParseTablePreviewDTO) => `${row.title}-${row.
 
 const buildFigureRowKey = (row: FileParseFigurePreviewDTO) => `${row.figureType}-${row.sourceRef}-${row.title}-${row.pageNo}`
 
+const buildKnowledgeHitRowKey = (row: KnowledgeSearchHitDTO) => `${row.fileId}-${row.versionNo}-${row.chunkIndex}-${row.sourceRef}`
+
+const parsePositiveInt = (value: string) => {
+  const number = Number.parseInt(String(value || '').trim(), 10)
+  if (!Number.isFinite(number) || number <= 0)
+    return 0
+  return number
+}
+
+const parseNonNegativeInt = (value: string) => {
+  const number = Number.parseInt(String(value || '').trim(), 10)
+  if (!Number.isFinite(number) || number < 0)
+    return 0
+  return number
+}
+
+const parsePositiveFloat = (value: string, fallback: number) => {
+  const number = Number.parseFloat(String(value || '').trim())
+  if (!Number.isFinite(number) || number <= 0)
+    return fallback
+  return number
+}
+
+const parseFileIDs = (value: string) => String(value || '')
+  .split(',')
+  .map(item => parsePositiveInt(item))
+  .filter(item => item > 0)
+
 const createUploadPickerProps = (
   onChange: (value: FilePickerValue) => void,
 ): UploadProps => ({
@@ -258,6 +334,8 @@ export default function FilesPage() {
   const [newVersionFileMap, setNewVersionFileMap] = useState<Record<number, File | null>>({})
   const [newVersionFileListMap, setNewVersionFileListMap] = useState<Record<number, UploadFile[]>>({})
   const [form] = Form.useForm()
+  const [reindexForm] = Form.useForm<ReindexFormValue>()
+  const [searchForm] = Form.useForm<SearchFormValue>()
 
   const [versionModalOpen, setVersionModalOpen] = useState(false)
   const [versionLoading, setVersionLoading] = useState(false)
@@ -267,6 +345,12 @@ export default function FilesPage() {
   const [deleteLoadingMap, setDeleteLoadingMap] = useState<Record<number, boolean>>({})
   const [parseResultModalOpen, setParseResultModalOpen] = useState(false)
   const [parseResult, setParseResult] = useState<FileParseResultDTO | null>(null)
+  const [reindexLoading, setReindexLoading] = useState(false)
+  const [statusLoading, setStatusLoading] = useState(false)
+  const [indexStatus, setIndexStatus] = useState<KnowledgeIndexStatusDTO | null>(null)
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchHits, setSearchHits] = useState<KnowledgeSearchHitDTO[]>([])
+  const indexPollTimerRef = useRef<number | null>(null)
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
@@ -315,6 +399,161 @@ export default function FilesPage() {
     if (hydrated && currentRole === 'admin')
       fetchFiles()
   }, [hydrated, currentRole])
+
+  const stopIndexPolling = () => {
+    if (indexPollTimerRef.current != null) {
+      window.clearInterval(indexPollTimerRef.current)
+      indexPollTimerRef.current = null
+    }
+  }
+
+  useEffect(() => () => {
+    stopIndexPolling()
+  }, [])
+
+  const fetchIndexStatus = async (fileID: number, versionNo: number, silent = false) => {
+    if (fileID <= 0) {
+      if (!silent)
+        msgApi.warning('请先输入合法 fileId')
+      return null
+    }
+    const query = versionNo > 0 ? `?versionNo=${encodeURIComponent(String(versionNo))}` : ''
+    if (!silent)
+      setStatusLoading(true)
+    try {
+      const data = await request<KnowledgeIndexStatusDTO>(`/api/files/${fileID}/index-status${query}`, { method: 'GET' })
+      setIndexStatus(data)
+      return data
+    }
+    catch (error) {
+      if (!silent)
+        msgApi.error(error instanceof Error ? error.message : '查询索引状态失败')
+      return null
+    }
+    finally {
+      if (!silent)
+        setStatusLoading(false)
+    }
+  }
+
+  const startIndexPolling = (fileID: number, versionNo: number) => {
+    stopIndexPolling()
+    let attempts = 0
+    const maxAttempts = 20
+    const poll = async () => {
+      attempts++
+      const data = await fetchIndexStatus(fileID, versionNo, true)
+      if (!data)
+        return
+      const status = String(data.status || '')
+      if (status === 'succeeded') {
+        msgApi.success(`索引完成：fileId=${data.fileId} v${data.versionNo}`)
+        stopIndexPolling()
+        return
+      }
+      if (status === 'failed') {
+        msgApi.error(`索引失败：${data.errorMessage || '未知错误'}`)
+        stopIndexPolling()
+        return
+      }
+      if (attempts >= maxAttempts) {
+        msgApi.warning('轮询已停止，请手动刷新索引状态')
+        stopIndexPolling()
+      }
+    }
+    poll()
+    indexPollTimerRef.current = window.setInterval(() => {
+      void poll()
+    }, 1500)
+  }
+
+  const triggerReindex = async () => {
+    const fileID = parsePositiveInt(reindexForm.getFieldValue('fileId'))
+    const versionNo = parseNonNegativeInt(reindexForm.getFieldValue('versionNo'))
+    if (fileID <= 0) {
+      msgApi.warning('请先输入合法 fileId')
+      return
+    }
+    setReindexLoading(true)
+    try {
+      const query = versionNo > 0 ? `?versionNo=${encodeURIComponent(String(versionNo))}` : ''
+      const data = await request<KnowledgeIndexStatusDTO>(`/api/files/${fileID}/reindex${query}`, { method: 'POST' })
+      setIndexStatus(data)
+      msgApi.success(`已触发重建：fileId=${data.fileId} v${data.versionNo}`)
+      startIndexPolling(fileID, versionNo)
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '触发重建失败')
+    }
+    finally {
+      setReindexLoading(false)
+    }
+  }
+
+  const queryIndexStatus = async () => {
+    const fileID = parsePositiveInt(reindexForm.getFieldValue('fileId'))
+    const versionNo = parseNonNegativeInt(reindexForm.getFieldValue('versionNo'))
+    await fetchIndexStatus(fileID, versionNo)
+  }
+
+  const runKnowledgeSearch = async () => {
+    const query = String(searchForm.getFieldValue('query') || '').trim()
+    if (!query) {
+      msgApi.warning('请输入检索问题 query')
+      return
+    }
+    const topK = parsePositiveInt(searchForm.getFieldValue('topK')) || 12
+    const minScore = parsePositiveFloat(searchForm.getFieldValue('minScore'), 0.2)
+    const fileIDs = parseFileIDs(searchForm.getFieldValue('fileIds'))
+    const payload = {
+      query,
+      topK,
+      minScore,
+      fileIds: fileIDs,
+      bizKey: String(searchForm.getFieldValue('bizKey') || '').trim(),
+      subjectId: parseNonNegativeInt(searchForm.getFieldValue('subjectId')),
+      projectId: parseNonNegativeInt(searchForm.getFieldValue('projectId')),
+    }
+    setSearchLoading(true)
+    try {
+      const data = await request<KnowledgeSearchResultDTO>('/api/knowledge/search', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      const hits = Array.isArray(data?.hits) ? data.hits : []
+      setSearchHits(hits)
+      msgApi.success(`检索完成，命中 ${hits.length} 条`)
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '知识检索失败')
+    }
+    finally {
+      setSearchLoading(false)
+    }
+  }
+
+  const copyKnowledgeHits = async () => {
+    if (searchHits.length === 0) {
+      msgApi.warning('当前无可复制的命中结果')
+      return
+    }
+    const content = searchHits.map((hit, index) => {
+      const summary = String(hit.chunkSummary || hit.chunkText || '').trim()
+      return [
+        `[${index + 1}] fileId=${hit.fileId} v${hit.versionNo} chunk=${hit.chunkIndex}`,
+        `sourceRef=${hit.sourceRef || '-'} retrieval=${hit.retrievalType || '-'}`,
+        `score=${Number(hit.finalScore || hit.score || 0).toFixed(4)} semantic=${Number(hit.semanticScore || 0).toFixed(4)} keyword=${Number(hit.keywordScore || 0).toFixed(4)}`,
+        `text=${summary}`,
+      ].join('\n')
+    }).join('\n\n')
+    try {
+      await copyText(content)
+      msgApi.success('命中摘要已复制')
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '复制失败')
+    }
+  }
 
   const createSessionAndUpload = async () => {
     const bizKey = String(form.getFieldValue('bizKey') || '').trim()
@@ -578,6 +817,169 @@ export default function FilesPage() {
                     <Button size="small" danger loading={Boolean(deleteLoadingMap[record.id])}>删除</Button>
                   </Popconfirm>
                 </Space>
+              ),
+            },
+          ]}
+        />
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="mb-3 text-sm font-semibold text-gray-900">索引与检索测试</div>
+        <Tabs
+          items={[
+            {
+              key: 'index-test',
+              label: '索引测试',
+              children: (
+                <div className="space-y-3">
+                  <Form form={reindexForm} layout="inline" initialValues={{ fileId: '', versionNo: '0' }}>
+                    <Form.Item label="fileId" name="fileId">
+                      <Input placeholder="例如: 101" style={{ width: 160 }} />
+                    </Form.Item>
+                    <Form.Item label="versionNo" name="versionNo">
+                      <Input placeholder="0=最新版本" style={{ width: 160 }} />
+                    </Form.Item>
+                    <Form.Item>
+                      <Space wrap>
+                        <Button type="primary" loading={reindexLoading} onClick={triggerReindex}>触发重建</Button>
+                        <Button loading={statusLoading} onClick={queryIndexStatus}>查询状态</Button>
+                        <Button onClick={() => {
+                          stopIndexPolling()
+                          setIndexStatus(null)
+                        }}
+                        >
+                          清空
+                        </Button>
+                      </Space>
+                    </Form.Item>
+                  </Form>
+
+                  {indexStatus
+                    ? (
+                        <Descriptions bordered size="small" column={2}>
+                          <Descriptions.Item label="fileId">{indexStatus.fileId}</Descriptions.Item>
+                          <Descriptions.Item label="versionNo">{indexStatus.versionNo}</Descriptions.Item>
+                          <Descriptions.Item label="状态">
+                            <Tag color={
+                              indexStatus.status === 'succeeded'
+                                ? 'green'
+                                : indexStatus.status === 'failed'
+                                  ? 'red'
+                                  : indexStatus.status === 'running'
+                                    ? 'blue'
+                                    : 'gold'
+                            }
+                            >
+                              {indexStatus.status}
+                            </Tag>
+                          </Descriptions.Item>
+                          <Descriptions.Item label="重试次数">{indexStatus.retryCount}</Descriptions.Item>
+                          <Descriptions.Item label="错误信息" span={2}>{indexStatus.errorMessage || '-'}</Descriptions.Item>
+                          <Descriptions.Item label="startedAt">{indexStatus.startedAt || '-'}</Descriptions.Item>
+                          <Descriptions.Item label="finishedAt">{indexStatus.finishedAt || '-'}</Descriptions.Item>
+                          <Descriptions.Item label="updatedAt" span={2}>{indexStatus.updatedAt || '-'}</Descriptions.Item>
+                        </Descriptions>
+                      )
+                    : null}
+                </div>
+              ),
+            },
+            {
+              key: 'search-test',
+              label: '检索测试',
+              children: (
+                <div className="space-y-3">
+                  <Form
+                    form={searchForm}
+                    layout="vertical"
+                    initialValues={{
+                      query: '',
+                      topK: '12',
+                      minScore: '0.2',
+                      fileIds: '',
+                      bizKey: '',
+                      subjectId: '',
+                      projectId: '',
+                    }}
+                  >
+                    <Form.Item label="query" name="query">
+                      <Input.TextArea rows={2} placeholder="例如：请总结项目可研中的核心风险" />
+                    </Form.Item>
+                    <Space wrap>
+                      <Form.Item label="topK" name="topK">
+                        <Input style={{ width: 120 }} />
+                      </Form.Item>
+                      <Form.Item label="minScore" name="minScore">
+                        <Input style={{ width: 120 }} />
+                      </Form.Item>
+                      <Form.Item label="fileIds" name="fileIds">
+                        <Input placeholder="逗号分隔，如 101,102" style={{ width: 220 }} />
+                      </Form.Item>
+                      <Form.Item label="bizKey" name="bizKey">
+                        <Input placeholder="可选，精确过滤" style={{ width: 220 }} />
+                      </Form.Item>
+                      <Form.Item label="subjectId" name="subjectId">
+                        <Input placeholder="可选" style={{ width: 120 }} />
+                      </Form.Item>
+                      <Form.Item label="projectId" name="projectId">
+                        <Input placeholder="可选" style={{ width: 120 }} />
+                      </Form.Item>
+                    </Space>
+                    <Space wrap>
+                      <Button type="primary" loading={searchLoading} onClick={runKnowledgeSearch}>执行检索</Button>
+                      <Button onClick={() => {
+                        searchForm.setFieldsValue({
+                          query: '',
+                          topK: '12',
+                          minScore: '0.2',
+                          fileIds: '',
+                          bizKey: '',
+                          subjectId: '',
+                          projectId: '',
+                        })
+                        setSearchHits([])
+                      }}
+                      >
+                        重置
+                      </Button>
+                      <Button onClick={copyKnowledgeHits}>复制命中摘要</Button>
+                    </Space>
+                  </Form>
+
+                  <Table<KnowledgeSearchHitDTO>
+                    rowKey={buildKnowledgeHitRowKey}
+                    loading={searchLoading}
+                    size="small"
+                    dataSource={searchHits}
+                    pagination={{ pageSize: 8, showSizeChanger: false }}
+                    columns={[
+                      { title: 'fileId', dataIndex: 'fileId', width: 90 },
+                      { title: '版本', dataIndex: 'versionNo', width: 80 },
+                      { title: 'chunk', dataIndex: 'chunkIndex', width: 80 },
+                      {
+                        title: '召回',
+                        dataIndex: 'retrievalType',
+                        width: 100,
+                        render: (value: string) => {
+                          const normalized = String(value || '').toLowerCase()
+                          if (normalized === 'hybrid')
+                            return <Tag color="purple">hybrid</Tag>
+                          if (normalized === 'semantic')
+                            return <Tag color="blue">semantic</Tag>
+                          if (normalized === 'keyword')
+                            return <Tag color="green">keyword</Tag>
+                          return <Tag>{value || '-'}</Tag>
+                        },
+                      },
+                      { title: 'semantic', dataIndex: 'semanticScore', width: 100, sorter: (a, b) => a.semanticScore - b.semanticScore, render: (value: number) => Number(value || 0).toFixed(4) },
+                      { title: 'keyword', dataIndex: 'keywordScore', width: 100, sorter: (a, b) => a.keywordScore - b.keywordScore, render: (value: number) => Number(value || 0).toFixed(4) },
+                      { title: 'final', dataIndex: 'finalScore', width: 100, sorter: (a, b) => a.finalScore - b.finalScore, defaultSortOrder: 'descend', render: (value: number, row) => Number(value || row.score || 0).toFixed(4) },
+                      { title: 'sourceRef', dataIndex: 'sourceRef', width: 180, render: (value: string) => value || '-' },
+                      { title: '摘要', dataIndex: 'chunkSummary', width: 240, render: (value: string, row) => value || row.chunkText || '-' },
+                      { title: '命中文本', dataIndex: 'chunkText', render: (value: string) => value || '-' },
+                    ]}
+                  />
+                </div>
               ),
             },
           ]}

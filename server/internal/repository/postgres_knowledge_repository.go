@@ -189,9 +189,6 @@ WHERE file_id = $1 AND version_no = $2
 		if strings.TrimSpace(chunk.ChunkText) == "" || len(chunk.Embedding) == 0 {
 			continue
 		}
-		if len(chunk.Embedding) != 1536 {
-			return false
-		}
 		var chunkID int64
 		err := tx.QueryRowContext(ctx, `
 INSERT INTO knowledge_chunk (
@@ -239,7 +236,7 @@ ON CONFLICT (chunk_id, model_name) DO UPDATE SET
 }
 
 func (repository *PostgresKnowledgeRepository) Search(modelName string, queryText string, queryVector []float64, filter KnowledgeSearchFilter) []model.KnowledgeSearchHitDTO {
-	if strings.TrimSpace(modelName) == "" || strings.TrimSpace(queryText) == "" || len(queryVector) != 1536 {
+	if strings.TrimSpace(modelName) == "" || strings.TrimSpace(queryText) == "" || len(queryVector) == 0 {
 		return nil
 	}
 	topK := filter.TopK

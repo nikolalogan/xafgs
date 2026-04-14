@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	defaultEmbeddingModel = "text-embedding-3-small"
 	knowledgeChunkMaxLen  = 800
 	knowledgeChunkMinLen  = 500
 	knowledgeChunkOverlap = 80
@@ -47,7 +46,7 @@ type knowledgeService struct {
 	repository           repository.KnowledgeRepository
 	fileRepository       repository.FileRepository
 	fileService          FileService
-	userConfigService    UserConfigService
+	systemConfigService  SystemConfigService
 	documentParseService DocumentParseService
 	embeddingClient      ai.EmbeddingClient
 	enabled              bool
@@ -57,7 +56,7 @@ func NewKnowledgeService(
 	repository repository.KnowledgeRepository,
 	fileRepository repository.FileRepository,
 	fileService FileService,
-	userConfigService UserConfigService,
+	systemConfigService SystemConfigService,
 	documentParseService DocumentParseService,
 	embeddingClient ai.EmbeddingClient,
 ) KnowledgeService {
@@ -65,7 +64,7 @@ func NewKnowledgeService(
 		repository:           repository,
 		fileRepository:       fileRepository,
 		fileService:          fileService,
-		userConfigService:    userConfigService,
+		systemConfigService:  systemConfigService,
 		documentParseService: documentParseService,
 		embeddingClient:      embeddingClient,
 		enabled:              repository != nil && embeddingClient != nil,
@@ -125,7 +124,7 @@ func (service *knowledgeService) GetStatus(_ context.Context, fileID int64, vers
 	}, nil
 }
 
-func (service *knowledgeService) Search(ctx context.Context, userID int64, request KnowledgeSearchRequest) (model.KnowledgeSearchResultDTO, *model.APIError) {
+func (service *knowledgeService) Search(ctx context.Context, _ int64, request KnowledgeSearchRequest) (model.KnowledgeSearchResultDTO, *model.APIError) {
 	if !service.enabled {
 		return model.KnowledgeSearchResultDTO{}, model.NewAPIError(503, response.CodeInternal, "知识检索能力未启用")
 	}
@@ -133,15 +132,15 @@ func (service *knowledgeService) Search(ctx context.Context, userID int64, reque
 	if query == "" {
 		return model.KnowledgeSearchResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "query 不能为空")
 	}
-	config, apiError := service.userConfigService.GetByUserID(ctx, userID)
+	embeddingConfig, apiError := service.getEmbeddingConfig(ctx)
 	if apiError != nil {
 		return model.KnowledgeSearchResultDTO{}, apiError
 	}
-	vector, embeddingError := service.embedSingle(ctx, config.AIBaseURL, config.AIApiKey, query)
+	vector, embeddingError := service.embedSingle(ctx, embeddingConfig, query)
 	if embeddingError != nil {
 		return model.KnowledgeSearchResultDTO{}, model.NewAPIError(502, response.CodeInternal, "向量化失败："+embeddingError.Error())
 	}
-	hits := service.repository.Search(defaultEmbeddingModel, query, vector, repository.KnowledgeSearchFilter{
+	hits := service.repository.Search(embeddingConfig.Model, query, vector, repository.KnowledgeSearchFilter{
 		FileIDs:        request.FileIDs,
 		BizKey:         strings.TrimSpace(request.BizKey),
 		BizKeyPrefixes: buildScopeBizKeyPrefixes(request.SubjectID, request.ProjectID),
@@ -198,9 +197,9 @@ func (service *knowledgeService) runJob(ctx context.Context, job model.Knowledge
 	if fileEntity.CreatedBy <= 0 {
 		return fmt.Errorf("file 创建人不存在")
 	}
-	userConfig, apiError := service.userConfigService.GetByUserID(ctx, fileEntity.CreatedBy)
+	embeddingConfig, apiError := service.getEmbeddingConfig(ctx)
 	if apiError != nil {
-		return fmt.Errorf("用户配置缺失: %s", apiError.Message)
+		return fmt.Errorf("%s", apiError.Message)
 	}
 	parsed, parseError := service.documentParseService.ParseCaseFile(ctx, model.ReportCaseFile{
 		FileID:    job.FileID,
@@ -218,9 +217,9 @@ func (service *knowledgeService) runJob(ctx context.Context, job model.Knowledge
 		inputs = append(inputs, chunk.ChunkText)
 	}
 	embeddings, embedError := service.embeddingClient.CreateEmbeddings(ctx, ai.EmbeddingRequest{
-		BaseURL: strings.TrimSpace(userConfig.AIBaseURL),
-		APIKey:  strings.TrimSpace(userConfig.AIApiKey),
-		Model:   defaultEmbeddingModel,
+		BaseURL: embeddingConfig.BaseURL,
+		APIKey:  embeddingConfig.APIKey,
+		Model:   embeddingConfig.Model,
 		Input:   inputs,
 		Timeout: 90 * time.Second,
 	})
@@ -231,32 +230,59 @@ func (service *knowledgeService) runJob(ctx context.Context, job model.Knowledge
 		return fmt.Errorf("embedding 数量不匹配")
 	}
 	for index := range chunks {
-		if len(embeddings[index]) != 1536 {
+		if len(embeddings[index]) != embeddingConfig.Dimension {
 			return fmt.Errorf("embedding 维度非法: %d", len(embeddings[index]))
 		}
 		chunks[index].Embedding = embeddings[index]
 	}
-	if ok := service.repository.ReplaceChunks(job.FileID, job.VersionNo, defaultEmbeddingModel, chunks); !ok {
+	if ok := service.repository.ReplaceChunks(job.FileID, job.VersionNo, embeddingConfig.Model, chunks); !ok {
 		return fmt.Errorf("落库失败")
 	}
 	return nil
 }
 
-func (service *knowledgeService) embedSingle(ctx context.Context, baseURL, apiKey, input string) ([]float64, error) {
+func (service *knowledgeService) embedSingle(ctx context.Context, config embeddingRuntimeConfig, input string) ([]float64, error) {
 	results, err := service.embeddingClient.CreateEmbeddings(ctx, ai.EmbeddingRequest{
-		BaseURL: strings.TrimSpace(baseURL),
-		APIKey:  strings.TrimSpace(apiKey),
-		Model:   defaultEmbeddingModel,
+		BaseURL: config.BaseURL,
+		APIKey:  config.APIKey,
+		Model:   config.Model,
 		Input:   []string{input},
 		Timeout: 45 * time.Second,
 	})
 	if err != nil {
 		return nil, err
 	}
-	if len(results) != 1 || len(results[0]) != 1536 {
+	if len(results) != 1 || len(results[0]) != config.Dimension {
 		return nil, fmt.Errorf("embedding 返回非法")
 	}
 	return results[0], nil
+}
+
+type embeddingRuntimeConfig struct {
+	BaseURL   string
+	APIKey    string
+	Model     string
+	Dimension int
+}
+
+func (service *knowledgeService) getEmbeddingConfig(ctx context.Context) (embeddingRuntimeConfig, *model.APIError) {
+	config, apiError := service.systemConfigService.Get(ctx)
+	if apiError != nil {
+		return embeddingRuntimeConfig{}, apiError
+	}
+	baseURL := strings.TrimSpace(config.LocalEmbeddingBaseURL)
+	apiKey := strings.TrimSpace(config.LocalEmbeddingAPIKey)
+	modelName := strings.TrimSpace(config.LocalEmbeddingModel)
+	dimension := config.LocalEmbeddingDimension
+	if baseURL == "" || apiKey == "" || modelName == "" || dimension <= 0 {
+		return embeddingRuntimeConfig{}, model.NewAPIError(400, response.CodeBadRequest, "本地向量配置缺失，请联系管理员在系统设置中补充")
+	}
+	return embeddingRuntimeConfig{
+		BaseURL:   baseURL,
+		APIKey:    apiKey,
+		Model:     modelName,
+		Dimension: dimension,
+	}, nil
 }
 
 func buildKnowledgeChunks(parsed ParsedDocument, bizKey string) []model.KnowledgeChunk {

@@ -127,7 +127,14 @@ func NewApp() (*fiber.App, Config) {
 			regionRepository = repository.NewPostgresRegionRepository(result.DB)
 			adminDivisionRepository = repository.NewPostgresAdminDivisionRepository(result.DB)
 			fileRepository = repository.NewPostgresFileRepository(result.DB)
-			knowledgeRepository = repository.NewPostgresKnowledgeRepository(result.DB)
+			vectorEnabled, vectorErr := db.HasExtension(ctx, result.DB, "vector")
+			if vectorErr != nil {
+				log.Printf("检测 PostgreSQL vector 扩展失败，知识检索将禁用: %v", vectorErr)
+			} else if !vectorEnabled {
+				log.Printf("PostgreSQL 未安装 vector 扩展，知识检索将禁用")
+			} else {
+				knowledgeRepository = repository.NewPostgresKnowledgeRepository(result.DB)
+			}
 			templateRepository = repository.NewPostgresTemplateRepository(result.DB)
 			chatRepository = repository.NewPostgresChatRepository(result.DB)
 			debugFeedbackRepository = repository.NewPostgresDebugFeedbackRepository(result.DB)
@@ -153,10 +160,10 @@ func NewApp() (*fiber.App, Config) {
 	aiClient := ai.NewOpenAICompatClient(nil)
 	embeddingClient := ai.NewOpenAICompatEmbeddingClient(nil)
 	documentParseService := service.NewDocumentParseService(fileService, ocrProvider, ocrTaskService)
-	knowledgeService := service.NewKnowledgeService(knowledgeRepository, fileRepository, fileService, userConfigService, documentParseService, embeddingClient)
+	knowledgeService := service.NewKnowledgeService(knowledgeRepository, fileRepository, fileService, systemConfigService, documentParseService, embeddingClient)
 	fileService = service.NewFileService(fileRepository, fileStorage, knowledgeService)
 	documentParseService = service.NewDocumentParseService(fileService, ocrProvider, ocrTaskService)
-	knowledgeService = service.NewKnowledgeService(knowledgeRepository, fileRepository, fileService, userConfigService, documentParseService, embeddingClient)
+	knowledgeService = service.NewKnowledgeService(knowledgeRepository, fileRepository, fileService, systemConfigService, documentParseService, embeddingClient)
 	templateRenderer := service.NewGonjaTemplateRenderer()
 	templateService := service.NewTemplateService(templateRepository, templateRenderer)
 	reportingService := service.NewReportingService(reportingRepository, fileRepository, documentParseService)

@@ -24,7 +24,9 @@ func (repository *PostgresSystemConfigRepository) Get() (model.SystemConfigDTO, 
 	var entity model.SystemConfig
 	var modelsRaw []byte
 	err := repository.db.QueryRowContext(ctx, `
-SELECT id, models_json, default_model, code_default_model, search_service, created_at, updated_at, created_by, updated_by
+SELECT id, models_json, default_model, code_default_model, search_service,
+       local_embedding_base_url, local_embedding_api_key, local_embedding_model, local_embedding_dimension,
+       created_at, updated_at, created_by, updated_by
 FROM system_config
 WHERE id = 1
 `).Scan(
@@ -33,6 +35,10 @@ WHERE id = 1
 		&entity.DefaultModel,
 		&entity.CodeDefaultModel,
 		&entity.SearchService,
+		&entity.LocalEmbeddingBaseURL,
+		&entity.LocalEmbeddingAPIKey,
+		&entity.LocalEmbeddingModel,
+		&entity.LocalEmbeddingDimension,
 		&entity.CreatedAt,
 		&entity.UpdatedAt,
 		&entity.CreatedBy,
@@ -61,16 +67,24 @@ func (repository *PostgresSystemConfigRepository) Upsert(config model.SystemConf
 
 	now := time.Now().UTC()
 	_, err = repository.db.ExecContext(ctx, `
-INSERT INTO system_config (id, models_json, default_model, code_default_model, search_service, created_at, updated_at, created_by, updated_by)
-VALUES (1, $1::jsonb, $2, $3, $4, $5, $5, $6, $6)
+INSERT INTO system_config (
+  id, models_json, default_model, code_default_model, search_service,
+  local_embedding_base_url, local_embedding_api_key, local_embedding_model, local_embedding_dimension,
+  created_at, updated_at, created_by, updated_by
+)
+VALUES (1, $1::jsonb, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $10)
 ON CONFLICT (id) DO UPDATE SET
   models_json = EXCLUDED.models_json,
   default_model = EXCLUDED.default_model,
   code_default_model = EXCLUDED.code_default_model,
   search_service = EXCLUDED.search_service,
+  local_embedding_base_url = EXCLUDED.local_embedding_base_url,
+  local_embedding_api_key = EXCLUDED.local_embedding_api_key,
+  local_embedding_model = EXCLUDED.local_embedding_model,
+  local_embedding_dimension = EXCLUDED.local_embedding_dimension,
   updated_at = EXCLUDED.updated_at,
   updated_by = EXCLUDED.updated_by
-`, string(modelsRaw), config.DefaultModel, config.CodeDefaultModel, config.SearchService, now, config.UpdatedBy)
+`, string(modelsRaw), config.DefaultModel, config.CodeDefaultModel, config.SearchService, config.LocalEmbeddingBaseURL, config.LocalEmbeddingAPIKey, config.LocalEmbeddingModel, config.LocalEmbeddingDimension, now, config.UpdatedBy)
 	if err != nil {
 		return model.SystemConfigDTO{}, false
 	}

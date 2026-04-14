@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { GlobalOutlined, UploadOutlined } from '@ant-design/icons'
-import { Button, Form, Input, Modal, Select, Space, Tooltip, Upload, message } from 'antd'
+import { Button, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Upload, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
 
 type ApiResponse<T> = {
@@ -70,6 +70,24 @@ type ChatReference = {
   url: string
 }
 
+type KnowledgeSearchHitDTO = {
+  fileId: number
+  versionNo: number
+  chunkIndex: number
+  chunkText: string
+  chunkSummary: string
+  sourceRef: string
+  retrievalType: 'semantic' | 'keyword' | 'hybrid' | string
+  semanticScore: number
+  keywordScore: number
+  finalScore: number
+  score: number
+}
+
+type KnowledgeSearchResultDTO = {
+  hits: KnowledgeSearchHitDTO[]
+}
+
 const getToken = () => {
   if (typeof window === 'undefined')
     return ''
@@ -122,6 +140,34 @@ const parseMessageWithReferences = (rawContent: string): { body: string, referen
   }
 }
 
+const parsePositiveInt = (value: string) => {
+  const number = Number.parseInt(String(value || '').trim(), 10)
+  if (!Number.isFinite(number) || number <= 0)
+    return 0
+  return number
+}
+
+const parseNonNegativeInt = (value: string) => {
+  const number = Number.parseInt(String(value || '').trim(), 10)
+  if (!Number.isFinite(number) || number < 0)
+    return 0
+  return number
+}
+
+const parsePositiveFloat = (value: string, fallback: number) => {
+  const number = Number.parseFloat(String(value || '').trim())
+  if (!Number.isFinite(number) || number <= 0)
+    return fallback
+  return number
+}
+
+const parseFileIDs = (value: string) => String(value || '')
+  .split(',')
+  .map(item => parsePositiveInt(item))
+  .filter(item => item > 0)
+
+const buildKnowledgeHitRowKey = (row: KnowledgeSearchHitDTO) => `${row.fileId}-${row.versionNo}-${row.chunkIndex}-${row.sourceRef}`
+
 export default function ChatPage() {
   const router = useRouter()
   const [msgApi, contextHolder] = message.useMessage()
@@ -137,6 +183,16 @@ export default function ChatPage() {
   const [draft, setDraft] = useState('')
   const [enableWebSearch, setEnableWebSearch] = useState(false)
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
+  const [searchPreviewOpen, setSearchPreviewOpen] = useState(false)
+  const [searchPreviewLoading, setSearchPreviewLoading] = useState(false)
+  const [previewQuery, setPreviewQuery] = useState('')
+  const [previewTopK, setPreviewTopK] = useState('8')
+  const [previewMinScore, setPreviewMinScore] = useState('0.2')
+  const [previewFileIDsText, setPreviewFileIDsText] = useState('')
+  const [previewBizKey, setPreviewBizKey] = useState('')
+  const [previewSubjectID, setPreviewSubjectID] = useState('')
+  const [previewProjectID, setPreviewProjectID] = useState('')
+  const [previewHits, setPreviewHits] = useState<KnowledgeSearchHitDTO[]>([])
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createLoading, setCreateLoading] = useState(false)
@@ -378,6 +434,44 @@ export default function ChatPage() {
     })
   }
 
+  const openSearchPreview = () => {
+    setPreviewQuery(String(draft || '').trim())
+    setSearchPreviewOpen(true)
+  }
+
+  const runSearchPreview = async () => {
+    const query = String(previewQuery || '').trim()
+    if (!query) {
+      msgApi.warning('请先输入问题，再做检索预览')
+      return
+    }
+    const payload = {
+      query,
+      topK: parsePositiveInt(previewTopK) || 8,
+      minScore: parsePositiveFloat(previewMinScore, 0.2),
+      fileIds: parseFileIDs(previewFileIDsText),
+      bizKey: String(previewBizKey || '').trim(),
+      subjectId: parseNonNegativeInt(previewSubjectID),
+      projectId: parseNonNegativeInt(previewProjectID),
+    }
+    setSearchPreviewLoading(true)
+    try {
+      const data = await request<KnowledgeSearchResultDTO>('/api/knowledge/search', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      const hits = Array.isArray(data?.hits) ? data.hits : []
+      setPreviewHits(hits)
+      msgApi.success(`检索预览完成，命中 ${hits.length} 条`)
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '检索预览失败')
+    }
+    finally {
+      setSearchPreviewLoading(false)
+    }
+  }
+
   if (!hydrated) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-6">
@@ -530,6 +624,14 @@ export default function ChatPage() {
               icon={<GlobalOutlined />}
             />
           </Tooltip>
+          <Tooltip title="发送前预览知识库检索命中">
+            <Button
+              onClick={openSearchPreview}
+              disabled={sending || !activeConversationID}
+            >
+              检索预览
+            </Button>
+          </Tooltip>
           <Input.TextArea
             value={draft}
             onChange={e => setDraft(e.target.value)}
@@ -566,6 +668,66 @@ export default function ChatPage() {
           </div>
         )}
       </div>
+
+      <Modal
+        title="检索预览（发送前）"
+        open={searchPreviewOpen}
+        onCancel={() => setSearchPreviewOpen(false)}
+        footer={null}
+        width={1080}
+      >
+        <div className="space-y-3">
+          <Input.TextArea
+            value={previewQuery}
+            onChange={event => setPreviewQuery(event.target.value)}
+            rows={2}
+            placeholder="请输入要预览检索的问题"
+          />
+          <Space wrap>
+            <Input value={previewTopK} onChange={event => setPreviewTopK(event.target.value)} addonBefore="topK" style={{ width: 140 }} />
+            <Input value={previewMinScore} onChange={event => setPreviewMinScore(event.target.value)} addonBefore="minScore" style={{ width: 180 }} />
+            <Input value={previewFileIDsText} onChange={event => setPreviewFileIDsText(event.target.value)} addonBefore="fileIds" placeholder="101,102" style={{ width: 220 }} />
+            <Input value={previewBizKey} onChange={event => setPreviewBizKey(event.target.value)} addonBefore="bizKey" placeholder="可选" style={{ width: 220 }} />
+            <Input value={previewSubjectID} onChange={event => setPreviewSubjectID(event.target.value)} addonBefore="subjectId" placeholder="可选" style={{ width: 170 }} />
+            <Input value={previewProjectID} onChange={event => setPreviewProjectID(event.target.value)} addonBefore="projectId" placeholder="可选" style={{ width: 170 }} />
+            <Button type="primary" loading={searchPreviewLoading} onClick={runSearchPreview}>执行预览</Button>
+          </Space>
+
+          <Table<KnowledgeSearchHitDTO>
+            rowKey={buildKnowledgeHitRowKey}
+            loading={searchPreviewLoading}
+            size="small"
+            dataSource={previewHits}
+            pagination={{ pageSize: 6, showSizeChanger: false }}
+            columns={[
+              { title: 'fileId', dataIndex: 'fileId', width: 80 },
+              { title: '版本', dataIndex: 'versionNo', width: 70 },
+              { title: 'chunk', dataIndex: 'chunkIndex', width: 70 },
+              {
+                title: '召回',
+                dataIndex: 'retrievalType',
+                width: 100,
+                render: (value: string) => {
+                  const normalized = String(value || '').toLowerCase()
+                  if (normalized === 'hybrid')
+                    return <Tag color="purple">hybrid</Tag>
+                  if (normalized === 'semantic')
+                    return <Tag color="blue">semantic</Tag>
+                  if (normalized === 'keyword')
+                    return <Tag color="green">keyword</Tag>
+                  return <Tag>{value || '-'}</Tag>
+                },
+              },
+              { title: 'semantic', dataIndex: 'semanticScore', width: 90, render: (value: number) => Number(value || 0).toFixed(4) },
+              { title: 'keyword', dataIndex: 'keywordScore', width: 90, render: (value: number) => Number(value || 0).toFixed(4) },
+              { title: 'final', dataIndex: 'finalScore', width: 90, render: (value: number, row) => Number(value || row.score || 0).toFixed(4) },
+              { title: 'sourceRef', dataIndex: 'sourceRef', width: 180, render: (value: string) => value || '-' },
+              { title: '摘要', dataIndex: 'chunkSummary', width: 260, render: (value: string, row) => value || row.chunkText || '-' },
+              { title: '命中文本', dataIndex: 'chunkText', render: (value: string) => value || '-' },
+            ]}
+          />
+        </div>
+      </Modal>
 
       <Modal
         title="新建会话"

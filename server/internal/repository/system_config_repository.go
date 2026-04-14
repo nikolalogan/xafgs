@@ -54,6 +54,10 @@ func (repository *systemConfigRepository) Upsert(config model.SystemConfig) (mod
 	existing.DefaultModel = config.DefaultModel
 	existing.CodeDefaultModel = config.CodeDefaultModel
 	existing.SearchService = config.SearchService
+	existing.LocalEmbeddingBaseURL = config.LocalEmbeddingBaseURL
+	existing.LocalEmbeddingAPIKey = config.LocalEmbeddingAPIKey
+	existing.LocalEmbeddingModel = config.LocalEmbeddingModel
+	existing.LocalEmbeddingDimension = config.LocalEmbeddingDimension
 	existing.UpdatedAt = now
 	existing.UpdatedBy = config.UpdatedBy
 	repository.config = &existing

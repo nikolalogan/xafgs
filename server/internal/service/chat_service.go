@@ -309,6 +309,9 @@ func (service *chatService) buildKnowledgeAttachmentContext(ctx context.Context,
 		ProjectID: projectID,
 	})
 	if apiError != nil {
+		if strings.Contains(strings.TrimSpace(apiError.Message), "本地向量配置缺失") {
+			return "", apiError
+		}
 		log.Printf("knowledge-search failed userId=%d err=%s", userID, apiError.Message)
 		return "", nil
 	}
