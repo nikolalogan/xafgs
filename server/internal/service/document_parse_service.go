@@ -33,9 +33,9 @@ const maxDocumentParseBytes int64 = 20 * 1024 * 1024
 
 const (
 	pdfExtractorPyMuPDF = "pymupdf"
-	pdfExtractorMuPDF  = "mupdf"
-	pdfExtractorNative = "native"
-	pdfMuPDFTimeout    = 20 * time.Second
+	pdfExtractorMuPDF   = "mupdf"
+	pdfExtractorNative  = "native"
+	pdfMuPDFTimeout     = 20 * time.Second
 )
 
 type OCRRequest struct {
@@ -531,12 +531,12 @@ type pdfLayoutBlock struct {
 }
 
 type pdfDetectedTable struct {
-	Index       int
-	BBox        pdfLayoutBBox
-	Rows        [][]string
-	Cells       []pdfDetectedCell
-	BlockIndex  int
-	Detector    string
+	Index      int
+	BBox       pdfLayoutBBox
+	Rows       [][]string
+	Cells      []pdfDetectedCell
+	BlockIndex int
+	Detector   string
 }
 
 type pdfDetectedCell struct {
@@ -1086,6 +1086,18 @@ type docxBlock struct {
 	Title      string
 	TitleLevel int
 	Rows       [][]string
+	Cells      []structuredCell
+}
+
+type structuredCell struct {
+	RowIndex     int
+	ColIndex     int
+	RowSpan      int
+	ColSpan      int
+	RawText      string
+	DisplayValue string
+	Formula      string
+	SourceRef    string
 }
 
 func parseDOCXDocument(caseFile model.ReportCaseFile, version model.FileVersionDTO, raw []byte, profile DocumentProfile) ([]model.DocumentSlice, []model.DocumentTable, []model.DocumentTableFragment, []model.DocumentTableCell) {
@@ -1140,7 +1152,7 @@ func parseDOCXDocument(caseFile model.ReportCaseFile, version model.FileVersionD
 			}
 			combinedText = append(combinedText, tableText)
 			tableTitle := fmt.Sprintf("%s 表格 %d", version.OriginName, len(tables)+1)
-			table, fragment, tableCells := buildStructuredTable(caseFile, version, profile, virtualTableID, tableTitle, block.Rows, 1, fmt.Sprintf(`{"block":%d}`, index+1), "DOCX")
+			table, fragment, tableCells := buildRichStructuredTable(caseFile, version, profile, virtualTableID, tableTitle, block.Rows, block.Cells, 1, fmt.Sprintf(`{"block":%d}`, index+1))
 			tables = append(tables, table)
 			fragments = append(fragments, fragment)
 			cells = append(cells, tableCells...)
@@ -1198,7 +1210,14 @@ func parseDOCXBlocks(documentXML []byte) []docxBlock {
 	currentStyle := ""
 	currentRows := make([][]string, 0)
 	currentRow := make([]string, 0)
+	currentTableCells := make([]structuredCell, 0)
 	currentCell := strings.Builder{}
+	currentCellGridSpan := 1
+	currentCellVMerge := ""
+	currentTableIndex := 0
+	currentRowIndex := -1
+	currentColIndex := 0
+	activeVMerges := map[int]int{}
 	for {
 		token, err := decoder.Token()
 		if err == io.EOF {
@@ -1212,15 +1231,36 @@ func parseDOCXBlocks(documentXML []byte) []docxBlock {
 			switch element.Name.Local {
 			case "tbl":
 				inTable = true
+				currentTableIndex++
 				currentRows = make([][]string, 0)
+				currentTableCells = make([]structuredCell, 0)
+				activeVMerges = map[int]int{}
+				currentRowIndex = -1
 			case "tr":
 				if inTable {
 					currentRow = make([]string, 0)
+					currentRowIndex++
+					currentColIndex = 0
 				}
 			case "tc":
 				if inTable {
 					inCell = true
 					currentCell.Reset()
+					currentCellGridSpan = 1
+					currentCellVMerge = ""
+				}
+			case "gridSpan":
+				if inTable && inCell {
+					if span, err := strconv.Atoi(strings.TrimSpace(attrValue(element, "val"))); err == nil && span > 1 {
+						currentCellGridSpan = span
+					}
+				}
+			case "vMerge":
+				if inTable && inCell {
+					currentCellVMerge = strings.TrimSpace(attrValue(element, "val"))
+					if currentCellVMerge == "" {
+						currentCellVMerge = "continue"
+					}
 				}
 			case "p":
 				inParagraph = true
@@ -1265,7 +1305,37 @@ func parseDOCXBlocks(documentXML []byte) []docxBlock {
 				inParagraph = false
 			case "tc":
 				if inTable {
-					currentRow = append(currentRow, normalizeText(currentCell.String()))
+					text := normalizeText(currentCell.String())
+					colSpan := max(1, currentCellGridSpan)
+					if currentCellVMerge == "continue" {
+						if anchorIndex, ok := activeVMerges[currentColIndex]; ok && anchorIndex >= 0 && anchorIndex < len(currentTableCells) {
+							currentTableCells[anchorIndex].RowSpan++
+						}
+					} else {
+						if currentCellVMerge == "restart" {
+							for spanCol := 0; spanCol < colSpan; spanCol++ {
+								activeVMerges[currentColIndex+spanCol] = len(currentTableCells)
+							}
+						} else {
+							for spanCol := 0; spanCol < colSpan; spanCol++ {
+								delete(activeVMerges, currentColIndex+spanCol)
+							}
+						}
+						currentTableCells = append(currentTableCells, structuredCell{
+							RowIndex:     currentRowIndex,
+							ColIndex:     currentColIndex,
+							RowSpan:      1,
+							ColSpan:      colSpan,
+							RawText:      text,
+							DisplayValue: text,
+							SourceRef:    fmt.Sprintf("第1逻辑页/表格%d/单元格R%dC%d", currentTableIndex, currentRowIndex+1, currentColIndex+1),
+						})
+					}
+					currentRow = append(currentRow, text)
+					for spanIndex := 1; spanIndex < colSpan; spanIndex++ {
+						currentRow = append(currentRow, "")
+					}
+					currentColIndex += colSpan
 					inCell = false
 				}
 			case "tr":
@@ -1274,7 +1344,7 @@ func parseDOCXBlocks(documentXML []byte) []docxBlock {
 				}
 			case "tbl":
 				if len(currentRows) > 0 {
-					blocks = append(blocks, docxBlock{Kind: "table", Rows: normalizeRows(currentRows)})
+					blocks = append(blocks, docxBlock{Kind: "table", Rows: normalizeRows(currentRows), Cells: currentTableCells})
 				}
 				inTable = false
 			}
@@ -1290,6 +1360,7 @@ func parseXLSXDocument(caseFile model.ReportCaseFile, version model.FileVersionD
 	}
 	entries := zipEntries(reader)
 	sharedStrings := parseXLSXSharedStrings(entries["xl/sharedStrings.xml"])
+	styles := parseXLSXStyles(entries["xl/styles.xml"])
 	sheets := parseXLSXSheets(entries["xl/workbook.xml"], entries["xl/_rels/workbook.xml.rels"])
 	slices := make([]model.DocumentSlice, 0, len(sheets)+1)
 	tables := make([]model.DocumentTable, 0)
@@ -1298,7 +1369,8 @@ func parseXLSXDocument(caseFile model.ReportCaseFile, version model.FileVersionD
 	combinedText := make([]string, 0, len(sheets))
 	virtualTableID := int64(-1)
 	for sheetIndex, sheet := range sheets {
-		rows := parseXLSXWorksheet(entries[sheet.Path], sharedStrings)
+		worksheet := parseXLSXWorksheetRich(entries[sheet.Path], sharedStrings, styles, sheet.Name)
+		rows := worksheet.Rows
 		if len(rows) == 0 {
 			continue
 		}
@@ -1323,7 +1395,7 @@ func parseXLSXDocument(caseFile model.ReportCaseFile, version model.FileVersionD
 			ParseStatus: model.DocumentParseStatusParsed,
 			OCRPending:  false,
 		})
-		table, fragment, tableCells := buildStructuredTable(caseFile, version, profile, virtualTableID, title, rows, sheetIndex+1, fmt.Sprintf(`{"sheet":%q}`, sheet.Name), sheet.Name)
+		table, fragment, tableCells := buildRichStructuredTable(caseFile, version, profile, virtualTableID, title, rows, worksheet.Cells, sheetIndex+1, fmt.Sprintf(`{"sheet":%q}`, sheet.Name))
 		tables = append(tables, table)
 		fragments = append(fragments, fragment)
 		cells = append(cells, tableCells...)
@@ -1356,6 +1428,15 @@ func parseXLSXDocument(caseFile model.ReportCaseFile, version model.FileVersionD
 type xlsxSheet struct {
 	Name string
 	Path string
+}
+
+type xlsxWorksheetResult struct {
+	Rows  [][]string
+	Cells []structuredCell
+}
+
+type xlsxStyles struct {
+	DateStyleIndexes map[int]bool
 }
 
 func parseXLSXSheets(workbookXML []byte, relsXML []byte) []xlsxSheet {
@@ -1424,55 +1505,230 @@ func parseXLSXSharedStrings(raw []byte) []string {
 	return values
 }
 
-func parseXLSXWorksheet(raw []byte, sharedStrings []string) [][]string {
+func parseXLSXStyles(raw []byte) xlsxStyles {
+	styles := xlsxStyles{DateStyleIndexes: map[int]bool{}}
 	if len(raw) == 0 {
-		return nil
+		return styles
 	}
+	customDateFormats := map[int]bool{}
 	decoder := xml.NewDecoder(bytes.NewReader(raw))
-	rowsByIndex := map[int]map[int]string{}
-	currentCellRef := ""
-	currentCellType := ""
+	inCellXfs := false
+	cellStyleIndex := 0
 	for {
 		token, err := decoder.Token()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return compactRows(rowsByIndex)
+			return styles
 		}
 		switch element := token.(type) {
 		case xml.StartElement:
 			switch element.Name.Local {
+			case "numFmt":
+				numFmtID := parseOptionalInt(attrValue(element, "numFmtId"), -1)
+				if numFmtID >= 0 && isLikelyXLSXDateFormat(attrValue(element, "formatCode")) {
+					customDateFormats[numFmtID] = true
+				}
+			case "cellXfs":
+				inCellXfs = true
+				cellStyleIndex = 0
+			case "xf":
+				if !inCellXfs {
+					continue
+				}
+				numFmtID := parseOptionalInt(attrValue(element, "numFmtId"), -1)
+				if isBuiltinXLSXDateFormat(numFmtID) || customDateFormats[numFmtID] {
+					styles.DateStyleIndexes[cellStyleIndex] = true
+				}
+				cellStyleIndex++
+			}
+		case xml.EndElement:
+			if element.Name.Local == "cellXfs" {
+				inCellXfs = false
+			}
+		}
+	}
+	return styles
+}
+
+func resolveXLSXCellValue(raw string, cellType string, styleIndex int, sharedStrings []string, styles xlsxStyles) string {
+	value := strings.TrimSpace(raw)
+	switch cellType {
+	case "s":
+		index, err := strconv.Atoi(value)
+		if err == nil && index >= 0 && index < len(sharedStrings) {
+			return sharedStrings[index]
+		}
+		return ""
+	case "b":
+		if value == "1" {
+			return "TRUE"
+		}
+		if value == "0" {
+			return "FALSE"
+		}
+	case "inlineStr", "str", "e":
+		return value
+	}
+	if styles.DateStyleIndexes != nil && styles.DateStyleIndexes[styleIndex] {
+		if formatted, ok := formatXLSXSerialDate(value); ok {
+			return formatted
+		}
+	}
+	return value
+}
+
+func formatXLSXSerialDate(raw string) (string, bool) {
+	serial, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || serial <= 0 {
+		return "", false
+	}
+	days := int(serial)
+	fraction := serial - float64(days)
+	date := time.Date(1899, 12, 30, 0, 0, 0, 0, time.UTC).AddDate(0, 0, days)
+	seconds := int(fraction*86400 + 0.5)
+	if seconds <= 0 {
+		return date.Format("2006-01-02"), true
+	}
+	date = date.Add(time.Duration(seconds) * time.Second)
+	return date.Format("2006-01-02 15:04:05"), true
+}
+
+func isBuiltinXLSXDateFormat(numFmtID int) bool {
+	switch numFmtID {
+	case 14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47:
+		return true
+	default:
+		return false
+	}
+}
+
+func isLikelyXLSXDateFormat(formatCode string) bool {
+	code := strings.ToLower(strings.TrimSpace(formatCode))
+	if code == "" {
+		return false
+	}
+	code = regexp.MustCompile(`"[^"]*"`).ReplaceAllString(code, "")
+	code = regexp.MustCompile(`\\.`).ReplaceAllString(code, "")
+	hasYear := strings.Contains(code, "yy") || strings.Contains(code, "年")
+	hasDay := strings.Contains(code, "dd") || strings.Contains(code, "d") || strings.Contains(code, "日")
+	hasMonth := strings.Contains(code, "mm") || strings.Contains(code, "m") || strings.Contains(code, "月")
+	return hasYear && (hasMonth || hasDay)
+}
+
+func parseXLSXWorksheet(raw []byte, sharedStrings []string) [][]string {
+	return parseXLSXWorksheetRich(raw, sharedStrings, xlsxStyles{}, "").Rows
+}
+
+func parseXLSXWorksheetRich(raw []byte, sharedStrings []string, styles xlsxStyles, sheetName string) xlsxWorksheetResult {
+	if len(raw) == 0 {
+		return xlsxWorksheetResult{}
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(raw))
+	rowsByIndex := map[int]map[int]string{}
+	cellsByCoord := map[string]*structuredCell{}
+	hiddenRows := map[int]bool{}
+	hiddenCols := map[int]bool{}
+	mergeRanges := make([]string, 0)
+	currentCellRef := ""
+	currentCellType := ""
+	currentCellStyleIndex := -1
+	currentFormula := ""
+	currentValue := ""
+	currentDisplayValue := ""
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		switch element := token.(type) {
+		case xml.StartElement:
+			switch element.Name.Local {
+			case "row":
+				if isXMLBoolTrue(attrValue(element, "hidden")) {
+					rowNo, _ := strconv.Atoi(strings.TrimSpace(attrValue(element, "r")))
+					if rowNo > 0 {
+						hiddenRows[rowNo-1] = true
+					}
+				}
+			case "col":
+				if isXMLBoolTrue(attrValue(element, "hidden")) {
+					minCol, _ := strconv.Atoi(strings.TrimSpace(attrValue(element, "min")))
+					maxCol, _ := strconv.Atoi(strings.TrimSpace(attrValue(element, "max")))
+					for col := max(1, minCol); col <= max(1, maxCol); col++ {
+						hiddenCols[col-1] = true
+					}
+				}
+			case "mergeCell":
+				if ref := strings.TrimSpace(attrValue(element, "ref")); ref != "" {
+					mergeRanges = append(mergeRanges, ref)
+				}
 			case "c":
 				currentCellRef = attrValue(element, "r")
 				currentCellType = attrValue(element, "t")
+				currentCellStyleIndex = parseOptionalInt(attrValue(element, "s"), -1)
+				currentFormula = ""
+				currentValue = ""
+				currentDisplayValue = ""
+			case "f":
+				if currentCellRef == "" {
+					continue
+				}
+				currentFormula = strings.TrimSpace(readElementText(decoder))
 			case "v", "t":
 				if currentCellRef == "" {
 					continue
 				}
-				value := readElementText(decoder)
-				if currentCellType == "s" {
-					index, err := strconv.Atoi(strings.TrimSpace(value))
-					if err == nil && index >= 0 && index < len(sharedStrings) {
-						value = sharedStrings[index]
-					}
+				value := resolveXLSXCellValue(readElementText(decoder), currentCellType, currentCellStyleIndex, sharedStrings, styles)
+				if element.Name.Local == "t" && currentCellType == "inlineStr" {
+					currentValue += value
+				} else {
+					currentValue = value
 				}
-				rowIndex, colIndex := parseCellRef(currentCellRef)
-				if rowIndex >= 0 && colIndex >= 0 {
-					if rowsByIndex[rowIndex] == nil {
-						rowsByIndex[rowIndex] = map[int]string{}
-					}
-					rowsByIndex[rowIndex][colIndex] = strings.TrimSpace(value)
-				}
+				currentDisplayValue = strings.TrimSpace(currentValue)
 			}
 		case xml.EndElement:
 			if element.Name.Local == "c" {
+				rowIndex, colIndex := parseCellRef(currentCellRef)
+				if rowIndex >= 0 && colIndex >= 0 && !hiddenRows[rowIndex] && !hiddenCols[colIndex] {
+					if rowsByIndex[rowIndex] == nil {
+						rowsByIndex[rowIndex] = map[int]string{}
+					}
+					displayValue := strings.TrimSpace(currentDisplayValue)
+					if displayValue == "" {
+						displayValue = strings.TrimSpace(currentValue)
+					}
+					rowsByIndex[rowIndex][colIndex] = displayValue
+					cellCopy := structuredCell{
+						RowIndex:     rowIndex,
+						ColIndex:     colIndex,
+						RowSpan:      1,
+						ColSpan:      1,
+						RawText:      strings.TrimSpace(currentValue),
+						DisplayValue: displayValue,
+						Formula:      strings.TrimSpace(currentFormula),
+						SourceRef:    formatXLSXSourceRef(sheetName, rowIndex, colIndex),
+					}
+					cellsByCoord[currentCellRef] = &cellCopy
+				}
 				currentCellRef = ""
 				currentCellType = ""
+				currentCellStyleIndex = -1
+				currentFormula = ""
+				currentValue = ""
+				currentDisplayValue = ""
 			}
 		}
 	}
-	return compactRows(rowsByIndex)
+	applyXLSXMergeSpans(cellsByCoord, mergeRanges)
+	return xlsxWorksheetResult{
+		Rows:  compactRows(rowsByIndex),
+		Cells: flattenStructuredCells(cellsByCoord),
+	}
 }
 
 func buildStructuredTable(caseFile model.ReportCaseFile, version model.FileVersionDTO, profile DocumentProfile, virtualTableID int64, title string, rows [][]string, pageNo int, bbox string, refPrefix string) (model.DocumentTable, model.DocumentTableFragment, []model.DocumentTableCell) {
@@ -1527,6 +1783,70 @@ func buildStructuredTable(caseFile model.ReportCaseFile, version model.FileVersi
 	return table, fragment, cells
 }
 
+func buildRichStructuredTable(caseFile model.ReportCaseFile, version model.FileVersionDTO, profile DocumentProfile, virtualTableID int64, title string, rows [][]string, richCells []structuredCell, pageNo int, bbox string) (model.DocumentTable, model.DocumentTableFragment, []model.DocumentTableCell) {
+	rows = normalizeRows(rows)
+	virtualFragmentID := virtualTableID * 1000
+	table := model.DocumentTable{
+		ID:             virtualTableID,
+		CaseFileID:     caseFile.ID,
+		FileID:         caseFile.FileID,
+		VersionNo:      version.VersionNo,
+		Title:          title,
+		PageStart:      max(1, pageNo),
+		PageEnd:        max(1, pageNo),
+		HeaderRowCount: inferHeaderRowCount(rows),
+		ColumnCount:    maxRowWidth(rows),
+		SourceType:     profile.SourceType,
+		ParseStatus:    model.DocumentParseStatusParsed,
+		IsCrossPage:    false,
+		BBoxJSON:       json.RawMessage(bbox),
+	}
+	fragment := model.DocumentTableFragment{
+		ID:            virtualFragmentID,
+		TableID:       virtualTableID,
+		CaseFileID:    caseFile.ID,
+		PageNo:        max(1, pageNo),
+		RowStart:      0,
+		RowEnd:        max(0, len(rows)-1),
+		FragmentOrder: 1,
+		BBoxJSON:      json.RawMessage(bbox),
+	}
+	cells := make([]model.DocumentTableCell, 0, len(richCells))
+	for _, richCell := range richCells {
+		value := strings.TrimSpace(richCell.DisplayValue)
+		if value == "" {
+			value = strings.TrimSpace(richCell.RawText)
+		}
+		if value == "" && strings.TrimSpace(richCell.Formula) == "" {
+			continue
+		}
+		sourceRef := strings.TrimSpace(richCell.SourceRef)
+		if sourceRef == "" {
+			sourceRef = fmt.Sprintf("%s!%s%d", title, excelColumnName(richCell.ColIndex), richCell.RowIndex+1)
+		}
+		cells = append(cells, model.DocumentTableCell{
+			TableID:         virtualTableID,
+			FragmentID:      virtualFragmentID,
+			CaseFileID:      caseFile.ID,
+			RowIndex:        richCell.RowIndex,
+			ColIndex:        richCell.ColIndex,
+			RowSpan:         max(1, richCell.RowSpan),
+			ColSpan:         max(1, richCell.ColSpan),
+			RawText:         strings.TrimSpace(richCell.RawText),
+			NormalizedValue: value,
+			BBoxJSON: mustJSON(map[string]any{
+				"ref":          sourceRef,
+				"formula":      strings.TrimSpace(richCell.Formula),
+				"displayValue": value,
+				"rowSpan":      max(1, richCell.RowSpan),
+				"colSpan":      max(1, richCell.ColSpan),
+			}),
+			Confidence: 0.98,
+		})
+	}
+	return table, fragment, cells
+}
+
 func buildDetectedPDFTable(caseFile model.ReportCaseFile, version model.FileVersionDTO, profile DocumentProfile, virtualTableID int64, title string, detectedTable pdfDetectedTable, pageNo int, bbox string) (model.DocumentTable, model.DocumentTableFragment, []model.DocumentTableCell) {
 	rows := normalizeRows(detectedTable.Rows)
 	virtualFragmentID := virtualTableID * 1000
@@ -1573,10 +1893,10 @@ func buildDetectedPDFTable(caseFile model.ReportCaseFile, version model.FileVers
 				RawText:         text,
 				NormalizedValue: text,
 				BBoxJSON: mustJSON(map[string]any{
-					"page": pageNo,
+					"page":  pageNo,
 					"block": detectedTable.BlockIndex,
-					"bbox": detectedCell.BBox,
-					"ref":  fmt.Sprintf("第%d页/块%d/单元格R%dC%d", pageNo, detectedTable.BlockIndex, detectedCell.RowIndex+1, detectedCell.ColIndex+1),
+					"bbox":  detectedCell.BBox,
+					"ref":   fmt.Sprintf("第%d页/块%d/单元格R%dC%d", pageNo, detectedTable.BlockIndex, detectedCell.RowIndex+1, detectedCell.ColIndex+1),
 				}),
 				Confidence: 0.99,
 			})
@@ -1684,30 +2004,30 @@ type pdfFontMap struct {
 }
 
 type pyMuPDFPayload struct {
-	PageCount int                 `json:"page_count"`
-	HasText   bool                `json:"has_text"`
-	Pages     []pyMuPDFPage       `json:"pages"`
-	Errors    []string            `json:"errors"`
+	PageCount int           `json:"page_count"`
+	HasText   bool          `json:"has_text"`
+	Pages     []pyMuPDFPage `json:"pages"`
+	Errors    []string      `json:"errors"`
 }
 
 type pyMuPDFPage struct {
-	PageNo int               `json:"page_no"`
-	Width  float64           `json:"width"`
-	Height float64           `json:"height"`
-	Text   string            `json:"text"`
-	Blocks []pyMuPDFBlock    `json:"blocks"`
-	Tables []pyMuPDFTable    `json:"tables"`
+	PageNo int            `json:"page_no"`
+	Width  float64        `json:"width"`
+	Height float64        `json:"height"`
+	Text   string         `json:"text"`
+	Blocks []pyMuPDFBlock `json:"blocks"`
+	Tables []pyMuPDFTable `json:"tables"`
 }
 
 type pyMuPDFBlock struct {
-	BBox  []float64       `json:"bbox"`
-	Lines []pyMuPDFLine   `json:"lines"`
+	BBox  []float64     `json:"bbox"`
+	Lines []pyMuPDFLine `json:"lines"`
 }
 
 type pyMuPDFLine struct {
-	BBox  []float64       `json:"bbox"`
-	Text  string          `json:"text"`
-	Words []pyMuPDFWord   `json:"words"`
+	BBox  []float64     `json:"bbox"`
+	Text  string        `json:"text"`
+	Words []pyMuPDFWord `json:"words"`
 }
 
 type pyMuPDFWord struct {
@@ -4026,6 +4346,19 @@ func attrValue(element xml.StartElement, localName string) string {
 	return ""
 }
 
+func parseOptionalInt(value string, fallback int) int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func isXMLBoolTrue(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return normalized == "1" || normalized == "true"
+}
+
 func readElementText(decoder *xml.Decoder) string {
 	var builder strings.Builder
 	for {
@@ -4133,6 +4466,109 @@ func parseCellRef(ref string) (int, int) {
 		return -1, -1
 	}
 	return row - 1, col - 1
+}
+
+func parseCellRangeRef(ref string) (int, int, int, int, bool) {
+	parts := strings.Split(strings.TrimSpace(ref), ":")
+	if len(parts) == 1 {
+		row, col := parseCellRef(parts[0])
+		if row < 0 || col < 0 {
+			return 0, 0, 0, 0, false
+		}
+		return row, col, row, col, true
+	}
+	if len(parts) != 2 {
+		return 0, 0, 0, 0, false
+	}
+	startRow, startCol := parseCellRef(parts[0])
+	endRow, endCol := parseCellRef(parts[1])
+	if startRow < 0 || startCol < 0 || endRow < 0 || endCol < 0 {
+		return 0, 0, 0, 0, false
+	}
+	return startRow, startCol, endRow, endCol, true
+}
+
+func applyXLSXMergeSpans(cellsByCoord map[string]*structuredCell, mergeRanges []string) {
+	for _, mergeRange := range mergeRanges {
+		startRow, startCol, endRow, endCol, ok := parseCellRangeRef(mergeRange)
+		if !ok {
+			continue
+		}
+		anchorRef := fmt.Sprintf("%s%d", excelColumnName(startCol), startRow+1)
+		anchor := cellsByCoord[anchorRef]
+		if anchor == nil {
+			for rowIndex := startRow; rowIndex <= endRow && anchor == nil; rowIndex++ {
+				for colIndex := startCol; colIndex <= endCol; colIndex++ {
+					if candidate := cellsByCoord[xlsxCellCoordRef(rowIndex, colIndex)]; candidate != nil {
+						copied := *candidate
+						copied.RowIndex = startRow
+						copied.ColIndex = startCol
+						copied.SourceRef = formatXLSXSourceRef(extractSheetNameFromSourceRef(candidate.SourceRef), startRow, startCol)
+						cellsByCoord[anchorRef] = &copied
+						anchor = cellsByCoord[anchorRef]
+						break
+					}
+				}
+			}
+		}
+		if anchor == nil {
+			continue
+		}
+		anchor.RowSpan = max(1, endRow-startRow+1)
+		anchor.ColSpan = max(1, endCol-startCol+1)
+		for rowIndex := startRow; rowIndex <= endRow; rowIndex++ {
+			for colIndex := startCol; colIndex <= endCol; colIndex++ {
+				coordRef := xlsxCellCoordRef(rowIndex, colIndex)
+				if coordRef == anchorRef {
+					continue
+				}
+				delete(cellsByCoord, coordRef)
+			}
+		}
+	}
+}
+
+func flattenStructuredCells(cellsByCoord map[string]*structuredCell) []structuredCell {
+	cells := make([]structuredCell, 0, len(cellsByCoord))
+	for _, cell := range cellsByCoord {
+		if cell == nil {
+			continue
+		}
+		cells = append(cells, *cell)
+	}
+	sort.Slice(cells, func(i, j int) bool {
+		if cells[i].RowIndex != cells[j].RowIndex {
+			return cells[i].RowIndex < cells[j].RowIndex
+		}
+		return cells[i].ColIndex < cells[j].ColIndex
+	})
+	return cells
+}
+
+func formatXLSXSourceRef(sheetName string, rowIndex int, colIndex int) string {
+	sheetName = strings.TrimSpace(sheetName)
+	if sheetName == "" {
+		sheetName = "Sheet"
+	}
+	return fmt.Sprintf("工作表[%s]/单元格%s%d", sheetName, excelColumnName(colIndex), rowIndex+1)
+}
+
+func xlsxCellCoordRef(rowIndex int, colIndex int) string {
+	return fmt.Sprintf("%s%d", excelColumnName(colIndex), rowIndex+1)
+}
+
+func extractSheetNameFromSourceRef(sourceRef string) string {
+	prefix := "工作表["
+	start := strings.Index(sourceRef, prefix)
+	if start < 0 {
+		return ""
+	}
+	start += len(prefix)
+	end := strings.Index(sourceRef[start:], "]")
+	if end < 0 {
+		return ""
+	}
+	return sourceRef[start : start+end]
 }
 
 func cellRef(prefix string, rowIndex int, colIndex int) string {

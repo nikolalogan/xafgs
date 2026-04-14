@@ -193,7 +193,27 @@ const copyText = async (value: string) => {
   await navigator.clipboard.writeText(value)
 }
 
-const buildSliceRowKey = (row: FileParseSlicePreviewDTO) => `${row.sliceType}-${row.sourceRef}-${row.title || 'untitled'}-${row.pageStart}-${row.pageEnd}`
+const stringifyKeyPart = (value: unknown) => {
+  if (value == null)
+    return 'null'
+  if (typeof value === 'string')
+    return value
+  try {
+    return JSON.stringify(value)
+  }
+  catch {
+    return String(value)
+  }
+}
+
+const buildSliceRowKey = (row: FileParseSlicePreviewDTO) => [
+  row.sliceType,
+  row.sourceRef,
+  row.title || 'untitled',
+  `${row.pageStart}-${row.pageEnd}`,
+  stringifyKeyPart(row.bbox),
+  (row.cleanText || '').slice(0, 120),
+].join('-')
 
 const buildTableRowKey = (row: FileParseTablePreviewDTO) => `${row.title}-${row.sourceRef}-${row.pageStart}-${row.pageEnd}`
 
