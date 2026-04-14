@@ -146,7 +146,13 @@ class LocalPPStructureProvider(OCRProvider):
         input_path = self._write_temp_input(content, file_name, mime_type)
         try:
             meta_pages = self._collect_page_meta(content, file_name, mime_type)
-            pipeline = self._get_pipeline(enable_tables=enable_tables)
+            try:
+                pipeline = self._get_pipeline(enable_tables=enable_tables)
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    "local_pp_structure_v3 model files are missing (inference.yml not found); "
+                    "please set PADDLEX_HOME/OCR_PPSTRUCTURE_MODEL_ROOT and preload models"
+                ) from exc
             outputs = self._predict_pages(pipeline, input_path)
             if not outputs:
                 raise RuntimeError("PP-StructureV3 produced no output")

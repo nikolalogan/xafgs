@@ -33,12 +33,15 @@ func (service *ocrTaskService) EnsureTask(ctx context.Context, version model.Fil
 	if existing, ok := service.fileRepository.FindLatestOCRTask(version.FileID, version.VersionNo); ok {
 		if existing.Status == model.OCRTaskStatusPending || existing.Status == model.OCRTaskStatusRunning {
 			synced, apiError := service.syncTask(ctx, existing)
-			if apiError == nil {
+			if apiError == nil && (synced.Status == model.OCRTaskStatusPending || synced.Status == model.OCRTaskStatusRunning || synced.Status == model.OCRTaskStatusSucceeded) {
 				return synced, nil
 			}
-			return existing, nil
+			if apiError != nil {
+				return existing, nil
+			}
+			existing = synced
 		}
-		if existing.Status == model.OCRTaskStatusSucceeded {
+		if existing.Status == model.OCRTaskStatusSucceeded || existing.Status == model.OCRTaskStatusPending || existing.Status == model.OCRTaskStatusRunning {
 			return existing, nil
 		}
 	}
@@ -113,6 +116,16 @@ func (service *ocrTaskService) syncTask(ctx context.Context, task model.OCRTask)
 	}
 	status, err := service.ocrClient.GetTask(ctx, task.ProviderTaskID)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "status=404") {
+			now := time.Now().UTC()
+			task.Status = model.OCRTaskStatusFailed
+			task.ErrorCode = response.CodeNotFound
+			task.ErrorMessage = "ocr provider task not found; will recreate on next ensure"
+			task.FinishedAt = &now
+			task.UpdatedAt = now
+			updated, _ := service.fileRepository.UpdateOCRTask(task)
+			return updated, nil
+		}
 		return task, model.NewAPIError(502, response.CodeInternal, "查询 OCR 任务失败")
 	}
 	task.Status = normalizeOCRTaskStatus(status.Status)

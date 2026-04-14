@@ -82,9 +82,45 @@ make down
 - `make dev-fresh`：开发模式启动（无缓存重建 + 热更新）
 - `make dev-rebuild-backend`：缓存重建开发后端镜像
 - `make dev-rebuild-backend-fresh`：无缓存重建开发后端镜像
+- `make ocr-wheels-sync`：同步 OCR Python 依赖到本地 `ocr-service/wheels/`（增量缓存）
+- `make ocr-wheels-verify`：校验 `wheels` 是否可离线覆盖依赖闭包
+- `make ocr-model-cache-init`：初始化本地 OCR 模型缓存目录 `ocr-service/model_cache`
+- `make ocr-model-cache-warm`：预热 OCR 模型到本地 `model_cache`（避免首个请求触发下载）
+- `make ocr-build`：先校验 `wheels`，再离线构建 OCR 镜像（推荐）
+- `make ocr-build-offline`：仅使用本地 `wheels` 构建 OCR 镜像（缺失依赖直接失败）
+- `make ocr-build-online-fallback`：构建 OCR 镜像（允许缺失依赖回源下载）
 - `make prod`：生产模式启动（后台）
 - `make down`：停止开发+生产所有容器
 - `make logs`：查看开发模式日志
+
+## OCR 依赖缓存（wheels）
+
+为避免每次构建 OCR 镜像都全量下载大包（如 `paddlepaddle`、`paddleocr`），项目支持本地 `wheels` 增量缓存：
+
+```bash
+make ocr-wheels-sync
+make ocr-wheels-verify
+make ocr-build
+make ocr-model-cache-warm
+```
+
+说明：
+
+- `make ocr-wheels-sync` 会将依赖下载到 `ocr-service/wheels/`，已存在文件会复用；
+- `make ocr-wheels-verify` 会按 `linux/amd64 + py311` 目标离线校验依赖闭包是否完整；
+- `make ocr-model-cache-warm` 会将 PaddleX 模型下载到本地 `ocr-service/model_cache/`；
+- `make ocr-build` 默认走离线构建，保证可复现；如需临时回源，使用 `make ocr-build-online-fallback`。
+- 为规避部分环境下的 Paddle CPU `SIGSEGV`，默认启用本地 OCR 子进程隔离：`OCR_LOCAL_PPSTRUCTURE_ISOLATE_PROCESS=1`（即便本地模型崩溃也不拖垮主服务）；并默认关闭结构增强：`OCR_PPSTRUCTURE_ENABLE_TABLES=0`、`OCR_PPSTRUCTURE_USE_REGION_DETECTION=0`（环境稳定后可逐步打开）。
+
+## OCR 模型缓存（PaddleX）
+
+为避免 `python -m app.preload_models` 每次重新下载模型文件，已启用两层缓存：
+
+- **构建期缓存**：`Dockerfile` 使用 BuildKit cache mount 挂载 `/root/.paddlex`；
+- **运行期缓存**：`docker-compose` 挂载 `./ocr-service/model_cache:/root/.paddlex`。
+
+首次构建/运行会下载模型，后续重建会直接复用本地缓存目录。
+已默认设置 `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True`，跳过模型源连通性探测步骤。
 
 ## Dify 画布源码级集成（迁移版）
 

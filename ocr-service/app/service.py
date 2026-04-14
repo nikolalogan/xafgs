@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import base64
+import multiprocessing as mp
+import os
+import queue
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -49,11 +52,28 @@ class OCRTaskManager:
 
         content = base64.b64decode(request.contentBase64.encode("utf-8"))
         providers = self._resolve_providers(request.providerMode)
+        if not providers:
+            with state.lock:
+                state.status = "failed"
+                state.progress = 100
+                state.error_code = "ocr_provider_unavailable"
+                state.error_message = "no OCR provider is configured; enable local PP-Structure model or configure remote Tencent OCR"
+            return
 
         errors: list[str] = []
+        allow_tables = os.getenv("OCR_PPSTRUCTURE_ENABLE_TABLES", "0").strip() in {"1", "true", "True", "yes", "on"}
+        effective_enable_tables = bool(request.enableTables and allow_tables)
         for provider in providers:
             try:
-                result = provider.extract(content, request.fileName, request.mimeType, request.enableTables)
+                if provider.name == self.local_provider.name and _env_bool("OCR_LOCAL_PPSTRUCTURE_ISOLATE_PROCESS", True):
+                    result = self._extract_local_in_subprocess(
+                        content=content,
+                        file_name=request.fileName,
+                        mime_type=request.mimeType,
+                        enable_tables=effective_enable_tables,
+                    )
+                else:
+                    result = provider.extract(content, request.fileName, request.mimeType, effective_enable_tables)
                 with state.lock:
                     state.status = "succeeded"
                     state.provider = result.provider
@@ -77,7 +97,43 @@ class OCRTaskManager:
             return [self.local_provider]
         if mode == "remote_only":
             return [self.remote_provider]
-        return [self.local_provider, self.remote_provider]
+        providers = []
+        if self.local_provider.is_configured():
+            providers.append(self.local_provider)
+        if self.remote_provider.is_configured():
+            providers.append(self.remote_provider)
+        return providers
+
+    def _extract_local_in_subprocess(self, content: bytes, file_name: str, mime_type: str, enable_tables: bool) -> OCRResult:
+        timeout_sec = int(os.getenv("OCR_LOCAL_PPSTRUCTURE_TIMEOUT_SEC", "180"))
+        context = mp.get_context("spawn")
+        result_queue: mp.Queue = context.Queue(maxsize=1)
+        process = context.Process(
+            target=_local_pp_structure_worker,
+            args=(content, file_name, mime_type, enable_tables, result_queue),
+            daemon=True,
+        )
+        process.start()
+        process.join(timeout=timeout_sec)
+
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=3)
+            raise RuntimeError(f"local_pp_structure_v3 timed out after {timeout_sec}s")
+
+        payload: dict | None = None
+        try:
+            payload = result_queue.get_nowait()
+        except queue.Empty:
+            payload = None
+
+        if process.exitcode not in {0, None} and payload is None:
+            raise RuntimeError(f"local_pp_structure_v3 subprocess crashed (exitcode={process.exitcode})")
+        if payload is None:
+            raise RuntimeError("local_pp_structure_v3 returned empty payload")
+        if not payload.get("ok"):
+            raise RuntimeError(str(payload.get("error") or "local_pp_structure_v3 failed"))
+        return OCRResult(**payload["result"])
 
     def _to_view(self, state: OCRTaskState) -> OCRTaskView:
         return OCRTaskView(
@@ -91,3 +147,25 @@ class OCRTaskManager:
             errorMessage=state.error_message,
             result=state.result,
         )
+
+
+def _local_pp_structure_worker(
+    content: bytes,
+    file_name: str,
+    mime_type: str,
+    enable_tables: bool,
+    result_queue: mp.Queue,
+) -> None:
+    try:
+        provider = LocalPPStructureProvider()
+        result = provider.extract(content, file_name, mime_type, enable_tables)
+        result_queue.put({"ok": True, "result": result.model_dump()})
+    except Exception as exc:
+        result_queue.put({"ok": False, "error": str(exc)})
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip() in {"1", "true", "True", "yes", "on"}

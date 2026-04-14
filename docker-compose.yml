@@ -61,15 +61,27 @@ services:
         APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
         PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
         PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
+        OCR_PPSTRUCTURE_PRELOAD: "${OCR_PPSTRUCTURE_PRELOAD:-1}"
     image: sxfgssever-ocr-service-prod:latest
     environment:
       TZ: "Asia/Shanghai"
+      PADDLEX_HOME: "/root/.paddlex"
+      PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: "True"
       OCR_LOCAL_PPSTRUCTURE_ENABLED: "1"
+      OCR_LOCAL_PPSTRUCTURE_ISOLATE_PROCESS: "1"
+      OCR_LOCAL_PPSTRUCTURE_TIMEOUT_SEC: "240"
       OCR_PPSTRUCTURE_DEVICE: "cpu"
       OCR_PPSTRUCTURE_LANG: "ch"
-      OCR_PPSTRUCTURE_ENABLE_TABLES: "1"
-      OCR_PPSTRUCTURE_USE_REGION_DETECTION: "1"
-      OCR_PPSTRUCTURE_MODEL_ROOT: "/models/paddleocr"
+      OCR_PPSTRUCTURE_ENABLE_TABLES: "0"
+      OCR_PPSTRUCTURE_USE_REGION_DETECTION: "0"
+      OCR_PPSTRUCTURE_MODEL_ROOT: "/root/.paddlex"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      FLAGS_use_mkldnn: "0"
+      CPU_NUM: "1"
+    volumes:
+      - ./ocr-service/model_cache:/root/.paddlex
     expose:
       - "8090"
     restart: unless-stopped

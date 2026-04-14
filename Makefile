@@ -1,4 +1,4 @@
-.PHONY: help dev dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh prod down dev-down prod-down logs ps
+.PHONY: help dev dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-model-cache-init ocr-model-cache-warm
 
 help:
 	@echo "可用命令:"
@@ -6,6 +6,13 @@ help:
 	@echo "  make dev-fresh # 开发模式启动（无缓存重建+热更新）"
 	@echo "  make dev-rebuild-backend # 缓存重建开发后端镜像"
 	@echo "  make dev-rebuild-backend-fresh # 无缓存重建开发后端镜像"
+	@echo "  make ocr-wheels-sync # 同步 OCR 依赖到本地 wheels 缓存目录"
+	@echo "  make ocr-wheels-verify # 校验 wheels 是否可离线覆盖依赖闭包"
+	@echo "  make ocr-model-cache-init # 初始化本地 OCR 模型缓存目录"
+	@echo "  make ocr-model-cache-warm # 预热本地 OCR 模型缓存到 model_cache"
+	@echo "  make ocr-build # 先校验 wheels，再离线构建 OCR 镜像（推荐）"
+	@echo "  make ocr-build-offline # 仅使用本地 wheels 构建 OCR 镜像（缺包即失败）"
+	@echo "  make ocr-build-online-fallback # 构建 OCR 镜像（允许缺包回源）"
 	@echo "  make prod      # 生产模式启动"
 	@echo "  make down      # 停止开发+生产所有容器"
 	@echo "  make dev-down  # 仅停止开发模式容器"
@@ -24,6 +31,27 @@ dev-rebuild-backend:
 
 dev-rebuild-backend-fresh:
 	docker compose -f docker-compose.dev.yml build --no-cache backend
+
+ocr-wheels-sync:
+	bash ocr-service/scripts/download_wheels.sh
+
+ocr-wheels-verify:
+	bash ocr-service/scripts/verify_wheels.sh
+
+ocr-model-cache-init:
+	mkdir -p ocr-service/model_cache
+
+ocr-model-cache-warm: ocr-model-cache-init
+	docker compose -f docker-compose.dev.yml run --rm ocr-service python -m app.preload_models
+
+ocr-build: ocr-model-cache-init ocr-wheels-verify
+	OCR_WHEELS_ONLY=1 docker compose -f docker-compose.dev.yml build ocr-service
+
+ocr-build-offline: ocr-model-cache-init ocr-wheels-verify
+	OCR_WHEELS_ONLY=1 docker compose -f docker-compose.dev.yml build ocr-service
+
+ocr-build-online-fallback: ocr-model-cache-init
+	docker compose -f docker-compose.dev.yml build ocr-service
 
 prod:
 	docker compose up --build -d

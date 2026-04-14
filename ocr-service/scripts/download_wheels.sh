@@ -8,24 +8,29 @@ CONSTRAINTS_FILE="${ROOT_DIR}/constraints.txt"
 
 PIP_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
 PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-PLATFORMS="${WHEEL_PLATFORMS:-manylinux2014_x86_64 manylinux_2_28_x86_64}"
+PLATFORMS="${WHEEL_PLATFORMS:-manylinux1_x86_64 manylinux2014_x86_64 manylinux_2_17_x86_64 manylinux_2_28_x86_64}"
 PYTHON_VERSION="${WHEEL_PYTHON_VERSION:-311}"
 IMPLEMENTATION="${WHEEL_IMPLEMENTATION:-cp}"
+PIP_RETRIES="${PIP_RETRIES:-10}"
+PIP_TIMEOUT="${PIP_DEFAULT_TIMEOUT:-600}"
 
 mkdir -p "${WHEELS_DIR}"
 
 for platform in ${PLATFORMS}; do
-  echo "Downloading wheels for platform: ${platform}"
+  echo "Syncing wheels for platform: ${platform}"
   python3 -m pip download \
     --dest "${WHEELS_DIR}" \
     --only-binary=:all: \
+    --prefer-binary \
     --platform "${platform}" \
     --python-version "${PYTHON_VERSION}" \
     --implementation "${IMPLEMENTATION}" \
     --index-url "${PIP_INDEX_URL}" \
     --trusted-host "${PIP_TRUSTED_HOST}" \
+    --retries "${PIP_RETRIES}" \
+    --timeout "${PIP_TIMEOUT}" \
     -r "${REQ_FILE}" \
-    -c "${CONSTRAINTS_FILE}" || true
+    -c "${CONSTRAINTS_FILE}"
 done
 
 critical=(
@@ -42,4 +47,4 @@ for pattern in "${critical[@]}"; do
   fi
 done
 
-echo "Downloaded wheels to: ${WHEELS_DIR}"
+echo "Wheel sync complete: ${WHEELS_DIR}"

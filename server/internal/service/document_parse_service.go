@@ -123,16 +123,38 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 	profile := buildDocumentProfile(version, raw)
 	switch profile.FileType {
 	case "text", "json":
-		slices := buildTextSlices(caseFile, version, string(raw), profile)
-		tables, fragments, cells := buildDelimitedTables(caseFile, version, string(raw), profile, ',')
+		text := decodePlainTextPayload(raw)
+		if text == "" {
+			return ParsedDocument{
+				Version: version,
+				Profile: profile,
+				Slices:  buildScannedPageSlices(caseFile, version, profile),
+			}, nil
+		}
+		slices := buildTextSlices(caseFile, version, text, profile)
+		tables, fragments, cells := buildDelimitedTables(caseFile, version, text, profile, ',')
 		return ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}, nil
 	case "csv":
-		text := string(raw)
+		text := decodePlainTextPayload(raw)
+		if text == "" {
+			return ParsedDocument{
+				Version: version,
+				Profile: profile,
+				Slices:  buildScannedPageSlices(caseFile, version, profile),
+			}, nil
+		}
 		slices := buildTextSlices(caseFile, version, text, profile)
 		tables, fragments, cells := buildDelimitedTables(caseFile, version, text, profile, ',')
 		return ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}, nil
 	case "tsv":
-		text := string(raw)
+		text := decodePlainTextPayload(raw)
+		if text == "" {
+			return ParsedDocument{
+				Version: version,
+				Profile: profile,
+				Slices:  buildScannedPageSlices(caseFile, version, profile),
+			}, nil
+		}
 		slices := buildTextSlices(caseFile, version, text, profile)
 		tables, fragments, cells := buildDelimitedTables(caseFile, version, text, profile, '\t')
 		return ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}, nil
@@ -201,7 +223,7 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 				Slices:  buildScannedPageSlices(caseFile, version, profile),
 			}, nil
 		}
-		text := strings.TrimSpace(string(raw))
+		text := decodePlainTextPayload(raw)
 		if text == "" {
 			return ParsedDocument{
 				Version: version,
@@ -236,7 +258,7 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 }
 
 func buildDocumentProfile(version model.FileVersionDTO, raw []byte) DocumentProfile {
-	fileType := detectDocumentType(version)
+	fileType := detectDocumentType(version, raw)
 	if fileType == "xlsx" && isOLECompoundDocument(raw) {
 		fileType = "xls"
 	}
@@ -2020,29 +2042,56 @@ func findTableTitleFromPageBlocks(blocks []pdfLayoutBlock, blockIndex int, table
 	return fmt.Sprintf("%s - 第%d页候选表格%d", version.OriginName, pageNo, tableIndex)
 }
 
-func detectDocumentType(version model.FileVersionDTO) string {
+func detectDocumentType(version model.FileVersionDTO, raw []byte) string {
 	mimeType := strings.ToLower(strings.TrimSpace(version.MimeType))
 	name := strings.ToLower(strings.TrimSpace(version.OriginName))
+	declaredType := ""
 	switch {
 	case strings.Contains(mimeType, "application/pdf") || strings.HasSuffix(name, ".pdf"):
-		return "pdf"
+		declaredType = "pdf"
 	case strings.HasPrefix(mimeType, "image/") || strings.HasSuffix(name, ".png") || strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".jpeg"):
-		return "image"
+		declaredType = "image"
 	case strings.Contains(mimeType, "text/csv") || strings.HasSuffix(name, ".csv"):
-		return "csv"
+		declaredType = "csv"
 	case strings.Contains(mimeType, "tab-separated-values") || strings.HasSuffix(name, ".tsv"):
-		return "tsv"
+		declaredType = "tsv"
 	case strings.Contains(mimeType, "wordprocessingml.document") || strings.HasSuffix(name, ".docx"):
-		return "docx"
+		declaredType = "docx"
 	case strings.Contains(mimeType, "spreadsheetml.sheet") || strings.HasSuffix(name, ".xlsx"):
-		return "xlsx"
+		declaredType = "xlsx"
 	case strings.Contains(mimeType, "application/json") || strings.HasSuffix(name, ".json"):
-		return "json"
+		declaredType = "json"
 	case strings.HasPrefix(mimeType, "text/") || strings.HasSuffix(name, ".txt") || strings.HasSuffix(name, ".md"):
-		return "text"
-	default:
-		return "binary"
+		declaredType = "text"
 	}
+
+	if declaredType != "" {
+		switch declaredType {
+		case "text", "json", "csv", "tsv":
+			if !isLikelyBinaryPayload(raw) {
+				return declaredType
+			}
+		default:
+			return declaredType
+		}
+	}
+
+	if bytes.HasPrefix(raw, []byte("%PDF-")) {
+		return "pdf"
+	}
+	if isOLECompoundDocument(raw) {
+		return "xls"
+	}
+	if looksLikeXLSXPayload(raw) {
+		return "xlsx"
+	}
+	if looksLikeDOCXPayload(raw) {
+		return "docx"
+	}
+	if looksLikePlainTextPayload(raw) {
+		return "text"
+	}
+	return "binary"
 }
 
 func isOLECompoundDocument(raw []byte) bool {
@@ -2050,6 +2099,120 @@ func isOLECompoundDocument(raw []byte) bool {
 		return false
 	}
 	return bytes.Equal(raw[:8], []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1})
+}
+
+func looksLikeXLSXPayload(raw []byte) bool {
+	if len(raw) < 4 || !bytes.HasPrefix(raw, []byte("PK\x03\x04")) {
+		return false
+	}
+	return len(readZipEntry(raw, "xl/workbook.xml")) > 0
+}
+
+func looksLikeDOCXPayload(raw []byte) bool {
+	if len(raw) < 4 || !bytes.HasPrefix(raw, []byte("PK\x03\x04")) {
+		return false
+	}
+	return len(readZipEntry(raw, "word/document.xml")) > 0
+}
+
+func looksLikePlainTextPayload(raw []byte) bool {
+	if len(raw) == 0 || isLikelyBinaryPayload(raw) {
+		return false
+	}
+	sample := raw
+	if len(sample) > 4096 {
+		sample = sample[:4096]
+	}
+	text := strings.TrimSpace(string(sample))
+	if text == "" {
+		return false
+	}
+	return !containsArchiveHeaderArtifacts(text)
+}
+
+func decodePlainTextPayload(raw []byte) string {
+	if !looksLikePlainTextPayload(raw) {
+		return ""
+	}
+	return normalizeText(string(raw))
+}
+
+func isLikelyBinaryPayload(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	if bytes.HasPrefix(raw, []byte("PK\x03\x04")) || bytes.HasPrefix(raw, []byte("%PDF-")) || isOLECompoundDocument(raw) {
+		return true
+	}
+	sample := raw
+	if len(sample) > 8192 {
+		sample = sample[:8192]
+	}
+	if bytes.Contains(sample, []byte("PK\x03\x04")) ||
+		bytes.Contains(sample, []byte("[Content_Types].xml")) ||
+		bytes.Contains(sample, []byte("_rels/.rels")) ||
+		bytes.Contains(sample, []byte("xl/workbook.xml")) ||
+		bytes.Contains(sample, []byte("word/document.xml")) {
+		return true
+	}
+	invalidUTF8Bytes := 0
+	for index := 0; index < len(sample); {
+		value, size := utf8.DecodeRune(sample[index:])
+		if value == utf8.RuneError && size == 1 {
+			invalidUTF8Bytes++
+		}
+		index += size
+	}
+	if len(sample) > 0 && invalidUTF8Bytes*100/len(sample) >= 10 {
+		return true
+	}
+	controlCount := 0
+	visibleCount := 0
+	nullByteSeen := false
+	for _, value := range sample {
+		if value == 0 {
+			nullByteSeen = true
+			continue
+		}
+		if value == '\n' || value == '\r' || value == '\t' {
+			continue
+		}
+		visibleCount++
+		if value < 32 {
+			controlCount++
+		}
+	}
+	if nullByteSeen {
+		return true
+	}
+	if visibleCount == 0 {
+		return false
+	}
+	return controlCount*100/visibleCount >= 10
+}
+
+func containsArchiveHeaderArtifacts(text string) bool {
+	value := strings.TrimSpace(text)
+	if value == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"PK\x03\x04",
+		"[Content_Types].xml",
+		"_rels/.rels",
+		"xl/workbook.xml",
+		"word/document.xml",
+		"docProps/app.xml",
+		"docProps/core.xml",
+	} {
+		if strings.Contains(value, marker) {
+			return true
+		}
+	}
+	if strings.Contains(value, "PK") && (strings.Contains(value, "_rels/.rels") || strings.Contains(value, "xl/workbook.xml") || strings.Contains(value, "word/document.xml")) {
+		return true
+	}
+	return false
 }
 
 func detectPDFPageCount(raw []byte) int {
@@ -4844,7 +5007,10 @@ func normalizeText(raw string) string {
 	normalized := make([]string, 0, len(lines))
 	lastBlank := false
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
+		trimmed := strings.TrimSpace(sanitizeTextLine(line))
+		if containsArchiveHeaderArtifacts(trimmed) {
+			continue
+		}
 		if trimmed == "" {
 			if !lastBlank {
 				normalized = append(normalized, "")
@@ -4856,6 +5022,24 @@ func normalizeText(raw string) string {
 		lastBlank = false
 	}
 	return strings.TrimSpace(strings.Join(normalized, "\n"))
+}
+
+func sanitizeTextLine(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var builder strings.Builder
+	builder.Grow(len(raw))
+	for _, value := range raw {
+		if value == utf8.RuneError || value == '�' {
+			continue
+		}
+		if value < 32 && value != '\n' && value != '\t' && value != '\r' {
+			continue
+		}
+		builder.WriteRune(value)
+	}
+	return builder.String()
 }
 
 func isLikelyTitle(text string) bool {

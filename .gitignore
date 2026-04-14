@@ -13,4 +13,5 @@ server/tmp
 /server/.gomodcache
 /server/.cache
 /ocr-service/wheels
+/ocr-service/model_cache
 *.pyc
