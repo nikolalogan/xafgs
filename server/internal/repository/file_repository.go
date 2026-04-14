@@ -21,6 +21,11 @@ type FileRepository interface {
 	FindVersions(fileID int64) ([]model.FileVersion, bool)
 	FindVersion(fileID int64, versionNo int) (model.FileVersion, bool)
 	CreateVersion(fileID int64, operatorID int64, meta model.UploadedFileMeta) (model.File, model.FileVersion, bool)
+	DeleteFile(fileID int64) bool
+	CreateOCRTask(task model.OCRTask) model.OCRTask
+	UpdateOCRTask(task model.OCRTask) (model.OCRTask, bool)
+	FindOCRTaskByID(taskID int64) (model.OCRTask, bool)
+	FindLatestOCRTask(fileID int64, versionNo int) (model.OCRTask, bool)
 }
 
 type fileRepository struct {
@@ -28,8 +33,10 @@ type fileRepository struct {
 	files         map[int64]model.File
 	versions      map[int64]map[int]model.FileVersion
 	sessions      map[string]model.UploadSession
+	ocrTasks      map[int64]model.OCRTask
 	nextFileID    int64
 	nextVersionID int64
+	nextOCRTaskID int64
 }
 
 func NewFileRepository() FileRepository {
@@ -37,8 +44,10 @@ func NewFileRepository() FileRepository {
 		files:         make(map[int64]model.File),
 		versions:      make(map[int64]map[int]model.FileVersion),
 		sessions:      make(map[string]model.UploadSession),
+		ocrTasks:      make(map[int64]model.OCRTask),
 		nextFileID:    1,
 		nextVersionID: 1,
+		nextOCRTaskID: 1,
 	}
 }
 
@@ -313,4 +322,68 @@ func (repository *fileRepository) CreateVersion(fileID int64, operatorID int64, 
 	file.UpdatedAt = now
 	repository.files[file.ID] = file
 	return file, version, true
+}
+
+func (repository *fileRepository) DeleteFile(fileID int64) bool {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+
+	if _, ok := repository.files[fileID]; !ok {
+		return false
+	}
+	delete(repository.files, fileID)
+	delete(repository.versions, fileID)
+	for sessionID, session := range repository.sessions {
+		if session.FileID == fileID {
+			delete(repository.sessions, sessionID)
+		}
+	}
+	return true
+}
+
+func (repository *fileRepository) CreateOCRTask(task model.OCRTask) model.OCRTask {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+
+	task.ID = repository.nextOCRTaskID
+	repository.nextOCRTaskID++
+	repository.ocrTasks[task.ID] = task
+	return task
+}
+
+func (repository *fileRepository) UpdateOCRTask(task model.OCRTask) (model.OCRTask, bool) {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+
+	if _, ok := repository.ocrTasks[task.ID]; !ok {
+		return model.OCRTask{}, false
+	}
+	repository.ocrTasks[task.ID] = task
+	return task, true
+}
+
+func (repository *fileRepository) FindOCRTaskByID(taskID int64) (model.OCRTask, bool) {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+
+	task, ok := repository.ocrTasks[taskID]
+	return task, ok
+}
+
+func (repository *fileRepository) FindLatestOCRTask(fileID int64, versionNo int) (model.OCRTask, bool) {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+
+	var latest model.OCRTask
+	found := false
+	for _, task := range repository.ocrTasks {
+		if task.FileID != fileID || task.VersionNo != versionNo {
+			continue
+		}
+		if !found || task.ID > latest.ID {
+			latest = task
+			found = true
+		}
+	}
+	return latest, found
 }

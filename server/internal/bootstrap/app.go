@@ -100,6 +100,7 @@ func NewApp() (*fiber.App, Config) {
 	chatRepository := repository.NewChatRepository()
 	debugFeedbackRepository := repository.NewDebugFeedbackRepository()
 	authRepository := repository.NewAuthRepository(cfg.APIToken)
+	var knowledgeRepository repository.KnowledgeRepository
 
 	dsnConfigured := strings.TrimSpace(os.Getenv("DATABASE_URL")) != ""
 	result, ok, err := db.OpenFromEnv()
@@ -126,6 +127,7 @@ func NewApp() (*fiber.App, Config) {
 			regionRepository = repository.NewPostgresRegionRepository(result.DB)
 			adminDivisionRepository = repository.NewPostgresAdminDivisionRepository(result.DB)
 			fileRepository = repository.NewPostgresFileRepository(result.DB)
+			knowledgeRepository = repository.NewPostgresKnowledgeRepository(result.DB)
 			templateRepository = repository.NewPostgresTemplateRepository(result.DB)
 			chatRepository = repository.NewPostgresChatRepository(result.DB)
 			debugFeedbackRepository = repository.NewPostgresDebugFeedbackRepository(result.DB)
@@ -146,13 +148,20 @@ func NewApp() (*fiber.App, Config) {
 	fileStorage := service.NewLocalFileStorage(cfg.FileStorageRoot)
 	fileService := service.NewFileService(fileRepository, fileStorage)
 	ocrProvider := service.NewNoopOCRProvider()
-	documentParseService := service.NewDocumentParseService(fileService, ocrProvider)
+	ocrClient := service.NewHTTPOCRClient()
+	ocrTaskService := service.NewOCRTaskService(fileRepository, ocrClient)
+	aiClient := ai.NewOpenAICompatClient(nil)
+	embeddingClient := ai.NewOpenAICompatEmbeddingClient(nil)
+	documentParseService := service.NewDocumentParseService(fileService, ocrProvider, ocrTaskService)
+	knowledgeService := service.NewKnowledgeService(knowledgeRepository, fileRepository, fileService, userConfigService, documentParseService, embeddingClient)
+	fileService = service.NewFileService(fileRepository, fileStorage, knowledgeService)
+	documentParseService = service.NewDocumentParseService(fileService, ocrProvider, ocrTaskService)
+	knowledgeService = service.NewKnowledgeService(knowledgeRepository, fileRepository, fileService, userConfigService, documentParseService, embeddingClient)
 	templateRenderer := service.NewGonjaTemplateRenderer()
 	templateService := service.NewTemplateService(templateRepository, templateRenderer)
 	reportingService := service.NewReportingService(reportingRepository, fileRepository, documentParseService)
-	aiClient := ai.NewOpenAICompatClient(nil)
 	webSearchClient := service.NewTavilySearchClient(nil)
-	chatService := service.NewChatService(chatRepository, systemConfigService, userConfigService, fileService, webSearchClient, aiClient)
+	chatService := service.NewChatService(chatRepository, systemConfigService, userConfigService, fileService, webSearchClient, aiClient, knowledgeService)
 	debugFeedbackService := service.NewDebugFeedbackService(debugFeedbackRepository, userRepository, fileRepository, fileService)
 	workflowCodeGenerateService := service.NewWorkflowCodeGenerateService(userConfigService, systemConfigService, aiClient)
 	workflowNodeGenerateService := service.NewWorkflowNodeGenerateService(userConfigService, systemConfigService, aiClient)
@@ -177,7 +186,7 @@ func NewApp() (*fiber.App, Config) {
 	regionHandler := handler.NewRegionHandler(regionService, apiRegistry)
 	adminDivisionHandler := handler.NewAdminDivisionHandler(adminDivisionService, apiRegistry)
 	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, workflowService, workflowExecutionRateLimiter, userConfigService, apiRegistry)
-	fileHandler := handler.NewFileHandler(fileService, documentParseService, apiRegistry)
+	fileHandler := handler.NewFileHandler(fileService, documentParseService, ocrTaskService, apiRegistry)
 	templateHandler := handler.NewTemplateHandler(templateService, apiRegistry)
 	reportingHandler := handler.NewReportingHandler(reportingService, apiRegistry)
 	chatHandler := handler.NewChatHandler(chatService, apiRegistry)
@@ -185,13 +194,15 @@ func NewApp() (*fiber.App, Config) {
 	workflowCodeGenerateHandler := handler.NewWorkflowCodeGenerateHandler(workflowCodeGenerateService, apiRegistry)
 	workflowNodeGenerateHandler := handler.NewWorkflowNodeGenerateHandler(workflowNodeGenerateService, apiRegistry)
 	workflowDSLGenerateHandler := handler.NewWorkflowDSLGenerateHandler(workflowDSLGenerateService, apiRegistry)
+	knowledgeHandler := handler.NewKnowledgeHandler(knowledgeService, apiRegistry)
+	knowledgeService.StartWorker(context.Background(), 3*time.Second)
 
 	traceStore := apimeta.NewTraceStore(300)
 	traceMiddleware := middleware.NewTraceMiddleware(traceStore)
 	app.Use(traceMiddleware.Handler())
 
 	apiMetaHandler := handler.NewAPIMetaHandler(apiRegistry, traceStore)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, reportingHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, debugFeedbackHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, reportingHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, knowledgeHandler, debugFeedbackHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

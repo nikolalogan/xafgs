@@ -22,6 +22,7 @@ func RegisterRoutes(
 	apiMetaHandler *APIMetaHandler,
 	userConfigHandler *UserConfigHandler,
 	chatHandler *ChatHandler,
+	knowledgeHandler *KnowledgeHandler,
 	debugFeedbackHandler *DebugFeedbackHandler,
 	authMiddleware fiber.Handler,
 	adminMiddleware fiber.Handler,
@@ -35,6 +36,7 @@ func RegisterRoutes(
 	userConfigHandler.Register(protectedGroup)
 	systemConfigHandler.Register(protectedGroup, adminMiddleware)
 	chatHandler.Register(protectedGroup)
+	knowledgeHandler.Register(protectedGroup)
 	workflowCodeGenerateHandler.Register(protectedGroup)
 	workflowNodeGenerateHandler.Register(protectedGroup)
 	workflowDSLGenerateHandler.Register(protectedGroup)

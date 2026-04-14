@@ -1,7 +1,12 @@
-FROM golang:1.25-bookworm
+ARG BASE_REGISTRY=docker.m.daocloud.io
+FROM ${BASE_REGISTRY}/library/golang:1.25-bookworm
 
 WORKDIR /app
 
+ARG APT_MIRROR=https://mirrors.aliyun.com/debian
+ARG APT_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
 ENV PATH=/usr/local/go/bin:/go/bin:$PATH
 ENV CGO_ENABLED=0
 ENV AIR_VERSION=v1.64.5
@@ -9,10 +14,12 @@ ENV GOPROXY=https://goproxy.cn,direct
 ENV GOSUMDB=sum.golang.google.cn
 ENV TZ=Asia/Shanghai
 
+RUN sed -i "s|http://deb.debian.org/debian|${APT_MIRROR}|g; s|http://security.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && sed -i "s|https://deb.debian.org/debian|${APT_MIRROR}|g; s|https://security.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" /etc/apt/sources.list.d/debian.sources
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tzdata mupdf-tools python3 python3-pip ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN python3 -m pip install --no-cache-dir --break-system-packages PyMuPDF==1.24.14
+RUN python3 -m pip install --no-cache-dir --break-system-packages --index-url "${PIP_INDEX_URL}" --trusted-host "${PIP_TRUSTED_HOST}" PyMuPDF==1.24.14
 RUN go install github.com/air-verse/air@${AIR_VERSION}
 
 CMD ["air", "-c", ".air.toml"]

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Descriptions, Form, Input, Modal, Space, Table, Tabs, Tag, Upload, message } from 'antd'
+import { Button, Descriptions, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, Upload, message } from 'antd'
 import type { UploadFile, UploadProps } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
 
@@ -59,6 +59,11 @@ type FileParseResultDTO = {
     pageCount?: number
     hasTextLayer?: boolean
   }
+  ocrPending?: boolean
+  ocrTaskId?: number
+  ocrTaskStatus?: string
+  ocrProvider?: string
+  ocrError?: string
   sliceCount: number
   tableCount: number
   figureCount: number
@@ -259,6 +264,7 @@ export default function FilesPage() {
   const [versionRows, setVersionRows] = useState<FileVersionDTO[]>([])
   const [versionTargetFileID, setVersionTargetFileID] = useState<number>(0)
   const [parseLoadingMap, setParseLoadingMap] = useState<Record<string, boolean>>({})
+  const [deleteLoadingMap, setDeleteLoadingMap] = useState<Record<number, boolean>>({})
   const [parseResultModalOpen, setParseResultModalOpen] = useState(false)
   const [parseResult, setParseResult] = useState<FileParseResultDTO | null>(null)
 
@@ -430,6 +436,36 @@ export default function FilesPage() {
     }
   }
 
+  const triggerDownload = (fileID: number, versionNo?: number) => {
+    const query = versionNo && versionNo > 0 ? `?versionNo=${encodeURIComponent(String(versionNo))}` : ''
+    const link = document.createElement('a')
+    link.href = `/api/files/${fileID}/download${query}`
+    link.rel = 'noopener noreferrer'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  const deleteFile = async (fileID: number) => {
+    setDeleteLoadingMap(prev => ({ ...prev, [fileID]: true }))
+    try {
+      await request<boolean>(`/api/files/${fileID}`, { method: 'DELETE' })
+      if (versionModalOpen && versionTargetFileID === fileID) {
+        setVersionModalOpen(false)
+        setVersionRows([])
+        setVersionTargetFileID(0)
+      }
+      msgApi.success(`文件 ${fileID} 删除成功`)
+      await fetchFiles()
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '删除文件失败')
+    }
+    finally {
+      setDeleteLoadingMap(prev => ({ ...prev, [fileID]: false }))
+    }
+  }
+
   if (!hydrated) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-6">
@@ -522,6 +558,7 @@ export default function FilesPage() {
                   </Upload>
                   <Button size="small" loading={uploading} onClick={() => uploadNewVersion(record.id)}>上传新版本</Button>
                   <Button size="small" onClick={() => openVersions(record.id)}>查看版本</Button>
+                  <Button size="small" onClick={() => triggerDownload(record.id)}>下载</Button>
                   <Button size="small" onClick={() => resolveVersion(record.id, 0)}>解析最新引用</Button>
                   <Button
                     size="small"
@@ -531,6 +568,15 @@ export default function FilesPage() {
                   >
                     解析
                   </Button>
+                  <Popconfirm
+                    title="确认删除该文件？"
+                    description="会物理删除该文件的全部版本及存储内容，操作不可恢复。"
+                    okText="删除"
+                    cancelText="取消"
+                    onConfirm={() => deleteFile(record.id)}
+                  >
+                    <Button size="small" danger loading={Boolean(deleteLoadingMap[record.id])}>删除</Button>
+                  </Popconfirm>
                 </Space>
               ),
             },
@@ -562,6 +608,7 @@ export default function FilesPage() {
               width: 220,
               render: (_, row) => (
                 <Space wrap>
+                  <Button size="small" onClick={() => triggerDownload(row.fileId, row.versionNo)}>下载</Button>
                   <Button size="small" onClick={() => resolveVersion(row.fileId, row.versionNo)}>解析引用</Button>
                   <Button
                     size="small"
@@ -607,6 +654,10 @@ export default function FilesPage() {
                 <Descriptions bordered size="small" column={2}>
                   <Descriptions.Item label="Slice 数">{parseResult.sliceCount}</Descriptions.Item>
                   <Descriptions.Item label="表格数">{parseResult.tableCount}</Descriptions.Item>
+                  <Descriptions.Item label="OCR 状态">{parseResult.ocrTaskStatus || (parseResult.ocrPending ? 'pending' : '-')}</Descriptions.Item>
+                  <Descriptions.Item label="OCR Provider">{parseResult.ocrProvider || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="OCR 任务ID">{parseResult.ocrTaskId || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="OCR 错误">{parseResult.ocrError || '-'}</Descriptions.Item>
                   <Descriptions.Item label="图表候选数">{parseResult.figureCount}</Descriptions.Item>
                   <Descriptions.Item label="表格片段数">{parseResult.fragmentCount}</Descriptions.Item>
                   <Descriptions.Item label="单元格数">{parseResult.cellCount}</Descriptions.Item>

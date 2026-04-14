@@ -88,6 +88,7 @@ type DocumentProfile struct {
 type ParsedDocument struct {
 	Version        model.FileVersionDTO
 	Profile        DocumentProfile
+	OCRTask        *model.OCRTask
 	Slices         []model.DocumentSlice
 	Tables         []model.DocumentTable
 	TableFragments []model.DocumentTableFragment
@@ -100,14 +101,16 @@ type DocumentParseService interface {
 }
 
 type documentParseService struct {
-	fileService FileService
-	ocrProvider OCRProvider
+	fileService    FileService
+	ocrProvider    OCRProvider
+	ocrTaskService OCRTaskService
 }
 
-func NewDocumentParseService(fileService FileService, ocrProvider OCRProvider) DocumentParseService {
+func NewDocumentParseService(fileService FileService, ocrProvider OCRProvider, ocrTaskService OCRTaskService) DocumentParseService {
 	return &documentParseService{
-		fileService: fileService,
-		ocrProvider: ocrProvider,
+		fileService:    fileService,
+		ocrProvider:    ocrProvider,
+		ocrTaskService: ocrTaskService,
 	}
 }
 
@@ -139,8 +142,30 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 	case "xlsx":
 		slices, tables, fragments, cells := parseXLSXDocument(caseFile, version, raw, profile)
 		return ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}, nil
+	case "xls":
+		slices := parseLegacyXLSDocument(caseFile, version, raw, profile)
+		return ParsedDocument{Version: version, Profile: profile, Slices: slices}, nil
 	case "pdf":
 		if profile.OCRRequired {
+			if service.ocrTaskService != nil {
+				task, taskError := service.ocrTaskService.EnsureTask(ctx, version, raw, profile)
+				if taskError == nil {
+					if task.Status == model.OCRTaskStatusSucceeded {
+						if parsed, ok := buildParsedDocumentFromOCRTask(caseFile, version, profile, task); ok {
+							parsed.OCRTask = &task
+							logPDFParseSummary(caseFile, version, parsed.Profile, len(parsed.Slices), len(parsed.Tables))
+							return parsed, nil
+						}
+					}
+					logPDFParseSummary(caseFile, version, profile, 0, 0)
+					return ParsedDocument{
+						Version: version,
+						Profile: profile,
+						OCRTask: &task,
+						Slices:  buildScannedPageSlices(caseFile, version, profile),
+					}, nil
+				}
+			}
 			logPDFParseSummary(caseFile, version, profile, 0, 0)
 			return ParsedDocument{
 				Version: version,
@@ -153,6 +178,23 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 		return ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells, Figures: figures}, nil
 	default:
 		if profile.OCRRequired {
+			if service.ocrTaskService != nil {
+				task, taskError := service.ocrTaskService.EnsureTask(ctx, version, raw, profile)
+				if taskError == nil {
+					if task.Status == model.OCRTaskStatusSucceeded {
+						if parsed, ok := buildParsedDocumentFromOCRTask(caseFile, version, profile, task); ok {
+							parsed.OCRTask = &task
+							return parsed, nil
+						}
+					}
+					return ParsedDocument{
+						Version: version,
+						Profile: profile,
+						OCRTask: &task,
+						Slices:  buildScannedPageSlices(caseFile, version, profile),
+					}, nil
+				}
+			}
 			return ParsedDocument{
 				Version: version,
 				Profile: profile,
@@ -195,6 +237,9 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 
 func buildDocumentProfile(version model.FileVersionDTO, raw []byte) DocumentProfile {
 	fileType := detectDocumentType(version)
+	if fileType == "xlsx" && isOLECompoundDocument(raw) {
+		fileType = "xls"
+	}
 	pageCount := 1
 	hasTextLayer := false
 	textDensity := 0.0
@@ -254,6 +299,10 @@ func buildDocumentProfile(version model.FileVersionDTO, raw []byte) DocumentProf
 		hasTextLayer = true
 		parseStrategy = "xlsx_ooxml_native"
 		sourceType = model.DocumentSourceTypeNativeText
+	case "xls":
+		hasTextLayer = true
+		parseStrategy = "xls_cfbf_heuristic"
+		sourceType = model.DocumentSourceTypeBinary
 	case "json":
 		parseStrategy = "json_text"
 	case "text":
@@ -391,6 +440,51 @@ func buildFailedPDFPageSlices(caseFile model.ReportCaseFile, version model.FileV
 		})
 	}
 	return slices
+}
+
+func parseLegacyXLSDocument(caseFile model.ReportCaseFile, version model.FileVersionDTO, raw []byte, profile DocumentProfile) []model.DocumentSlice {
+	text := strings.TrimSpace(extractLegacyXLSHeuristicText(raw))
+	if text == "" {
+		return []model.DocumentSlice{
+			{
+				CaseFileID:  caseFile.ID,
+				FileID:      caseFile.FileID,
+				VersionNo:   version.VersionNo,
+				SliceType:   model.DocumentStructurePage,
+				SourceType:  profile.SourceType,
+				Title:       "旧版 Excel 解析失败",
+				PageStart:   1,
+				PageEnd:     1,
+				BBoxJSON:    json.RawMessage(`{"format":"xls","parser":"heuristic"}`),
+				RawText:     "",
+				CleanText:   "",
+				TableJSON:   json.RawMessage(`null`),
+				Confidence:  0.2,
+				ParseStatus: model.DocumentParseStatusFailed,
+				OCRPending:  false,
+			},
+		}
+	}
+	return []model.DocumentSlice{
+		{
+			CaseFileID:  caseFile.ID,
+			FileID:      caseFile.FileID,
+			VersionNo:   version.VersionNo,
+			SliceType:   model.DocumentStructureSection,
+			SourceType:  profile.SourceType,
+			Title:       version.OriginName,
+			TitleLevel:  1,
+			PageStart:   1,
+			PageEnd:     1,
+			BBoxJSON:    json.RawMessage(`{"format":"xls","parser":"heuristic"}`),
+			RawText:     text,
+			CleanText:   text,
+			TableJSON:   json.RawMessage(`null`),
+			Confidence:  0.55,
+			ParseStatus: model.DocumentParseStatusParsed,
+			OCRPending:  false,
+		},
+	}
 }
 
 func buildDelimitedTables(caseFile model.ReportCaseFile, version model.FileVersionDTO, text string, profile DocumentProfile, comma rune) ([]model.DocumentTable, []model.DocumentTableFragment, []model.DocumentTableCell) {
@@ -1949,6 +2043,13 @@ func detectDocumentType(version model.FileVersionDTO) string {
 	default:
 		return "binary"
 	}
+}
+
+func isOLECompoundDocument(raw []byte) bool {
+	if len(raw) < 8 {
+		return false
+	}
+	return bytes.Equal(raw[:8], []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1})
 }
 
 func detectPDFPageCount(raw []byte) int {
@@ -4215,6 +4316,96 @@ func extractPDFTextLiterals(content string) []string {
 		}
 	}
 	return parts
+}
+
+func extractLegacyXLSHeuristicText(raw []byte) string {
+	parts := make([]string, 0, 256)
+	seen := map[string]struct{}{}
+	appendPart := func(value string) {
+		value = normalizeText(value)
+		if value == "" {
+			return
+		}
+		if utf8.RuneCountInString(value) < 2 {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		parts = append(parts, value)
+	}
+
+	for _, value := range extractUTF16LEPrintableStrings(raw) {
+		appendPart(value)
+	}
+	for _, value := range extractASCIIPrintableStrings(raw) {
+		appendPart(value)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func extractUTF16LEPrintableStrings(raw []byte) []string {
+	values := make([]string, 0)
+	buffer := make([]rune, 0, 32)
+	flush := func() {
+		if len(buffer) >= 2 {
+			values = append(values, string(buffer))
+		}
+		buffer = buffer[:0]
+	}
+	for index := 0; index+1 < len(raw); index += 2 {
+		code := uint16(raw[index]) | uint16(raw[index+1])<<8
+		if code == 0 {
+			flush()
+			continue
+		}
+		r := rune(code)
+		if isLikelySpreadsheetRune(r) {
+			buffer = append(buffer, r)
+			continue
+		}
+		flush()
+	}
+	flush()
+	return values
+}
+
+func extractASCIIPrintableStrings(raw []byte) []string {
+	values := make([]string, 0)
+	buffer := make([]byte, 0, 32)
+	flush := func() {
+		if len(buffer) >= 3 {
+			values = append(values, string(buffer))
+		}
+		buffer = buffer[:0]
+	}
+	for _, b := range raw {
+		if b >= 32 && b <= 126 {
+			buffer = append(buffer, b)
+			continue
+		}
+		flush()
+	}
+	flush()
+	return values
+}
+
+func isLikelySpreadsheetRune(r rune) bool {
+	switch {
+	case r == '\n' || r == '\t' || r == '\r':
+		return true
+	case r >= 0x20 && r <= 0x7E:
+		return true
+	case r >= 0x4E00 && r <= 0x9FFF:
+		return true
+	case r >= 0x3000 && r <= 0x303F:
+		return true
+	case r >= 0xFF00 && r <= 0xFFEF:
+		return true
+	default:
+		return false
+	}
 }
 
 func readPDFLiteralString(content string, start int) (string, int) {

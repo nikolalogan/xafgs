@@ -6,18 +6,12 @@ type RouteContext = {
 
 export async function GET(request: Request, context: RouteContext) {
   const { fileId } = await context.params
+  const url = new URL(request.url)
+  const versionNo = (url.searchParams.get('versionNo') || '').trim()
+  const query = versionNo ? `?versionNo=${encodeURIComponent(versionNo)}` : ''
   return proxyToBackend({
     request,
     method: 'GET',
-    path: `/api/files/${fileId}`,
-  })
-}
-
-export async function DELETE(request: Request, context: RouteContext) {
-  const { fileId } = await context.params
-  return proxyToBackend({
-    request,
-    method: 'DELETE',
-    path: `/api/files/${fileId}`,
+    path: `/api/files/${fileId}/ocr-status${query}`,
   })
 }

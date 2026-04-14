@@ -1,10 +1,12 @@
 package service
 
 import (
-	"encoding/base64"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -28,7 +30,7 @@ type ChatService interface {
 	CreateConversation(ctx context.Context, userID int64, title, modelName, systemPrompt string) (model.ChatConversationDTO, *model.APIError)
 	ListConversations(ctx context.Context, userID int64) ([]model.ChatConversationDTO, *model.APIError)
 	ListMessages(ctx context.Context, userID, conversationID int64, limit int) ([]model.ChatMessageDTO, *model.APIError)
-	SendMessage(ctx context.Context, userID, conversationID int64, content string, enableWebSearch bool, attachments []model.ChatAttachmentRef, maxContextMessages int) (model.ChatSendResultDTO, *model.APIError)
+	SendMessage(ctx context.Context, userID, conversationID int64, content string, enableWebSearch bool, attachments []model.ChatAttachmentRef, maxContextMessages int, subjectID int64, projectID int64) (model.ChatSendResultDTO, *model.APIError)
 	DeleteConversation(ctx context.Context, userID, conversationID int64) (bool, *model.APIError)
 }
 
@@ -39,6 +41,7 @@ type chatService struct {
 	fileService         FileService
 	webSearchClient     WebSearchClient
 	aiClient            ai.ChatCompletionClient
+	knowledgeService    KnowledgeService
 }
 
 func NewChatService(
@@ -48,17 +51,19 @@ func NewChatService(
 	fileService FileService,
 	webSearchClient WebSearchClient,
 	aiClient ai.ChatCompletionClient,
+	knowledgeService KnowledgeService,
 ) ChatService {
 	if webSearchClient == nil {
 		webSearchClient = NewTavilySearchClient(nil)
 	}
 	return &chatService{
-		repository:        repository,
+		repository:          repository,
 		systemConfigService: systemConfigService,
 		userConfigService:   userConfigService,
 		fileService:         fileService,
 		webSearchClient:     webSearchClient,
 		aiClient:            aiClient,
+		knowledgeService:    knowledgeService,
 	}
 }
 
@@ -116,7 +121,7 @@ func (service *chatService) ListMessages(_ context.Context, userID, conversation
 	return service.repository.ListRecentMessages(conversationID, limit), nil
 }
 
-func (service *chatService) SendMessage(ctx context.Context, userID, conversationID int64, content string, enableWebSearch bool, attachments []model.ChatAttachmentRef, maxContextMessages int) (model.ChatSendResultDTO, *model.APIError) {
+func (service *chatService) SendMessage(ctx context.Context, userID, conversationID int64, content string, enableWebSearch bool, attachments []model.ChatAttachmentRef, maxContextMessages int, subjectID int64, projectID int64) (model.ChatSendResultDTO, *model.APIError) {
 	if userID <= 0 {
 		return model.ChatSendResultDTO{}, model.NewAPIError(401, response.CodeUnauthorized, "未找到认证用户")
 	}
@@ -153,9 +158,21 @@ func (service *chatService) SendMessage(ctx context.Context, userID, conversatio
 		maxContextMessages = 100
 	}
 
-	attachmentContent, attachmentContext, totalAttachmentBytes, apiError := service.buildAttachmentPayload(ctx, attachments)
+	attachmentContent := make([]ai.ChatMessageContentPart, 0)
+	attachmentContext := ""
+	totalAttachmentBytes := int64(0)
+	attachmentContext, apiError = service.buildKnowledgeAttachmentContext(ctx, userID, content, attachments, subjectID, projectID)
 	if apiError != nil {
 		return model.ChatSendResultDTO{}, apiError
+	}
+	if strings.TrimSpace(attachmentContext) == "" {
+		fallbackContent, fallbackContext, fallbackBytes, fallbackError := service.buildAttachmentPayload(ctx, attachments)
+		if fallbackError != nil {
+			return model.ChatSendResultDTO{}, fallbackError
+		}
+		attachmentContent = fallbackContent
+		attachmentContext = fallbackContext
+		totalAttachmentBytes = fallbackBytes
 	}
 	webSearchContext := ""
 	searchResults := make([]WebSearchResult, 0)
@@ -273,6 +290,64 @@ func (service *chatService) SendMessage(ctx context.Context, userID, conversatio
 		UserMessage:      userMessage,
 		AssistantMessage: assistantMessage,
 	}, nil
+}
+
+func (service *chatService) buildKnowledgeAttachmentContext(ctx context.Context, userID int64, content string, attachments []model.ChatAttachmentRef, subjectID int64, projectID int64) (string, *model.APIError) {
+	if service.knowledgeService == nil {
+		return "", nil
+	}
+	query := strings.TrimSpace(content)
+	if query == "" {
+		query = "请总结附件核心内容"
+	}
+	result, apiError := service.knowledgeService.Search(ctx, userID, KnowledgeSearchRequest{
+		Query:     query,
+		TopK:      12,
+		MinScore:  0.2,
+		FileIDs:   uniqueAttachmentFileIDs(attachments),
+		SubjectID: subjectID,
+		ProjectID: projectID,
+	})
+	if apiError != nil {
+		log.Printf("knowledge-search failed userId=%d err=%s", userID, apiError.Message)
+		return "", nil
+	}
+	if len(result.Hits) == 0 {
+		return "", nil
+	}
+	lines := make([]string, 0, len(result.Hits)+1)
+	lines = append(lines, "附件知识检索命中（请优先基于以下证据回答，并在结论中引用 sourceRef）：")
+	for index, hit := range result.Hits {
+		lines = append(lines, fmt.Sprintf(
+			"%d) score=%.4f sourceRef=%s page=%d-%d 摘要=%s 片段=%s",
+			index+1,
+			hit.Score,
+			strings.TrimSpace(hit.SourceRef),
+			hit.PageStart,
+			hit.PageEnd,
+			strings.TrimSpace(hit.ChunkSummary),
+			strings.TrimSpace(hit.ChunkText),
+		))
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func uniqueAttachmentFileIDs(attachments []model.ChatAttachmentRef) []int64 {
+	if len(attachments) == 0 {
+		return nil
+	}
+	set := make(map[int64]struct{}, len(attachments))
+	for _, attachment := range attachments {
+		if attachment.FileID > 0 {
+			set[attachment.FileID] = struct{}{}
+		}
+	}
+	ids := make([]int64, 0, len(set))
+	for fileID := range set {
+		ids = append(ids, fileID)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
 }
 
 func (service *chatService) buildAttachmentPayload(ctx context.Context, attachments []model.ChatAttachmentRef) ([]ai.ChatMessageContentPart, string, int64, *model.APIError) {

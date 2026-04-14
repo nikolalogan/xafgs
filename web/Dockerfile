@@ -1,4 +1,5 @@
-FROM node:22-alpine AS builder
+ARG BASE_REGISTRY=docker.m.daocloud.io
+FROM ${BASE_REGISTRY}/library/node:22-alpine AS builder
 WORKDIR /app
 ENV TZ=Asia/Shanghai
 ARG NPM_REGISTRY=https://registry.npmmirror.com
@@ -8,7 +9,7 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine AS runner
+FROM ${BASE_REGISTRY}/library/node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV TZ=Asia/Shanghai

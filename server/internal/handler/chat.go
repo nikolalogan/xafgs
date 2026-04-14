@@ -32,7 +32,9 @@ type sendChatMessageRequest struct {
 	Content            string                    `json:"content"`
 	EnableWebSearch    bool                      `json:"enableWebSearch"`
 	Attachments        []model.ChatAttachmentRef `json:"attachments" validate:"max=5,dive"`
-	MaxContextMessages *int64 `json:"maxContextMessages" validate:"min=1,max=100"`
+	MaxContextMessages *int64                    `json:"maxContextMessages" validate:"min=1,max=100"`
+	SubjectID          int64                     `json:"subjectId" validate:"min=0"`
+	ProjectID          int64                     `json:"projectId" validate:"min=0"`
 }
 
 type ChatHandler struct {
@@ -152,6 +154,8 @@ func (handler *ChatHandler) SendMessage(c *fiber.Ctx, request *sendChatMessageRe
 		request.EnableWebSearch,
 		request.Attachments,
 		maxContext,
+		request.SubjectID,
+		request.ProjectID,
 	)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)

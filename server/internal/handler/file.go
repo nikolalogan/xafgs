@@ -37,13 +37,15 @@ type fileVersionResolveRequest struct {
 type FileHandler struct {
 	fileService          service.FileService
 	documentParseService service.DocumentParseService
+	ocrTaskService       service.OCRTaskService
 	registry             *apimeta.Registry
 }
 
-func NewFileHandler(fileService service.FileService, documentParseService service.DocumentParseService, registry *apimeta.Registry) *FileHandler {
+func NewFileHandler(fileService service.FileService, documentParseService service.DocumentParseService, ocrTaskService service.OCRTaskService, registry *apimeta.Registry) *FileHandler {
 	return &FileHandler{
 		fileService:          fileService,
 		documentParseService: documentParseService,
+		ocrTaskService:       ocrTaskService,
 		registry:             registry,
 	}
 }
@@ -92,6 +94,13 @@ func (handler *FileHandler) Register(router fiber.Router) {
 		SuccessDataExample: apimeta.ExampleFromType[model.FileDTO](),
 	}, handler.GetFile)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[fileIDPathRequest]{
+		Method:             fiber.MethodDelete,
+		Path:               "/files/:fileId",
+		Summary:            "物理删除文件及其全部版本",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[bool](),
+	}, handler.DeleteFile)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[fileIDPathRequest]{
 		Method:             fiber.MethodGet,
 		Path:               "/files/:fileId/versions",
 		Summary:            "获取文件版本列表",
@@ -112,6 +121,13 @@ func (handler *FileHandler) Register(router fiber.Router) {
 		Auth:               "auth",
 		SuccessDataExample: apimeta.ExampleFromType[model.FileParseResultDTO](),
 	}, handler.ParseFile)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[fileVersionResolveRequest]{
+		Method:             fiber.MethodGet,
+		Path:               "/files/:fileId/ocr-status",
+		Summary:            "查询单文件 OCR 任务状态",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.OCRTaskDTO](),
+	}, handler.GetOCRStatus)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[fileVersionResolveRequest]{
 		Method:  fiber.MethodGet,
 		Path:    "/files/:fileId/download",
@@ -185,6 +201,14 @@ func (handler *FileHandler) GetFile(c *fiber.Ctx, request *fileIDPathRequest) er
 	return response.Success(c, fiber.StatusOK, fileDTO, "获取文件成功")
 }
 
+func (handler *FileHandler) DeleteFile(c *fiber.Ctx, request *fileIDPathRequest) error {
+	apiError := handler.fileService.DeleteFile(c.UserContext(), request.FileID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, true, "删除文件成功")
+}
+
 func (handler *FileHandler) ListVersions(c *fiber.Ctx, request *fileIDPathRequest) error {
 	versions, apiError := handler.fileService.ListVersions(c.UserContext(), request.FileID)
 	if apiError != nil {
@@ -211,6 +235,14 @@ func (handler *FileHandler) ParseFile(c *fiber.Ctx, request *fileVersionResolveR
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, buildFileParseResultDTO(parsed), "触发文件解析成功")
+}
+
+func (handler *FileHandler) GetOCRStatus(c *fiber.Ctx, request *fileVersionResolveRequest) error {
+	task, apiError := handler.ocrTaskService.GetTaskStatus(c.UserContext(), request.FileID, request.VersionNo)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, task, "获取 OCR 状态成功")
 }
 
 func (handler *FileHandler) DownloadReference(c *fiber.Ctx, request *fileVersionResolveRequest) error {
@@ -252,6 +284,11 @@ func buildFileParseResultDTO(parsed service.ParsedDocument) model.FileParseResul
 	return model.FileParseResultDTO{
 		Version:       parsed.Version,
 		Profile:       profileJSON,
+		OCRPending:    parsed.OCRTask != nil && parsed.OCRTask.Status != model.OCRTaskStatusSucceeded,
+		OCRTaskID:     parseOCRTaskID(parsed.OCRTask),
+		OCRTaskStatus: parseOCRTaskStatus(parsed.OCRTask),
+		OCRProvider:   parseOCRTaskProvider(parsed.OCRTask),
+		OCRError:      parseOCRTaskError(parsed.OCRTask),
 		SliceCount:    len(parsed.Slices),
 		TableCount:    len(parsed.Tables),
 		FigureCount:   len(parsed.Figures),
@@ -261,6 +298,37 @@ func buildFileParseResultDTO(parsed service.ParsedDocument) model.FileParseResul
 		Tables:        buildTablePreviews(parsed.Tables, parsed.TableCells),
 		Figures:       buildFigurePreviews(parsed.Figures),
 	}
+}
+
+func parseOCRTaskID(task *model.OCRTask) int64 {
+	if task == nil {
+		return 0
+	}
+	return task.ID
+}
+
+func parseOCRTaskStatus(task *model.OCRTask) string {
+	if task == nil {
+		return ""
+	}
+	return task.Status
+}
+
+func parseOCRTaskProvider(task *model.OCRTask) string {
+	if task == nil {
+		return ""
+	}
+	if strings.TrimSpace(task.ProviderUsed) != "" {
+		return task.ProviderUsed
+	}
+	return task.ProviderMode
+}
+
+func parseOCRTaskError(task *model.OCRTask) string {
+	if task == nil {
+		return ""
+	}
+	return task.ErrorMessage
 }
 
 func buildSlicePreviews(slices []model.DocumentSlice) []model.FileParseSlicePreviewDTO {

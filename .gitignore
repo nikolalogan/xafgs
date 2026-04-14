@@ -12,3 +12,5 @@ server/tmp
 /server/.gocache
 /server/.gomodcache
 /server/.cache
+/ocr-service/wheels
+*.pyc

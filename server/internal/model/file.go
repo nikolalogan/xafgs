@@ -17,6 +17,14 @@ const (
 )
 
 const (
+	OCRTaskStatusPending   = "pending"
+	OCRTaskStatusRunning   = "running"
+	OCRTaskStatusSucceeded = "succeeded"
+	OCRTaskStatusFailed    = "failed"
+	OCRTaskStatusCancelled = "cancelled"
+)
+
+const (
 	UploadSessionStatusSelected  = "selected"
 	UploadSessionStatusUploading = "uploading"
 	UploadSessionStatusUploaded  = "uploaded"
@@ -115,6 +123,11 @@ type FileUploadResultDTO struct {
 type FileParseResultDTO struct {
 	Version       FileVersionDTO              `json:"version"`
 	Profile       json.RawMessage             `json:"profile"`
+	OCRPending    bool                        `json:"ocrPending"`
+	OCRTaskID     int64                       `json:"ocrTaskId"`
+	OCRTaskStatus string                      `json:"ocrTaskStatus"`
+	OCRProvider   string                      `json:"ocrProvider"`
+	OCRError      string                      `json:"ocrError"`
 	SliceCount    int                         `json:"sliceCount"`
 	TableCount    int                         `json:"tableCount"`
 	FigureCount   int                         `json:"figureCount"`
@@ -228,4 +241,70 @@ type UploadedFileMeta struct {
 	SizeBytes  int64
 	Checksum   string
 	StorageKey string
+}
+
+type OCRTask struct {
+	ID                 int64           `json:"id"`
+	FileID             int64           `json:"fileId"`
+	VersionNo          int             `json:"versionNo"`
+	Status             string          `json:"status"`
+	ProviderMode       string          `json:"providerMode"`
+	ProviderUsed       string          `json:"providerUsed"`
+	ProviderTaskID     string          `json:"providerTaskId"`
+	RequestPayloadJSON json.RawMessage `json:"requestPayloadJson"`
+	ResultPayloadJSON  json.RawMessage `json:"resultPayloadJson"`
+	PageCount          int             `json:"pageCount"`
+	Confidence         float64         `json:"confidence"`
+	ErrorCode          string          `json:"errorCode"`
+	ErrorMessage       string          `json:"errorMessage"`
+	RetryCount         int             `json:"retryCount"`
+	CreatedAt          time.Time       `json:"createdAt"`
+	UpdatedAt          time.Time       `json:"updatedAt"`
+	StartedAt          *time.Time      `json:"startedAt,omitempty"`
+	FinishedAt         *time.Time      `json:"finishedAt,omitempty"`
+}
+
+type OCRTaskDTO struct {
+	ID             int64           `json:"id"`
+	FileID         int64           `json:"fileId"`
+	VersionNo      int             `json:"versionNo"`
+	Status         string          `json:"status"`
+	ProviderMode   string          `json:"providerMode"`
+	ProviderUsed   string          `json:"providerUsed"`
+	ProviderTaskID string          `json:"providerTaskId"`
+	PageCount      int             `json:"pageCount"`
+	Confidence     float64         `json:"confidence"`
+	ErrorCode      string          `json:"errorCode"`
+	ErrorMessage   string          `json:"errorMessage"`
+	RetryCount     int             `json:"retryCount"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
+	StartedAt      *time.Time      `json:"startedAt,omitempty"`
+	FinishedAt     *time.Time      `json:"finishedAt,omitempty"`
+	Result         json.RawMessage `json:"result,omitempty"`
+}
+
+func (task OCRTask) ToDTO(includeResult bool) OCRTaskDTO {
+	dto := OCRTaskDTO{
+		ID:             task.ID,
+		FileID:         task.FileID,
+		VersionNo:      task.VersionNo,
+		Status:         task.Status,
+		ProviderMode:   task.ProviderMode,
+		ProviderUsed:   task.ProviderUsed,
+		ProviderTaskID: task.ProviderTaskID,
+		PageCount:      task.PageCount,
+		Confidence:     task.Confidence,
+		ErrorCode:      task.ErrorCode,
+		ErrorMessage:   task.ErrorMessage,
+		RetryCount:     task.RetryCount,
+		CreatedAt:      task.CreatedAt,
+		UpdatedAt:      task.UpdatedAt,
+		StartedAt:      task.StartedAt,
+		FinishedAt:     task.FinishedAt,
+	}
+	if includeResult {
+		dto.Result = task.ResultPayloadJSON
+	}
+	return dto
 }

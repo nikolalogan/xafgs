@@ -366,7 +366,7 @@ func (service *reportingService) processSingleCaseFile(ctx context.Context, repo
 	caseFile.FileType = parsed.Profile.FileType
 	caseFile.SourceType = parsed.Profile.SourceType
 	caseFile.ParseStatus = chooseParseStatus(parsed)
-	caseFile.OCRPending = parsed.Profile.OCRRequired
+	caseFile.OCRPending = parsed.OCRTask != nil && parsed.OCRTask.Status != model.OCRTaskStatusSucceeded
 	caseFile.IsScannedSuspected = parsed.Profile.IsScannedSuspected
 	notes, _ := json.Marshal(map[string]any{
 		"originName":         parsed.Version.OriginName,
@@ -376,8 +376,10 @@ func (service *reportingService) processSingleCaseFile(ctx context.Context, repo
 		"hasTextLayer":       parsed.Profile.HasTextLayer,
 		"textDensity":        parsed.Profile.TextDensity,
 		"traceable":          true,
-		"ocrProvider":        "noop",
-		"ocrPending":         parsed.Profile.OCRRequired,
+		"ocrProvider":        reportingOCRProvider(parsed),
+		"ocrPending":         caseFile.OCRPending,
+		"ocrTaskId":          reportingOCRTaskID(parsed),
+		"ocrTaskStatus":      reportingOCRTaskStatus(parsed),
 		"isScannedSuspected": parsed.Profile.IsScannedSuspected,
 		"pdfDiagnostics":     parsed.Profile.PDFDiagnostics,
 	})
@@ -722,6 +724,33 @@ func chooseParseStatus(parsed ParsedDocument) string {
 		return model.DocumentParseStatusFailed
 	}
 	return model.DocumentParseStatusParsed
+}
+
+func reportingOCRProvider(parsed ParsedDocument) string {
+	if parsed.OCRTask == nil {
+		return "noop"
+	}
+	if strings.TrimSpace(parsed.OCRTask.ProviderUsed) != "" {
+		return parsed.OCRTask.ProviderUsed
+	}
+	if strings.TrimSpace(parsed.OCRTask.ProviderMode) != "" {
+		return parsed.OCRTask.ProviderMode
+	}
+	return "noop"
+}
+
+func reportingOCRTaskID(parsed ParsedDocument) int64 {
+	if parsed.OCRTask == nil {
+		return 0
+	}
+	return parsed.OCRTask.ID
+}
+
+func reportingOCRTaskStatus(parsed ParsedDocument) string {
+	if parsed.OCRTask == nil {
+		return ""
+	}
+	return parsed.OCRTask.Status
 }
 
 func normalizeJSONArray(raw json.RawMessage, fieldName string) (json.RawMessage, *model.APIError) {

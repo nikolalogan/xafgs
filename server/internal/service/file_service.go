@@ -28,12 +28,14 @@ type FileService interface {
 	ListVersions(ctx context.Context, fileID int64) ([]model.FileVersionDTO, *model.APIError)
 	ResolveReference(ctx context.Context, fileID int64, versionNo int) (model.FileVersionDTO, *model.APIError)
 	ReadReferenceContent(ctx context.Context, fileID int64, versionNo int, maxBytes int64) (model.FileVersionDTO, []byte, *model.APIError)
+	DeleteFile(ctx context.Context, fileID int64) *model.APIError
 }
 
 type fileService struct {
 	fileRepository repository.FileRepository
 	fileStorage    FileStorage
 	sessionTTL     time.Duration
+	indexEnqueuer  KnowledgeIndexEnqueuer
 }
 
 const (
@@ -42,11 +44,20 @@ const (
 	debugFeedbackBizKeyPrefix             = "debug-feedback_"
 )
 
-func NewFileService(fileRepository repository.FileRepository, fileStorage FileStorage) FileService {
+type KnowledgeIndexEnqueuer interface {
+	Enqueue(ctx context.Context, fileID int64, versionNo int) *model.APIError
+}
+
+func NewFileService(fileRepository repository.FileRepository, fileStorage FileStorage, indexEnqueuer ...KnowledgeIndexEnqueuer) FileService {
+	var selectedEnqueuer KnowledgeIndexEnqueuer
+	if len(indexEnqueuer) > 0 {
+		selectedEnqueuer = indexEnqueuer[0]
+	}
 	return &fileService{
 		fileRepository: fileRepository,
 		fileStorage:    fileStorage,
 		sessionTTL:     15 * time.Minute,
+		indexEnqueuer:  selectedEnqueuer,
 	}
 }
 
@@ -141,6 +152,7 @@ func (service *fileService) UploadBySession(_ context.Context, operatorID int64,
 	log.Printf("file-upload session success operator=%d session=%s fileId=%d versionNo=%d storage=%s size=%d", operatorID, cleanSessionID, fileEntity.ID, versionEntity.VersionNo, meta.StorageKey, meta.SizeBytes)
 
 	latestVersion := versionEntity
+	service.enqueueIndexTask(context.Background(), versionEntity.FileID, versionEntity.VersionNo)
 	return model.FileUploadResultDTO{
 		FileID:    fileEntity.ID,
 		VersionNo: versionEntity.VersionNo,
@@ -169,12 +181,22 @@ func (service *fileService) UploadVersion(_ context.Context, operatorID int64, f
 	}
 
 	latestVersion := versionEntity
+	service.enqueueIndexTask(context.Background(), versionEntity.FileID, versionEntity.VersionNo)
 	return model.FileUploadResultDTO{
 		FileID:    fileEntity.ID,
 		VersionNo: versionEntity.VersionNo,
 		File:      fileEntity.ToDTO(&latestVersion),
 		Version:   versionEntity.ToDTO(),
 	}, nil
+}
+
+func (service *fileService) enqueueIndexTask(ctx context.Context, fileID int64, versionNo int) {
+	if service.indexEnqueuer == nil || fileID <= 0 || versionNo <= 0 {
+		return
+	}
+	if apiError := service.indexEnqueuer.Enqueue(ctx, fileID, versionNo); apiError != nil {
+		log.Printf("knowledge-index enqueue failed fileId=%d versionNo=%d err=%s", fileID, versionNo, apiError.Message)
+	}
 }
 
 func (service *fileService) CancelSession(_ context.Context, operatorID int64, sessionID string) *model.APIError {
@@ -257,6 +279,40 @@ func (service *fileService) ReadReferenceContent(ctx context.Context, fileID int
 	}
 	log.Printf("file-read success fileId=%d versionNo=%d storage=%s bytes=%d mime=%s", fileID, version.VersionNo, version.StorageKey, len(raw), version.MimeType)
 	return version, raw, nil
+}
+
+func (service *fileService) DeleteFile(_ context.Context, fileID int64) *model.APIError {
+	fileEntity, ok := service.fileRepository.FindFileByID(fileID)
+	if !ok {
+		return model.NewAPIError(404, response.CodeNotFound, "文件不存在")
+	}
+
+	versions, ok := service.fileRepository.FindVersions(fileID)
+	if !ok {
+		return model.NewAPIError(404, response.CodeNotFound, "文件不存在")
+	}
+	storageKeys := make([]string, 0, len(versions))
+	for _, version := range versions {
+		if strings.TrimSpace(version.StorageKey) != "" {
+			storageKeys = append(storageKeys, version.StorageKey)
+		}
+	}
+
+	if !service.fileRepository.DeleteFile(fileID) {
+		return model.NewAPIError(500, response.CodeInternal, "删除文件记录失败")
+	}
+
+	failedKeys := make([]string, 0)
+	for _, storageKey := range storageKeys {
+		if err := service.fileStorage.Delete(storageKey); err != nil {
+			failedKeys = append(failedKeys, storageKey)
+			log.Printf("file-delete storage cleanup failed fileId=%d bizKey=%s storage=%s err=%v", fileEntity.ID, fileEntity.BizKey, storageKey, err)
+		}
+	}
+	if len(failedKeys) > 0 {
+		return model.NewAPIError(500, response.CodeInternal, "文件记录已删除，但部分存储文件清理失败")
+	}
+	return nil
 }
 
 func (service *fileService) persistUploadedFile(fileID int64, versionNo int, fileHeader *multipart.FileHeader) (model.UploadedFileMeta, *model.APIError) {

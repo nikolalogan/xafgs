@@ -11,6 +11,8 @@ import (
 )
 
 const schemaSQL = `
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS app_user (
   id BIGSERIAL PRIMARY KEY,
   username VARCHAR(128) NOT NULL UNIQUE,
@@ -166,6 +168,79 @@ CREATE TABLE IF NOT EXISTS upload_session (
 CREATE INDEX IF NOT EXISTS idx_file_status ON file(status);
 CREATE INDEX IF NOT EXISTS idx_file_version_file_version ON file_version(file_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_upload_session_status_expires_at ON upload_session(status, expires_at);
+
+CREATE TABLE IF NOT EXISTS ocr_task (
+  id BIGSERIAL PRIMARY KEY,
+  file_id BIGINT NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+  version_no INT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')),
+  provider_mode VARCHAR(32) NOT NULL DEFAULT 'auto',
+  provider_used VARCHAR(64) NOT NULL DEFAULT '',
+  provider_task_id VARCHAR(128) NOT NULL DEFAULT '',
+  request_payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  result_payload_json JSONB NOT NULL DEFAULT 'null'::jsonb,
+  page_count INT NOT NULL DEFAULT 0,
+  confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+  error_code VARCHAR(64) NOT NULL DEFAULT '',
+  error_message TEXT NOT NULL DEFAULT '',
+  retry_count INT NOT NULL DEFAULT 0,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ocr_task_file_version_created ON ocr_task(file_id, version_no, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ocr_task_status_created ON ocr_task(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS knowledge_index_job (
+  id BIGSERIAL PRIMARY KEY,
+  file_id BIGINT NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+  version_no INT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'succeeded', 'failed')),
+  retry_count INT NOT NULL DEFAULT 0,
+  error_message TEXT NOT NULL DEFAULT '',
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (file_id, version_no)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_chunk (
+  id BIGSERIAL PRIMARY KEY,
+  file_id BIGINT NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+  version_no INT NOT NULL,
+  biz_key VARCHAR(128) NOT NULL DEFAULT '',
+  chunk_index INT NOT NULL DEFAULT 0,
+  chunk_text TEXT NOT NULL,
+  chunk_summary TEXT NOT NULL DEFAULT '',
+  source_type VARCHAR(64) NOT NULL DEFAULT '',
+  page_start INT NOT NULL DEFAULT 1,
+  page_end INT NOT NULL DEFAULT 1,
+  source_ref VARCHAR(128) NOT NULL DEFAULT '',
+  bbox_json JSONB NOT NULL DEFAULT 'null'::jsonb,
+  parse_strategy VARCHAR(64) NOT NULL DEFAULT '',
+  content_hash VARCHAR(64) NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (file_id, version_no, chunk_index)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_embedding (
+  chunk_id BIGINT NOT NULL REFERENCES knowledge_chunk(id) ON DELETE CASCADE,
+  model_name VARCHAR(128) NOT NULL,
+  embedding vector(1536) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chunk_id, model_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_job_status_updated ON knowledge_index_job(status, updated_at ASC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_file_version ON knowledge_chunk(file_id, version_no);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_biz_key ON knowledge_chunk(biz_key);
+CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_model_name ON knowledge_embedding(model_name);
+CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_vector_cosine
+ON knowledge_embedding USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 CREATE TABLE IF NOT EXISTS debug_feedback (
   id BIGSERIAL PRIMARY KEY,

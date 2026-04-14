@@ -34,20 +34,34 @@ type ChatTool struct {
 }
 
 type ChatCompletionRequest struct {
-	BaseURL      string
-	APIKey       string
-	Model        string
-	Messages     []ChatMessage
-	Tools        []ChatTool
-	Temperature  float64
-	MaxTokens    int
-	Timeout      time.Duration
-	UserAgent    string
-	RequestID    string
+	BaseURL     string
+	APIKey      string
+	Model       string
+	Messages    []ChatMessage
+	Tools       []ChatTool
+	Temperature float64
+	MaxTokens   int
+	Timeout     time.Duration
+	UserAgent   string
+	RequestID   string
 }
 
 type ChatCompletionClient interface {
 	CreateChatCompletion(ctx context.Context, request ChatCompletionRequest) (string, error)
+}
+
+type EmbeddingRequest struct {
+	BaseURL   string
+	APIKey    string
+	Model     string
+	Input     []string
+	Timeout   time.Duration
+	UserAgent string
+	RequestID string
+}
+
+type EmbeddingClient interface {
+	CreateEmbeddings(ctx context.Context, request EmbeddingRequest) ([][]float64, error)
 }
 
 type openAICompatClient struct {
@@ -57,6 +71,13 @@ type openAICompatClient struct {
 var ErrTimeout = errors.New("ai request timeout")
 
 func NewOpenAICompatClient(httpClient *http.Client) ChatCompletionClient {
+	if httpClient == nil {
+		httpClient = &http.Client{}
+	}
+	return &openAICompatClient{httpClient: httpClient}
+}
+
+func NewOpenAICompatEmbeddingClient(httpClient *http.Client) EmbeddingClient {
 	if httpClient == nil {
 		httpClient = &http.Client{}
 	}
@@ -159,6 +180,99 @@ func (client *openAICompatClient) CreateChatCompletion(ctx context.Context, requ
 	return content, nil
 }
 
+func (client *openAICompatClient) CreateEmbeddings(ctx context.Context, request EmbeddingRequest) ([][]float64, error) {
+	baseURL := normalizeBaseURL(request.BaseURL)
+	if baseURL == "" {
+		return nil, fmt.Errorf("aiBaseUrl 为空")
+	}
+	apiKey := strings.TrimSpace(request.APIKey)
+	if apiKey == "" {
+		return nil, fmt.Errorf("aiApiKey 为空")
+	}
+	model := strings.TrimSpace(request.Model)
+	if model == "" {
+		return nil, fmt.Errorf("model 为空")
+	}
+	if len(request.Input) == 0 {
+		return nil, fmt.Errorf("input 为空")
+	}
+
+	timeout := request.Timeout
+	callCtx := ctx
+	cancel := func() {}
+	if timeout == 0 {
+		timeout = 60 * time.Second
+	}
+	if timeout > 0 {
+		callCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	payload := map[string]any{
+		"model": model,
+		"input": request.Input,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("请求序列化失败")
+	}
+
+	endpoint := resolveEmbeddingsEndpoint(baseURL)
+	httpReq, err := http.NewRequestWithContext(callCtx, http.MethodPost, endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("构造请求失败")
+	}
+	httpReq.Header.Set("content-type", "application/json")
+	httpReq.Header.Set("accept", "application/json")
+	httpReq.Header.Set("authorization", "Bearer "+apiKey)
+	if ua := strings.TrimSpace(request.UserAgent); ua != "" {
+		httpReq.Header.Set("user-agent", ua)
+	}
+	if rid := strings.TrimSpace(request.RequestID); rid != "" {
+		httpReq.Header.Set("x-request-id", rid)
+	}
+
+	resp, err := client.httpClient.Do(httpReq)
+	if err != nil {
+		if isTimeoutErr(err) {
+			return nil, fmt.Errorf("%w: %v", ErrTimeout, err)
+		}
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = fmt.Sprintf("AI 服务返回错误（http=%d）", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("%s", message)
+	}
+
+	var parsed struct {
+		Data []struct {
+			Embedding []float64 `json:"embedding"`
+			Index     int       `json:"index"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("AI 响应解析失败")
+	}
+	if len(parsed.Data) == 0 {
+		return nil, fmt.Errorf("AI 未返回 embedding")
+	}
+
+	out := make([][]float64, 0, len(parsed.Data))
+	for _, item := range parsed.Data {
+		if len(item.Embedding) == 0 {
+			return nil, fmt.Errorf("AI 返回空 embedding")
+		}
+		out = append(out, item.Embedding)
+	}
+	return out, nil
+}
+
 func IsTimeoutError(err error) bool {
 	if err == nil {
 		return false
@@ -225,4 +339,12 @@ func resolveChatCompletionsEndpoint(baseURL string) string {
 		return normalized + "/chat/completions"
 	}
 	return normalized + "/v1/chat/completions"
+}
+
+func resolveEmbeddingsEndpoint(baseURL string) string {
+	normalized := normalizeBaseURL(baseURL)
+	if strings.HasSuffix(normalized, "/v1") {
+		return normalized + "/embeddings"
+	}
+	return normalized + "/v1/embeddings"
 }

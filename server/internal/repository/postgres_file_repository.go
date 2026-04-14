@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"sort"
 	"strings"
 	"time"
@@ -487,4 +488,155 @@ WHERE id = $1
 		UpdatedAt:  now,
 	}
 	return file, version, true
+}
+
+func (repository *PostgresFileRepository) DeleteFile(fileID int64) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	result, err := repository.db.ExecContext(ctx, `
+DELETE FROM file
+WHERE id = $1
+`, fileID)
+	if err != nil {
+		return false
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false
+	}
+	return affected > 0
+}
+
+func (repository *PostgresFileRepository) CreateOCRTask(task model.OCRTask) model.OCRTask {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	now := time.Now().UTC()
+	task.CreatedAt = now
+	task.UpdatedAt = now
+	if task.RequestPayloadJSON == nil {
+		task.RequestPayloadJSON = json.RawMessage(`{}`)
+	}
+	if task.ResultPayloadJSON == nil {
+		task.ResultPayloadJSON = json.RawMessage(`null`)
+	}
+	_ = repository.db.QueryRowContext(ctx, `
+INSERT INTO ocr_task (
+  file_id, version_no, status, provider_mode, provider_used, provider_task_id,
+  request_payload_json, result_payload_json, page_count, confidence,
+  error_code, error_message, retry_count, started_at, finished_at, created_at, updated_at
+) VALUES (
+  $1, $2, $3, $4, $5, $6,
+  $7, $8, $9, $10,
+  $11, $12, $13, $14, $15, $16, $16
+)
+RETURNING id
+`, task.FileID, task.VersionNo, task.Status, task.ProviderMode, task.ProviderUsed, task.ProviderTaskID,
+		task.RequestPayloadJSON, task.ResultPayloadJSON, task.PageCount, task.Confidence,
+		task.ErrorCode, task.ErrorMessage, task.RetryCount, task.StartedAt, task.FinishedAt, now).Scan(&task.ID)
+	return task
+}
+
+func (repository *PostgresFileRepository) UpdateOCRTask(task model.OCRTask) (model.OCRTask, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	task.UpdatedAt = time.Now().UTC()
+	if task.RequestPayloadJSON == nil {
+		task.RequestPayloadJSON = json.RawMessage(`{}`)
+	}
+	if task.ResultPayloadJSON == nil {
+		task.ResultPayloadJSON = json.RawMessage(`null`)
+	}
+	result, err := repository.db.ExecContext(ctx, `
+UPDATE ocr_task
+SET status = $2,
+    provider_mode = $3,
+    provider_used = $4,
+    provider_task_id = $5,
+    request_payload_json = $6,
+    result_payload_json = $7,
+    page_count = $8,
+    confidence = $9,
+    error_code = $10,
+    error_message = $11,
+    retry_count = $12,
+    started_at = $13,
+    finished_at = $14,
+    updated_at = $15
+WHERE id = $1
+`, task.ID, task.Status, task.ProviderMode, task.ProviderUsed, task.ProviderTaskID,
+		task.RequestPayloadJSON, task.ResultPayloadJSON, task.PageCount, task.Confidence,
+		task.ErrorCode, task.ErrorMessage, task.RetryCount, task.StartedAt, task.FinishedAt, task.UpdatedAt)
+	if err != nil {
+		return model.OCRTask{}, false
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected <= 0 {
+		return model.OCRTask{}, false
+	}
+	return task, true
+}
+
+func (repository *PostgresFileRepository) FindOCRTaskByID(taskID int64) (model.OCRTask, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	var task model.OCRTask
+	var startedAt sql.NullTime
+	var finishedAt sql.NullTime
+	err := repository.db.QueryRowContext(ctx, `
+SELECT id, file_id, version_no, status, provider_mode, provider_used, provider_task_id,
+       request_payload_json, result_payload_json, page_count, confidence,
+       error_code, error_message, retry_count, started_at, finished_at, created_at, updated_at
+FROM ocr_task
+WHERE id = $1
+`, taskID).Scan(
+		&task.ID, &task.FileID, &task.VersionNo, &task.Status, &task.ProviderMode, &task.ProviderUsed, &task.ProviderTaskID,
+		&task.RequestPayloadJSON, &task.ResultPayloadJSON, &task.PageCount, &task.Confidence,
+		&task.ErrorCode, &task.ErrorMessage, &task.RetryCount, &startedAt, &finishedAt, &task.CreatedAt, &task.UpdatedAt,
+	)
+	if err != nil {
+		return model.OCRTask{}, false
+	}
+	if startedAt.Valid {
+		task.StartedAt = &startedAt.Time
+	}
+	if finishedAt.Valid {
+		task.FinishedAt = &finishedAt.Time
+	}
+	return task, true
+}
+
+func (repository *PostgresFileRepository) FindLatestOCRTask(fileID int64, versionNo int) (model.OCRTask, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	var task model.OCRTask
+	var startedAt sql.NullTime
+	var finishedAt sql.NullTime
+	err := repository.db.QueryRowContext(ctx, `
+SELECT id, file_id, version_no, status, provider_mode, provider_used, provider_task_id,
+       request_payload_json, result_payload_json, page_count, confidence,
+       error_code, error_message, retry_count, started_at, finished_at, created_at, updated_at
+FROM ocr_task
+WHERE file_id = $1 AND version_no = $2
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`, fileID, versionNo).Scan(
+		&task.ID, &task.FileID, &task.VersionNo, &task.Status, &task.ProviderMode, &task.ProviderUsed, &task.ProviderTaskID,
+		&task.RequestPayloadJSON, &task.ResultPayloadJSON, &task.PageCount, &task.Confidence,
+		&task.ErrorCode, &task.ErrorMessage, &task.RetryCount, &startedAt, &finishedAt, &task.CreatedAt, &task.UpdatedAt,
+	)
+	if err != nil {
+		return model.OCRTask{}, false
+	}
+	if startedAt.Valid {
+		task.StartedAt = &startedAt.Time
+	}
+	if finishedAt.Valid {
+		task.FinishedAt = &finishedAt.Time
+	}
+	return task, true
 }
