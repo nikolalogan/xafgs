@@ -13,7 +13,7 @@
 
 ## 2. API 说明
 
-### 2.1 混合检索（向量 + 关键词）
+### 2.1 向量检索
 
 `POST /api/knowledge/search`
 
@@ -47,23 +47,11 @@
       "pageEnd": 6,
       "sourceRef": "f101#p5-6#k7",
       "bbox": null,
-      "score": 0.0322,
-      "retrievalType": "hybrid",
-      "semanticScore": 0.83,
-      "keywordScore": 0.61,
-      "finalScore": 0.0322
+      "score": 0.83
     }
   ]
 }
 ```
-
-字段说明（`hits[]`）：
-
-- `retrievalType`：召回来源，`semantic` / `keyword` / `hybrid`。
-- `semanticScore`：语义检索得分（向量相似度，范围近似 0~1）。
-- `keywordScore`：关键词检索得分（`ts_rank_cd` 与 `similarity` 组合）。
-- `finalScore`：融合后得分（RRF）。
-- `score`：与 `finalScore` 等价，兼容旧字段。
 
 ### 2.2 触发重建索引
 
@@ -118,6 +106,7 @@
 
 ---
 
+<<<<<<< HEAD
 ## 5. 混合检索打分说明
 
 当前检索流程：
@@ -174,14 +163,22 @@ keywordScore = ts_rank_cd(...) * 0.7 + similarity(...) * 0.3
 1. `POST /api/files/:fileId/reindex?versionNo=2`
 2. `GET /api/files/:fileId/index-status?versionNo=2`
 3. `POST /api/knowledge/search`
+=======
+## 5. 运行与验证建议
+
+1. 上传文件后，检查是否自动入队索引任务。
+2. 调 `index-status` 确认任务 `succeeded`。
+3. 调 `knowledge/search` 看是否命中。
+4. 调 Chat 接口，验证回复是否体现检索证据语境。
+>>>>>>> parent of d998be6 (优化)
 
 ---
 
-## 7. 注意事项
+## 6. 注意事项
 
 - 当前实现依赖 PostgreSQL + `pgvector` 扩展。
-- 混合检索还依赖 `pg_trgm` 与 `GIN(to_tsvector(...))` 索引。
 - 检索范围过滤依赖 `biz_key` 前缀约定，请在上传入口保证规范。
 - 若索引/检索返回 “知识检索能力未启用”，优先检查 PostgreSQL 是否安装并启用 `vector` 扩展。
 - 若返回“本地向量配置缺失，请联系管理员在系统设置中补充”，请在 `/app/system-settings` 配置本地向量服务地址/API Key/向量模型/向量维度。
 - 在受限网络沙箱中无法完成全量 `go test ./...` 依赖拉取验证；需在可联网环境复验。
+

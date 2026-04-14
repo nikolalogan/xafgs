@@ -43,21 +43,17 @@ type KnowledgeChunk struct {
 }
 
 type KnowledgeSearchHitDTO struct {
-	FileID        int64           `json:"fileId"`
-	VersionNo     int             `json:"versionNo"`
-	ChunkIndex    int             `json:"chunkIndex"`
-	ChunkText     string          `json:"chunkText"`
-	ChunkSummary  string          `json:"chunkSummary"`
-	SourceType    string          `json:"sourceType"`
-	PageStart     int             `json:"pageStart"`
-	PageEnd       int             `json:"pageEnd"`
-	SourceRef     string          `json:"sourceRef"`
-	BBox          json.RawMessage `json:"bbox"`
-	Score         float64         `json:"score"`
-	RetrievalType string          `json:"retrievalType"`
-	SemanticScore float64         `json:"semanticScore"`
-	KeywordScore  float64         `json:"keywordScore"`
-	FinalScore    float64         `json:"finalScore"`
+	FileID       int64           `json:"fileId"`
+	VersionNo    int             `json:"versionNo"`
+	ChunkIndex   int             `json:"chunkIndex"`
+	ChunkText    string          `json:"chunkText"`
+	ChunkSummary string          `json:"chunkSummary"`
+	SourceType   string          `json:"sourceType"`
+	PageStart    int             `json:"pageStart"`
+	PageEnd      int             `json:"pageEnd"`
+	SourceRef    string          `json:"sourceRef"`
+	BBox         json.RawMessage `json:"bbox"`
+	Score        float64         `json:"score"`
 }
 
 type KnowledgeSearchResultDTO struct {

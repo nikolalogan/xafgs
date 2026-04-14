@@ -11,6 +11,7 @@ import (
 )
 
 const schemaSQL = `
+<<<<<<< HEAD
 DO $$
 BEGIN
   BEGIN
@@ -24,6 +25,9 @@ BEGIN
     RAISE NOTICE 'vector extension unavailable: %', SQLERRM;
   END;
 END $$;
+=======
+CREATE EXTENSION IF NOT EXISTS vector;
+>>>>>>> parent of d998be6 (优化)
 
 CREATE TABLE IF NOT EXISTS app_user (
   id BIGSERIAL PRIMARY KEY,
@@ -246,6 +250,7 @@ CREATE TABLE IF NOT EXISTS knowledge_chunk (
 CREATE INDEX IF NOT EXISTS idx_knowledge_job_status_updated ON knowledge_index_job(status, updated_at ASC, id ASC);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_file_version ON knowledge_chunk(file_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_biz_key ON knowledge_chunk(biz_key);
+<<<<<<< HEAD
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_text_tsv ON knowledge_chunk USING GIN (to_tsvector('simple', coalesce(chunk_text, '')));
 DO $$
 BEGIN
@@ -267,6 +272,11 @@ BEGIN
 	  EXECUTE 'CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_model_name ON knowledge_embedding(model_name)';
 	END IF;
 END $$;
+=======
+CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_model_name ON knowledge_embedding(model_name);
+CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_vector_cosine
+ON knowledge_embedding USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+>>>>>>> parent of d998be6 (优化)
 
 CREATE TABLE IF NOT EXISTS debug_feedback (
   id BIGSERIAL PRIMARY KEY,

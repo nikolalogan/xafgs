@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -235,8 +234,13 @@ ON CONFLICT (chunk_id, model_name) DO UPDATE SET
 	return true
 }
 
+<<<<<<< HEAD
 func (repository *PostgresKnowledgeRepository) Search(modelName string, queryText string, queryVector []float64, filter KnowledgeSearchFilter) []model.KnowledgeSearchHitDTO {
 	if strings.TrimSpace(modelName) == "" || strings.TrimSpace(queryText) == "" || len(queryVector) == 0 {
+=======
+func (repository *PostgresKnowledgeRepository) Search(modelName string, queryVector []float64, filter KnowledgeSearchFilter) []model.KnowledgeSearchHitDTO {
+	if strings.TrimSpace(modelName) == "" || len(queryVector) != 1536 {
+>>>>>>> parent of d998be6 (优化)
 		return nil
 	}
 	topK := filter.TopK
@@ -253,210 +257,19 @@ func (repository *PostgresKnowledgeRepository) Search(modelName string, queryTex
 	if minScore > 1 {
 		minScore = 1
 	}
-	semanticLimit := topK * 3
-	if semanticLimit > 120 {
-		semanticLimit = 120
-	}
-	keywordLimit := topK * 3
-	if keywordLimit > 120 {
-		keywordLimit = 120
-	}
 
-	type candidate struct {
-		hit          model.KnowledgeSearchHitDTO
-		semanticRank int
-		keywordRank  int
-	}
-	candidates := map[string]*candidate{}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	semanticHits := repository.searchSemantic(ctx, strings.TrimSpace(modelName), queryVector, minScore, semanticLimit, filter)
-	for index, hit := range semanticHits {
-		key := buildChunkKey(hit.FileID, hit.VersionNo, hit.ChunkIndex)
-		item, exists := candidates[key]
-		if !exists {
-			item = &candidate{hit: hit}
-			candidates[key] = item
-		}
-		item.semanticRank = index + 1
-		item.hit.SemanticScore = hit.SemanticScore
-	}
-
-	keywordHits := repository.searchKeyword(ctx, strings.TrimSpace(queryText), keywordLimit, filter)
-	for index, hit := range keywordHits {
-		key := buildChunkKey(hit.FileID, hit.VersionNo, hit.ChunkIndex)
-		item, exists := candidates[key]
-		if !exists {
-			item = &candidate{hit: hit}
-			candidates[key] = item
-		}
-		item.keywordRank = index + 1
-		item.hit.KeywordScore = hit.KeywordScore
-		if strings.TrimSpace(item.hit.ChunkText) == "" {
-			item.hit.ChunkText = hit.ChunkText
-		}
-		if strings.TrimSpace(item.hit.ChunkSummary) == "" {
-			item.hit.ChunkSummary = hit.ChunkSummary
-		}
-		if strings.TrimSpace(item.hit.SourceRef) == "" {
-			item.hit.SourceRef = hit.SourceRef
-		}
-		if len(item.hit.BBox) == 0 {
-			item.hit.BBox = hit.BBox
-		}
-		if strings.TrimSpace(item.hit.SourceType) == "" {
-			item.hit.SourceType = hit.SourceType
-		}
-		if item.hit.PageStart == 0 {
-			item.hit.PageStart = hit.PageStart
-		}
-		if item.hit.PageEnd == 0 {
-			item.hit.PageEnd = hit.PageEnd
-		}
-	}
-
-	const rrfK = 60.0
-	out := make([]model.KnowledgeSearchHitDTO, 0, len(candidates))
-	for _, item := range candidates {
-		final := 0.0
-		if item.semanticRank > 0 {
-			final += 1.0 / (rrfK + float64(item.semanticRank))
-		}
-		if item.keywordRank > 0 {
-			final += 1.0 / (rrfK + float64(item.keywordRank))
-		}
-		item.hit.FinalScore = final
-		item.hit.Score = final
-		switch {
-		case item.semanticRank > 0 && item.keywordRank > 0:
-			item.hit.RetrievalType = "hybrid"
-		case item.semanticRank > 0:
-			item.hit.RetrievalType = "semantic"
-		case item.keywordRank > 0:
-			item.hit.RetrievalType = "keyword"
-		default:
-			item.hit.RetrievalType = "unknown"
-		}
-		out = append(out, item.hit)
-	}
-
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].FinalScore != out[j].FinalScore {
-			return out[i].FinalScore > out[j].FinalScore
-		}
-		if out[i].SemanticScore != out[j].SemanticScore {
-			return out[i].SemanticScore > out[j].SemanticScore
-		}
-		return out[i].KeywordScore > out[j].KeywordScore
-	})
-	if len(out) > topK {
-		out = out[:topK]
-	}
-	return out
-}
-
-func (repository *PostgresKnowledgeRepository) searchSemantic(ctx context.Context, modelName string, queryVector []float64, minScore float64, limit int, filter KnowledgeSearchFilter) []model.KnowledgeSearchHitDTO {
 	builder := strings.Builder{}
 	builder.WriteString(`
 SELECT
   c.file_id, c.version_no, c.chunk_index, c.chunk_text, c.chunk_summary,
   c.source_type, c.page_start, c.page_end, c.source_ref, c.bbox_json,
-  (1 - (e.embedding <=> $1::vector)) AS semantic_score
+  (1 - (e.embedding <=> $1::vector)) AS score
 FROM knowledge_embedding e
 JOIN knowledge_chunk c ON c.id = e.chunk_id
 WHERE e.model_name = $2
 `)
-	args := []any{toVectorLiteral(queryVector), modelName}
+	args := []any{toVectorLiteral(queryVector), strings.TrimSpace(modelName)}
 	argIndex := 3
-	builder, args, argIndex = appendChunkFilters(builder, args, argIndex, filter)
-	builder.WriteString(fmt.Sprintf(" AND (1 - (e.embedding <=> $1::vector)) >= $%d", argIndex))
-	args = append(args, minScore)
-	argIndex++
-	builder.WriteString(fmt.Sprintf(" ORDER BY e.embedding <=> $1::vector ASC LIMIT $%d", argIndex))
-	args = append(args, limit)
-
-	rows, err := repository.db.QueryContext(ctx, builder.String(), args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	out := make([]model.KnowledgeSearchHitDTO, 0, limit)
-	for rows.Next() {
-		var item model.KnowledgeSearchHitDTO
-		if err := rows.Scan(
-			&item.FileID,
-			&item.VersionNo,
-			&item.ChunkIndex,
-			&item.ChunkText,
-			&item.ChunkSummary,
-			&item.SourceType,
-			&item.PageStart,
-			&item.PageEnd,
-			&item.SourceRef,
-			&item.BBox,
-			&item.SemanticScore,
-		); err != nil {
-			continue
-		}
-		out = append(out, item)
-	}
-	return out
-}
-
-func (repository *PostgresKnowledgeRepository) searchKeyword(ctx context.Context, queryText string, limit int, filter KnowledgeSearchFilter) []model.KnowledgeSearchHitDTO {
-	builder := strings.Builder{}
-	builder.WriteString(`
-SELECT
-  c.file_id, c.version_no, c.chunk_index, c.chunk_text, c.chunk_summary,
-  c.source_type, c.page_start, c.page_end, c.source_ref, c.bbox_json,
-  (
-    ts_rank_cd(to_tsvector('simple', coalesce(c.chunk_text, '')), plainto_tsquery('simple', $1)) * 0.7
-    + similarity(c.chunk_text, $1) * 0.3
-  ) AS keyword_score
-FROM knowledge_chunk c
-WHERE (
-  to_tsvector('simple', coalesce(c.chunk_text, '')) @@ plainto_tsquery('simple', $1)
-  OR similarity(c.chunk_text, $1) >= 0.12
-)
-`)
-	args := []any{queryText}
-	argIndex := 2
-	builder, args, argIndex = appendChunkFilters(builder, args, argIndex, filter)
-	builder.WriteString(fmt.Sprintf(" ORDER BY keyword_score DESC LIMIT $%d", argIndex))
-	args = append(args, limit)
-
-	rows, err := repository.db.QueryContext(ctx, builder.String(), args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	out := make([]model.KnowledgeSearchHitDTO, 0, limit)
-	for rows.Next() {
-		var item model.KnowledgeSearchHitDTO
-		if err := rows.Scan(
-			&item.FileID,
-			&item.VersionNo,
-			&item.ChunkIndex,
-			&item.ChunkText,
-			&item.ChunkSummary,
-			&item.SourceType,
-			&item.PageStart,
-			&item.PageEnd,
-			&item.SourceRef,
-			&item.BBox,
-			&item.KeywordScore,
-		); err != nil {
-			continue
-		}
-		out = append(out, item)
-	}
-	return out
-}
-
-func appendChunkFilters(builder strings.Builder, args []any, argIndex int, filter KnowledgeSearchFilter) (strings.Builder, []any, int) {
 	if strings.TrimSpace(filter.BizKey) != "" {
 		builder.WriteString(fmt.Sprintf(" AND c.biz_key = $%d", argIndex))
 		args = append(args, strings.TrimSpace(filter.BizKey))
@@ -491,11 +304,41 @@ func appendChunkFilters(builder strings.Builder, args []any, argIndex int, filte
 			builder.WriteString(" AND c.file_id IN (" + strings.Join(holders, ",") + ")")
 		}
 	}
-	return builder, args, argIndex
-}
+	builder.WriteString(fmt.Sprintf(" AND (1 - (e.embedding <=> $1::vector)) >= $%d", argIndex))
+	args = append(args, minScore)
+	argIndex++
+	builder.WriteString(fmt.Sprintf(" ORDER BY e.embedding <=> $1::vector ASC LIMIT $%d", argIndex))
+	args = append(args, topK)
 
-func buildChunkKey(fileID int64, versionNo int, chunkIndex int) string {
-	return fmt.Sprintf("%d:%d:%d", fileID, versionNo, chunkIndex)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	rows, err := repository.db.QueryContext(ctx, builder.String(), args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	out := make([]model.KnowledgeSearchHitDTO, 0, topK)
+	for rows.Next() {
+		var item model.KnowledgeSearchHitDTO
+		if err := rows.Scan(
+			&item.FileID,
+			&item.VersionNo,
+			&item.ChunkIndex,
+			&item.ChunkText,
+			&item.ChunkSummary,
+			&item.SourceType,
+			&item.PageStart,
+			&item.PageEnd,
+			&item.SourceRef,
+			&item.BBox,
+			&item.Score,
+		); err != nil {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func normalizeBBoxJSON(raw []byte) string {
