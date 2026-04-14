@@ -141,7 +141,7 @@ func (service *knowledgeService) Search(ctx context.Context, userID int64, reque
 	if embeddingError != nil {
 		return model.KnowledgeSearchResultDTO{}, model.NewAPIError(502, response.CodeInternal, "向量化失败："+embeddingError.Error())
 	}
-	hits := service.repository.Search(defaultEmbeddingModel, vector, repository.KnowledgeSearchFilter{
+	hits := service.repository.Search(defaultEmbeddingModel, query, vector, repository.KnowledgeSearchFilter{
 		FileIDs:        request.FileIDs,
 		BizKey:         strings.TrimSpace(request.BizKey),
 		BizKeyPrefixes: buildScopeBizKeyPrefixes(request.SubjectID, request.ProjectID),

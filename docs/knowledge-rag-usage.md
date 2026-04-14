@@ -13,7 +13,7 @@
 
 ## 2. API 说明
 
-### 2.1 向量检索
+### 2.1 混合检索（向量 + 关键词）
 
 `POST /api/knowledge/search`
 
@@ -47,11 +47,23 @@
       "pageEnd": 6,
       "sourceRef": "f101#p5-6#k7",
       "bbox": null,
-      "score": 0.83
+      "score": 0.0322,
+      "retrievalType": "hybrid",
+      "semanticScore": 0.83,
+      "keywordScore": 0.61,
+      "finalScore": 0.0322
     }
   ]
 }
 ```
+
+字段说明（`hits[]`）：
+
+- `retrievalType`：召回来源，`semantic` / `keyword` / `hybrid`。
+- `semanticScore`：语义检索得分（向量相似度，范围近似 0~1）。
+- `keywordScore`：关键词检索得分（`ts_rank_cd` 与 `similarity` 组合）。
+- `finalScore`：融合后得分（RRF）。
+- `score`：与 `finalScore` 等价，兼容旧字段。
 
 ### 2.2 触发重建索引
 
@@ -106,18 +118,47 @@
 
 ---
 
-## 5. 运行与验证建议
+## 5. 混合检索打分说明
+
+当前检索流程：
+
+1. **语义召回**：`pgvector cosine` 召回候选。
+2. **关键词召回**：`tsvector + pg_trgm` 召回候选。
+3. **融合重排**：使用 **RRF（Reciprocal Rank Fusion）** 计算最终分数。
+
+RRF 公式（每条候选）：
+
+```text
+finalScore = 1 / (k + semanticRank) + 1 / (k + keywordRank)
+```
+
+- 当前 `k = 60`。
+- 仅语义命中的条目只有第一项。
+- 仅关键词命中的条目只有第二项。
+- 两路都命中时，`retrievalType = hybrid`，`finalScore` 通常更高。
+
+关键词分数细节：
+
+```text
+keywordScore = ts_rank_cd(...) * 0.7 + similarity(...) * 0.3
+```
+
+---
+
+## 6. 运行与验证建议
+
+---
 
 1. 上传文件后，检查是否自动入队索引任务。
 2. 调 `index-status` 确认任务 `succeeded`。
-3. 调 `knowledge/search` 看是否命中。
+3. 调 `knowledge/search`，核对 `retrievalType/semanticScore/keywordScore/finalScore`。
 4. 调 Chat 接口，验证回复是否体现检索证据语境。
 
 ---
 
-## 6. 注意事项
+## 7. 注意事项
 
 - 当前实现依赖 PostgreSQL + `pgvector` 扩展。
+- 混合检索还依赖 `pg_trgm` 与 `GIN(to_tsvector(...))` 索引。
 - 检索范围过滤依赖 `biz_key` 前缀约定，请在上传入口保证规范。
 - 在受限网络沙箱中无法完成全量 `go test ./...` 依赖拉取验证；需在可联网环境复验。
-

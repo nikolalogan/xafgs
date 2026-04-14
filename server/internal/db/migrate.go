@@ -12,6 +12,7 @@ import (
 
 const schemaSQL = `
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE IF NOT EXISTS app_user (
   id BIGSERIAL PRIMARY KEY,
@@ -238,6 +239,8 @@ CREATE TABLE IF NOT EXISTS knowledge_embedding (
 CREATE INDEX IF NOT EXISTS idx_knowledge_job_status_updated ON knowledge_index_job(status, updated_at ASC, id ASC);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_file_version ON knowledge_chunk(file_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_biz_key ON knowledge_chunk(biz_key);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_text_tsv ON knowledge_chunk USING GIN (to_tsvector('simple', coalesce(chunk_text, '')));
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_text_trgm ON knowledge_chunk USING GIN (chunk_text gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_model_name ON knowledge_embedding(model_name);
 CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_vector_cosine
 ON knowledge_embedding USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);

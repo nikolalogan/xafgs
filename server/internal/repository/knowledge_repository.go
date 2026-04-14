@@ -19,5 +19,5 @@ type KnowledgeRepository interface {
 	MarkJobFailed(jobID int64, errorMessage string) bool
 	FindLatestJob(fileID int64, versionNo int) (model.KnowledgeIndexJob, bool)
 	ReplaceChunks(fileID int64, versionNo int, modelName string, chunks []model.KnowledgeChunk) bool
-	Search(modelName string, queryVector []float64, filter KnowledgeSearchFilter) []model.KnowledgeSearchHitDTO
+	Search(modelName string, queryText string, queryVector []float64, filter KnowledgeSearchFilter) []model.KnowledgeSearchHitDTO
 }
