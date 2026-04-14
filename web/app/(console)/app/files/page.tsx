@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Descriptions, Form, Input, Modal, Space, Table, Tabs, Tag, message } from 'antd'
+import { Button, Descriptions, Form, Input, Modal, Space, Table, Tabs, Tag, Upload, message } from 'antd'
+import type { UploadFile, UploadProps } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
 
 type FileVersionDTO = {
@@ -37,6 +38,11 @@ type UploadSessionDTO = {
   expiresAt: string
   createdAt: string
   updatedAt: string
+}
+
+type FilePickerValue = {
+  file: File | null
+  fileList: UploadFile[]
 }
 
 type ApiResponse<T> = {
@@ -193,6 +199,26 @@ const buildTableRowKey = (row: FileParseTablePreviewDTO) => `${row.title}-${row.
 
 const buildFigureRowKey = (row: FileParseFigurePreviewDTO) => `${row.figureType}-${row.sourceRef}-${row.title}-${row.pageNo}`
 
+const createUploadPickerProps = (
+  onChange: (value: FilePickerValue) => void,
+): UploadProps => ({
+  multiple: false,
+  maxCount: 1,
+  beforeUpload: () => false,
+  showUploadList: true,
+  onChange: ({ fileList }) => {
+    const latest = fileList.at(-1)
+    onChange({
+      file: latest?.originFileObj ?? null,
+      fileList: latest ? [latest] : [],
+    })
+  },
+  onRemove: () => {
+    onChange({ file: null, fileList: [] })
+    return true
+  },
+})
+
 export default function FilesPage() {
   const router = useRouter()
   const [msgApi, contextHolder] = message.useMessage()
@@ -203,7 +229,9 @@ export default function FilesPage() {
 
   const [uploading, setUploading] = useState(false)
   const [newFileObject, setNewFileObject] = useState<File | null>(null)
+  const [newFileList, setNewFileList] = useState<UploadFile[]>([])
   const [newVersionFileMap, setNewVersionFileMap] = useState<Record<number, File | null>>({})
+  const [newVersionFileListMap, setNewVersionFileListMap] = useState<Record<number, UploadFile[]>>({})
   const [form] = Form.useForm()
 
   const [versionModalOpen, setVersionModalOpen] = useState(false)
@@ -287,6 +315,7 @@ export default function FilesPage() {
       })
       msgApi.success(`上传成功，fileId=${session.fileId}`)
       setNewFileObject(null)
+      setNewFileList([])
       form.resetFields()
       fetchFiles()
     }
@@ -314,6 +343,7 @@ export default function FilesPage() {
       })
       msgApi.success(`文件 ${fileID} 新版本上传成功`)
       setNewVersionFileMap(prev => ({ ...prev, [fileID]: null }))
+      setNewVersionFileListMap(prev => ({ ...prev, [fileID]: [] }))
       fetchFiles()
     }
     catch (error) {
@@ -412,13 +442,15 @@ export default function FilesPage() {
             <Input placeholder="例如: template_asset" style={{ width: 260 }} />
           </Form.Item>
           <Form.Item label="文件">
-            <input
-              type="file"
-              onChange={(event) => {
-                const file = event.target.files?.[0] || null
+            <Upload
+              {...createUploadPickerProps(({ file, fileList }) => {
                 setNewFileObject(file)
-              }}
-            />
+                setNewFileList(fileList)
+              })}
+              fileList={newFileList}
+            >
+              <Button>选择文件</Button>
+            </Upload>
           </Form.Item>
           <Form.Item>
             <Button type="primary" loading={uploading} onClick={createSessionAndUpload}>创建会话并上传</Button>
@@ -459,13 +491,15 @@ export default function FilesPage() {
               width: 360,
               render: (_, record) => (
                 <Space wrap>
-                  <input
-                    type="file"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0] || null
+                  <Upload
+                    {...createUploadPickerProps(({ file, fileList }) => {
                       setNewVersionFileMap(prev => ({ ...prev, [record.id]: file }))
-                    }}
-                  />
+                      setNewVersionFileListMap(prev => ({ ...prev, [record.id]: fileList }))
+                    })}
+                    fileList={newVersionFileListMap[record.id] || []}
+                  >
+                    <Button size="small">选择版本文件</Button>
+                  </Upload>
                   <Button size="small" loading={uploading} onClick={() => uploadNewVersion(record.id)}>上传新版本</Button>
                   <Button size="small" onClick={() => openVersions(record.id)}>查看版本</Button>
                   <Button size="small" onClick={() => resolveVersion(record.id, 0)}>解析最新引用</Button>

@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -31,6 +32,7 @@ import (
 const maxDocumentParseBytes int64 = 20 * 1024 * 1024
 
 const (
+	pdfExtractorPyMuPDF = "pymupdf"
 	pdfExtractorMuPDF  = "mupdf"
 	pdfExtractorNative = "native"
 	pdfMuPDFTimeout    = 20 * time.Second
@@ -476,6 +478,7 @@ type pdfPageText struct {
 	Width  float64
 	Height float64
 	Blocks []pdfLayoutBlock
+	Tables []pdfDetectedTable
 }
 
 type pdfExtractionResult struct {
@@ -488,6 +491,7 @@ type pdfExtractionResult struct {
 
 type pdfDiagnostics struct {
 	Extractor        string                 `json:"extractor"`
+	TableDetector    string                 `json:"tableDetector,omitempty"`
 	PageCount        int                    `json:"pageCount"`
 	DecodeMode       string                 `json:"decodeMode"`
 	DecodeFailed     bool                   `json:"decodeFailed"`
@@ -524,6 +528,22 @@ type pdfLayoutBlock struct {
 	Text  string
 	BBox  pdfLayoutBBox
 	Lines []pdfLayoutLine
+}
+
+type pdfDetectedTable struct {
+	Index       int
+	BBox        pdfLayoutBBox
+	Rows        [][]string
+	Cells       []pdfDetectedCell
+	BlockIndex  int
+	Detector    string
+}
+
+type pdfDetectedCell struct {
+	RowIndex int
+	ColIndex int
+	Text     string
+	BBox     pdfLayoutBBox
 }
 
 type pdfResourceHints struct {
@@ -723,8 +743,50 @@ func parsePDFDocument(caseFile model.ReportCaseFile, version model.FileVersionDT
 			OCRPending:  false,
 		})
 
+		consumedBlockIndexes := make(map[int]bool)
+		for _, detectedTable := range page.Tables {
+			if len(detectedTable.Rows) < 2 {
+				continue
+			}
+			tableBlockIndex := detectedTable.BlockIndex
+			if tableBlockIndex > 0 {
+				consumedBlockIndexes[tableBlockIndex] = true
+			}
+			tableBBox := mustJSON(map[string]any{
+				"page":  page.PageNo,
+				"block": tableBlockIndex,
+				"bbox":  detectedTable.BBox,
+			})
+			tableTitle := findTableTitleFromPageBlocks(page.Blocks, tableBlockIndex, detectedTable.Index, version, page.PageNo)
+			slices = append(slices, model.DocumentSlice{
+				CaseFileID:  caseFile.ID,
+				FileID:      caseFile.FileID,
+				VersionNo:   version.VersionNo,
+				SliceType:   model.DocumentStructureTableCandidate,
+				SourceType:  profile.SourceType,
+				Title:       tableTitle,
+				PageStart:   page.PageNo,
+				PageEnd:     page.PageNo,
+				BBoxJSON:    tableBBox,
+				RawText:     rowsToText(detectedTable.Rows),
+				CleanText:   rowsToText(detectedTable.Rows),
+				TableJSON:   mustJSON(detectedTable.Rows),
+				Confidence:  0.9,
+				ParseStatus: model.DocumentParseStatusParsed,
+				OCRPending:  false,
+			})
+			table, fragment, tableCells := buildDetectedPDFTable(caseFile, version, profile, virtualTableID, tableTitle, detectedTable, page.PageNo, string(tableBBox))
+			tables = append(tables, table)
+			fragments = append(fragments, fragment)
+			cells = append(cells, tableCells...)
+			virtualTableID--
+		}
+
 		pageBlocks := buildPDFPageBlocks(page)
 		for _, block := range pageBlocks {
+			if consumedBlockIndexes[block.Index] {
+				continue
+			}
 			blockBBox := mustJSON(map[string]any{
 				"page":  page.PageNo,
 				"block": block.Index,
@@ -1465,6 +1527,85 @@ func buildStructuredTable(caseFile model.ReportCaseFile, version model.FileVersi
 	return table, fragment, cells
 }
 
+func buildDetectedPDFTable(caseFile model.ReportCaseFile, version model.FileVersionDTO, profile DocumentProfile, virtualTableID int64, title string, detectedTable pdfDetectedTable, pageNo int, bbox string) (model.DocumentTable, model.DocumentTableFragment, []model.DocumentTableCell) {
+	rows := normalizeRows(detectedTable.Rows)
+	virtualFragmentID := virtualTableID * 1000
+	table := model.DocumentTable{
+		ID:             virtualTableID,
+		CaseFileID:     caseFile.ID,
+		FileID:         caseFile.FileID,
+		VersionNo:      version.VersionNo,
+		Title:          title,
+		PageStart:      max(1, pageNo),
+		PageEnd:        max(1, pageNo),
+		HeaderRowCount: inferHeaderRowCount(rows),
+		ColumnCount:    maxRowWidth(rows),
+		SourceType:     profile.SourceType,
+		ParseStatus:    model.DocumentParseStatusParsed,
+		IsCrossPage:    false,
+		BBoxJSON:       json.RawMessage(bbox),
+	}
+	fragment := model.DocumentTableFragment{
+		ID:            virtualFragmentID,
+		TableID:       virtualTableID,
+		CaseFileID:    caseFile.ID,
+		PageNo:        max(1, pageNo),
+		RowStart:      0,
+		RowEnd:        max(0, len(rows)-1),
+		FragmentOrder: 1,
+		BBoxJSON:      json.RawMessage(bbox),
+	}
+	cells := make([]model.DocumentTableCell, 0)
+	if len(detectedTable.Cells) > 0 {
+		for _, detectedCell := range detectedTable.Cells {
+			text := strings.TrimSpace(detectedCell.Text)
+			if text == "" {
+				continue
+			}
+			cells = append(cells, model.DocumentTableCell{
+				TableID:         virtualTableID,
+				FragmentID:      virtualFragmentID,
+				CaseFileID:      caseFile.ID,
+				RowIndex:        detectedCell.RowIndex,
+				ColIndex:        detectedCell.ColIndex,
+				RowSpan:         1,
+				ColSpan:         1,
+				RawText:         text,
+				NormalizedValue: text,
+				BBoxJSON: mustJSON(map[string]any{
+					"page": pageNo,
+					"block": detectedTable.BlockIndex,
+					"bbox": detectedCell.BBox,
+					"ref":  fmt.Sprintf("第%d页/块%d/单元格R%dC%d", pageNo, detectedTable.BlockIndex, detectedCell.RowIndex+1, detectedCell.ColIndex+1),
+				}),
+				Confidence: 0.99,
+			})
+		}
+		return table, fragment, cells
+	}
+	return buildStructuredTable(caseFile, version, profile, virtualTableID, title, rows, pageNo, bbox, fmt.Sprintf("PDF#p%d#b%d", pageNo, detectedTable.BlockIndex))
+}
+
+func findTableTitleFromPageBlocks(blocks []pdfLayoutBlock, blockIndex int, tableIndex int, version model.FileVersionDTO, pageNo int) string {
+	for _, block := range blocks {
+		if block.Index != blockIndex {
+			continue
+		}
+		text := normalizeText(block.Text)
+		if text == "" {
+			break
+		}
+		lines := strings.Split(text, "\n")
+		for _, line := range lines {
+			line = normalizeText(line)
+			if regexp.MustCompile(`^表\d+[：:].+`).MatchString(line) {
+				return line
+			}
+		}
+	}
+	return fmt.Sprintf("%s - 第%d页候选表格%d", version.OriginName, pageNo, tableIndex)
+}
+
 func detectDocumentType(version model.FileVersionDTO) string {
 	mimeType := strings.ToLower(strings.TrimSpace(version.MimeType))
 	name := strings.ToLower(strings.TrimSpace(version.OriginName))
@@ -1540,6 +1681,51 @@ type pdfFontMap struct {
 	CodeLengths []int
 	Encoding    string
 	BaseFont    string
+}
+
+type pyMuPDFPayload struct {
+	PageCount int                 `json:"page_count"`
+	HasText   bool                `json:"has_text"`
+	Pages     []pyMuPDFPage       `json:"pages"`
+	Errors    []string            `json:"errors"`
+}
+
+type pyMuPDFPage struct {
+	PageNo int               `json:"page_no"`
+	Width  float64           `json:"width"`
+	Height float64           `json:"height"`
+	Text   string            `json:"text"`
+	Blocks []pyMuPDFBlock    `json:"blocks"`
+	Tables []pyMuPDFTable    `json:"tables"`
+}
+
+type pyMuPDFBlock struct {
+	BBox  []float64       `json:"bbox"`
+	Lines []pyMuPDFLine   `json:"lines"`
+}
+
+type pyMuPDFLine struct {
+	BBox  []float64       `json:"bbox"`
+	Text  string          `json:"text"`
+	Words []pyMuPDFWord   `json:"words"`
+}
+
+type pyMuPDFWord struct {
+	Text string    `json:"text"`
+	BBox []float64 `json:"bbox"`
+}
+
+type pyMuPDFTable struct {
+	BBox  []float64          `json:"bbox"`
+	Rows  [][]string         `json:"rows"`
+	Cells []pyMuPDFTableCell `json:"cells"`
+}
+
+type pyMuPDFTableCell struct {
+	RowIndex int       `json:"row_index"`
+	ColIndex int       `json:"col_index"`
+	Text     string    `json:"text"`
+	BBox     []float64 `json:"bbox"`
 }
 
 func extractPDFTextResultWithMuPDF(raw []byte) (pdfExtractionResult, error) {
@@ -1624,6 +1810,245 @@ func extractPDFTextResultWithMuPDF(raw []byte) (pdfExtractionResult, error) {
 		result.Diagnostics.DecodeMode = "pdf_mupdf_empty"
 	}
 	return result, nil
+}
+
+func extractPDFTextResultWithPyMuPDF(raw []byte) (pdfExtractionResult, error) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		return pdfExtractionResult{}, fmt.Errorf("python3 not available: %w", err)
+	}
+	scriptPath, err := resolvePyMuPDFScriptPath()
+	if err != nil {
+		return pdfExtractionResult{}, err
+	}
+	pdfPath, cleanup, err := writeTempPDF(raw)
+	if err != nil {
+		return pdfExtractionResult{}, err
+	}
+	defer cleanup()
+
+	output, err := runPyMuPDFCommand(scriptPath, pdfPath)
+	if err != nil {
+		return pdfExtractionResult{}, err
+	}
+	var payload pyMuPDFPayload
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		return pdfExtractionResult{}, fmt.Errorf("pymupdf output parse failed: %w", err)
+	}
+	pages := normalizePyMuPDFPages(payload.Pages)
+	text := strings.TrimSpace(joinPDFPageTexts(pages))
+	pageDiagnostics := make([]pdfPageDiagnostic, 0, len(pages))
+	totalTables := 0
+	for _, page := range pages {
+		totalTables += len(page.Tables)
+		pageDiagnostics = append(pageDiagnostics, pdfPageDiagnostic{
+			PageNo:           page.PageNo,
+			ContentsCount:    len(page.Blocks),
+			HasTextOperators: strings.TrimSpace(page.Text) != "",
+			UsedToUnicode:    false,
+			DecodeFailed:     false,
+			DoCount:          len(page.Tables),
+			CharCount:        len([]rune(strings.TrimSpace(page.Text))),
+		})
+	}
+	result := pdfExtractionResult{
+		Pages:            pages,
+		DecodeMode:       "pdf_pymupdf_text",
+		DecodeFailed:     false,
+		HasTextOperators: payload.HasText || text != "",
+		Diagnostics: pdfDiagnostics{
+			Extractor:        pdfExtractorPyMuPDF,
+			TableDetector:    "find_tables",
+			PageCount:        max(len(pages), payload.PageCount),
+			DecodeMode:       "pdf_pymupdf_text",
+			DecodeFailed:     false,
+			HasTextOperators: payload.HasText || text != "",
+			Errors:           payload.Errors,
+			Pages:            pageDiagnostics,
+		},
+	}
+	if strings.TrimSpace(text) == "" {
+		result.DecodeMode = "pdf_pymupdf_empty"
+		result.Diagnostics.DecodeMode = "pdf_pymupdf_empty"
+	}
+	if totalTables == 0 {
+		result.Diagnostics.TableDetector = "aligned_text_fallback"
+	}
+	return result, nil
+}
+
+func resolvePyMuPDFScriptPath() (string, error) {
+	candidates := []string{
+		filepath.Join("scripts", "pdf_extract_pymupdf.py"),
+		filepath.Join("server", "scripts", "pdf_extract_pymupdf.py"),
+		filepath.Join(filepath.Dir(os.Args[0]), "scripts", "pdf_extract_pymupdf.py"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("pymupdf script not found")
+}
+
+func runPyMuPDFCommand(scriptPath string, pdfPath string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), pdfMuPDFTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "python3", scriptPath, pdfPath)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("pymupdf timeout after %s", pdfMuPDFTimeout)
+		}
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = err.Error()
+		}
+		return "", fmt.Errorf("pymupdf %s", message)
+	}
+	return stdout.String(), nil
+}
+
+func normalizePyMuPDFPages(rawPages []pyMuPDFPage) []pdfPageText {
+	pages := make([]pdfPageText, 0, len(rawPages))
+	for _, rawPage := range rawPages {
+		page := pdfPageText{
+			PageNo: rawPage.PageNo,
+			Text:   normalizeText(rawPage.Text),
+			Width:  rawPage.Width,
+			Height: rawPage.Height,
+			Blocks: make([]pdfLayoutBlock, 0, len(rawPage.Blocks)),
+			Tables: make([]pdfDetectedTable, 0, len(rawPage.Tables)),
+		}
+		for blockIndex, rawBlock := range rawPage.Blocks {
+			block := pdfLayoutBlock{
+				Index: blockIndex + 1,
+				BBox:  bboxFromArray(rawBlock.BBox),
+				Lines: make([]pdfLayoutLine, 0, len(rawBlock.Lines)),
+			}
+			for lineIndex, rawLine := range rawBlock.Lines {
+				line := pdfLayoutLine{
+					Index: lineIndex + 1,
+					Text:  normalizeText(rawLine.Text),
+					BBox:  bboxFromArray(rawLine.BBox),
+					Words: make([]pdfLayoutWord, 0, len(rawLine.Words)),
+				}
+				for _, rawWord := range rawLine.Words {
+					text := normalizeText(rawWord.Text)
+					if text == "" {
+						continue
+					}
+					line.Words = append(line.Words, pdfLayoutWord{
+						Text: text,
+						BBox: bboxFromArray(rawWord.BBox),
+					})
+				}
+				if line.Text == "" {
+					line.Text = joinPDFLayoutWords(line.Words)
+				}
+				if line.Text != "" {
+					block.Lines = append(block.Lines, line)
+				}
+			}
+			if len(block.Lines) > 0 {
+				parts := make([]string, 0, len(block.Lines))
+				for _, line := range block.Lines {
+					parts = append(parts, line.Text)
+				}
+				block.Text = normalizeText(strings.Join(parts, "\n"))
+				page.Blocks = append(page.Blocks, block)
+			}
+		}
+		for tableIndex, rawTable := range rawPage.Tables {
+			rows := normalizeRows(rawTable.Rows)
+			table := pdfDetectedTable{
+				Index:    tableIndex + 1,
+				BBox:     bboxFromArray(rawTable.BBox),
+				Rows:     rows,
+				Cells:    make([]pdfDetectedCell, 0, len(rawTable.Cells)),
+				Detector: "find_tables",
+			}
+			for _, rawCell := range rawTable.Cells {
+				table.Cells = append(table.Cells, pdfDetectedCell{
+					RowIndex: rawCell.RowIndex,
+					ColIndex: rawCell.ColIndex,
+					Text:     strings.TrimSpace(rawCell.Text),
+					BBox:     bboxFromArray(rawCell.BBox),
+				})
+			}
+			table.BlockIndex = findClosestBlockIndex(page.Blocks, table.BBox)
+			page.Tables = append(page.Tables, table)
+		}
+		pages = append(pages, page)
+	}
+	sort.Slice(pages, func(i, j int) bool { return pages[i].PageNo < pages[j].PageNo })
+	return pages
+}
+
+func bboxFromArray(values []float64) pdfLayoutBBox {
+	if len(values) != 4 {
+		return pdfLayoutBBox{}
+	}
+	return pdfLayoutBBox{XMin: values[0], YMin: values[1], XMax: values[2], YMax: values[3]}
+}
+
+func findClosestBlockIndex(blocks []pdfLayoutBlock, target pdfLayoutBBox) int {
+	bestIndex := 0
+	bestScore := 0.0
+	for _, block := range blocks {
+		score := bboxIntersectionArea(block.BBox, target)
+		if score > bestScore {
+			bestScore = score
+			bestIndex = block.Index
+		}
+	}
+	if bestIndex > 0 {
+		return bestIndex
+	}
+	for _, block := range blocks {
+		if bboxContains(block.BBox, target) || bboxContains(target, block.BBox) {
+			return block.Index
+		}
+	}
+	if len(blocks) > 0 {
+		return blocks[0].Index
+	}
+	return 0
+}
+
+func bboxIntersectionArea(left pdfLayoutBBox, right pdfLayoutBBox) float64 {
+	x1 := maxFloat(left.XMin, right.XMin)
+	y1 := maxFloat(left.YMin, right.YMin)
+	x2 := minFloat(left.XMax, right.XMax)
+	y2 := minFloat(left.YMax, right.YMax)
+	if x2 <= x1 || y2 <= y1 {
+		return 0
+	}
+	return (x2 - x1) * (y2 - y1)
+}
+
+func bboxContains(container pdfLayoutBBox, target pdfLayoutBBox) bool {
+	if container == (pdfLayoutBBox{}) || target == (pdfLayoutBBox{}) {
+		return false
+	}
+	return target.XMin >= container.XMin && target.YMin >= container.YMin &&
+		target.XMax <= container.XMax && target.YMax <= container.YMax
+}
+
+func maxFloat(left float64, right float64) float64 {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func minFloat(left float64, right float64) float64 {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func writeTempPDF(raw []byte) (string, func(), error) {
@@ -2191,6 +2616,11 @@ func isASCIIWordRune(value rune) bool {
 }
 
 func extractPDFTextResult(raw []byte) pdfExtractionResult {
+	if result, err := extractPDFTextResultWithPyMuPDF(raw); err == nil {
+		return result
+	} else if pdfDebugEnabled() {
+		log.Printf("pdf-pymupdf-fallback error=%q", err.Error())
+	}
 	if result, err := extractPDFTextResultWithMuPDF(raw); err == nil {
 		return result
 	} else if pdfDebugEnabled() {

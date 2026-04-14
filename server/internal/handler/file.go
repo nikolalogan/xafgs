@@ -422,6 +422,9 @@ func formatPDFCellRef(ref string) string {
 	if ref == "" {
 		return ""
 	}
+	if strings.HasPrefix(ref, "第") {
+		return ref
+	}
 	parts := strings.Split(ref, "!")
 	if len(parts) != 2 {
 		return ""

@@ -64,20 +64,22 @@ Authorization: Bearer <token>
 
 ### 乱码处理说明
 
-当前系统默认优先使用 `MuPDF/mutool`：
+当前系统默认优先使用 `PyMuPDF`：
 
-1. `mutool draw -F txt` 提取页正文
-2. `mutool draw -F stext` 提取页/块/行级结构化定位
-3. 当 `MuPDF` 不可用或抽取失败时，才回退到内置 PDF 解析器
+1. `PyMuPDF` 提取页正文、块/行定位
+2. `PyMuPDF page.find_tables()` 提取规则表格
+3. 当 `PyMuPDF` 不可用或抽取失败时，回退到 `MuPDF/mutool`
+4. 当 `MuPDF` 仍不可用或抽取失败时，再回退到内置 PDF 解析器
 
 部署要求：
 
-- 后端镜像已内置 `mupdf-tools`
-- 如本地非容器运行，需保证 `mutool` 在 `PATH` 中可执行
+- 后端镜像已内置 `python3`、`PyMuPDF`、`mupdf-tools`
+- 如本地非容器运行，需保证 `python3` 可执行，且已安装 `PyMuPDF`
+- 若触发回退链，再要求 `mutool` 在 `PATH` 中可执行
 
-### MuPDF 授权风险
+### MuPDF / PyMuPDF 授权风险
 
-MuPDF 采用 **双许可**：
+PyMuPDF 底层依赖 MuPDF，整体仍需按 **MuPDF 双许可** 理解：
 
 - 开源许可：`AGPL`
 - 商业许可：需单独采购
@@ -88,7 +90,7 @@ MuPDF 采用 **双许可**：
 - 在未完成法务评估或未采购商业授权前，不应默认视为可直接闭源商用
 - 当前集成仅表示技术上可用，不代表许可问题已自动解决
 
-如果 PDF 仍无法可靠解码：
+如果 PDF 仍无法可靠解码或表格无法稳定提取：
 
 - 不再输出乱码正文
 - 会输出解码失败页占位
@@ -109,6 +111,6 @@ MuPDF 采用 **双许可**：
 - 重新登录
 - 刷新页面后重试
 
-### 2. PDF 内容是乱码
+### 2. PDF 内容是乱码 / 表格识别不稳定
 
-先检查后端环境是否存在 `mutool`。若 `MuPDF` 可用但仍失败，再看日志中的 `pdfDiagnostics.extractor`、`decodeMode` 与 `errors` 字段。
+先检查后端环境是否存在 `python3` 与 `PyMuPDF`。若 `PyMuPDF` 可用但仍失败，再看日志中的 `pdfDiagnostics.extractor`、`tableDetector`、`decodeMode` 与 `errors` 字段。
