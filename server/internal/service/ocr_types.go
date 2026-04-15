@@ -11,12 +11,15 @@ type OCRTaskSubmitRequest struct {
 }
 
 type OCRTaskSubmitResponse struct {
-	TaskID       string `json:"taskId"`
-	Status       string `json:"status"`
-	Provider     string `json:"provider"`
-	Progress     int    `json:"progress"`
-	ErrorCode    string `json:"errorCode"`
-	ErrorMessage string `json:"errorMessage"`
+	TaskID       string         `json:"taskId"`
+	Status       string         `json:"status"`
+	Provider     string         `json:"provider"`
+	Progress     int            `json:"progress"`
+	PageCount    int            `json:"pageCount"`
+	Confidence   float64        `json:"confidence"`
+	ErrorCode    string         `json:"errorCode"`
+	ErrorMessage string         `json:"errorMessage"`
+	Result       *OCRTaskResult `json:"result"`
 }
 
 type OCRTaskStatusResponse struct {

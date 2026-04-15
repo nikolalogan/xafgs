@@ -86,9 +86,9 @@ make down
 - `make ocr-wheels-verify`：校验 `wheels` 是否可离线覆盖依赖闭包
 - `make ocr-model-cache-init`：初始化本地 OCR 模型缓存目录 `ocr-service/model_cache`
 - `make ocr-model-cache-warm`：预热 OCR 模型到本地 `model_cache`（避免首个请求触发下载）
-- `make ocr-build`：先校验 `wheels`，再离线构建 OCR 镜像（推荐）
+- `make ocr-build`：自动同步+校验 `wheels`，再离线构建 OCR 镜像（推荐）
 - `make ocr-build-offline`：仅使用本地 `wheels` 构建 OCR 镜像（缺失依赖直接失败）
-- `make ocr-build-online-fallback`：构建 OCR 镜像（允许缺失依赖回源下载）
+- `make ocr-build-online-fallback`：自动同步 `wheels` 后构建 OCR 镜像（允许缺失依赖回源下载）
 - `make prod`：生产模式启动（后台）
 - `make down`：停止开发+生产所有容器
 - `make logs`：查看开发模式日志
@@ -107,10 +107,16 @@ make ocr-model-cache-warm
 说明：
 
 - `make ocr-wheels-sync` 会将依赖下载到 `ocr-service/wheels/`，已存在文件会复用；
-- `make ocr-wheels-verify` 会按 `linux/amd64 + py311` 目标离线校验依赖闭包是否完整；
+- 若 `paddlepaddle` 在默认索引不可用，可设置 `PADDLE_WHEEL_INDEX_URL`（默认 `https://www.paddlepaddle.org.cn/packages/stable/cpu/`）补充下载源；
+- `uvicorn` 已使用基础包（非 `uvicorn[standard]`），以减少跨平台 wheel 缺失导致的同步失败；
+- `paddlepaddle` 的 wheel 补拉采用 `--no-deps`，仅确保关键 wheel 文件落地，避免主机跨平台依赖解析干扰缓存同步；
+- 已将 `protobuf==4.25.8` 显式纳入 OCR 依赖与离线关键检查，避免 `paddlepaddle` 在离线安装阶段因传递依赖缺失失败；
+- `make ocr-wheels-verify` 默认按 `manylinux_2_17_x86_64 + py311` 离线校验依赖闭包；如需扩展平台可通过 `WHEEL_PLATFORMS_VERIFY` 覆盖；
 - `make ocr-model-cache-warm` 会将 PaddleX 模型下载到本地 `ocr-service/model_cache/`；
-- `make ocr-build` 默认走离线构建，保证可复现；如需临时回源，使用 `make ocr-build-online-fallback`。
-- 为规避部分环境下的 Paddle CPU `SIGSEGV`，默认启用本地 OCR 子进程隔离：`OCR_LOCAL_PPSTRUCTURE_ISOLATE_PROCESS=1`（即便本地模型崩溃也不拖垮主服务）；并默认关闭结构增强：`OCR_PPSTRUCTURE_ENABLE_TABLES=0`、`OCR_PPSTRUCTURE_USE_REGION_DETECTION=0`（环境稳定后可逐步打开）。
+- `make ocr-build` 会先自动同步本地 wheels，再做离线校验与构建，保证可复现；如需临时回源，使用 `make ocr-build-online-fallback`。
+- `docker-compose` 中 `OCR_WHEELS_ONLY` 默认已设为 `1`（本地 wheel 优先且不回源）；仅 `make ocr-build-online-fallback` 会显式传入 `OCR_WHEELS_ONLY=0` 允许回源。
+- OCR 服务已改为官方 PaddleX Serving（`paddlex --serve --pipeline PP-StructureV3`），默认入口为 `POST /layout-parsing`。
+- CPU 稳定性参数默认启用：`FLAGS_use_mkldnn=0`、`FLAGS_enable_pir_api=0`、`FLAGS_enable_pir_in_executor=0`、`OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`。
 
 ## OCR 模型缓存（PaddleX）
 
@@ -120,7 +126,44 @@ make ocr-model-cache-warm
 - **运行期缓存**：`docker-compose` 挂载 `./ocr-service/model_cache:/root/.paddlex`。
 
 首次构建/运行会下载模型，后续重建会直接复用本地缓存目录。
-已默认设置 `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True`，跳过模型源连通性探测步骤。
+当前 `docker-compose` 默认设置 `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=False`，会执行模型源连通性探测。
+
+## OCR 官方 Serving 调用
+
+- 服务健康检查：`GET /health`
+- PP-StructureV3 推理：`POST /layout-parsing`
+- 网关转发入口：`/ocr/*`（例如 `POST /ocr/layout-parsing`）
+
+示例请求：
+
+```json
+{
+  "file": "<base64>",
+  "fileType": 0,
+  "useTableRecognition": false,
+  "visualize": false
+}
+```
+
+### 本机预下载模型（不在容器内下载）
+
+当你希望避免容器运行期首个 OCR 请求触发下载，可先在主机执行：
+
+```bash
+./ocr-service/scripts/download_models_local.sh
+```
+
+可选参数：
+
+- `--clean`：下载前清理 `ocr-service/model_cache/official_models`
+- `--no-verify`：下载后跳过关键模型目录校验
+
+说明：
+
+- 脚本会在本机创建隔离虚拟环境：`ocr-service/.tmp/model-download-venv`
+- 模型下载目标目录：`ocr-service/model_cache`
+- 默认模型源为 `aistudio`；可通过环境变量覆盖：`PADDLE_PDX_MODEL_SOURCE=huggingface ./ocr-service/scripts/download_models_local.sh`
+- 执行完成后，容器会通过挂载目录直接复用模型缓存
 
 ## Dify 画布源码级集成（迁移版）
 

@@ -15,15 +15,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8090 \
     PADDLEX_HOME=/root/.paddlex \
+    OCR_PDX_PIPELINE=PP-StructureV3 \
     OCR_PPSTRUCTURE_DEVICE=cpu \
     OCR_PPSTRUCTURE_LANG=ch \
-    OCR_PPSTRUCTURE_MODEL_ROOT=/root/.paddlex \
     OCR_PPSTRUCTURE_ENABLE_TABLES=0 \
-    OCR_PPSTRUCTURE_USE_REGION_DETECTION=0 \
+    OCR_PPSTRUCTURE_USE_REGION_DETECTION=1 \
     OMP_NUM_THREADS=1 \
     MKL_NUM_THREADS=1 \
     OPENBLAS_NUM_THREADS=1 \
     FLAGS_use_mkldnn=0 \
+    FLAGS_enable_pir_api=0 \
+    FLAGS_enable_pir_in_executor=0 \
     CPU_NUM=1 \
     PIP_DEFAULT_TIMEOUT=${PIP_DEFAULT_TIMEOUT}
 
@@ -47,6 +49,7 @@ RUN --mount=type=cache,target=/root/.cache/pip if [ "${OCR_WHEELS_ONLY}" = "1" ]
       test -n "$(find /wheels -maxdepth 1 -type f -name 'paddleocr-3.4.0*.whl' -print -quit)" || (echo "missing wheel: paddleocr-3.4.0*.whl" && exit 1); \
       test -n "$(find /wheels -maxdepth 1 -type f -name 'paddlex-3.4*.whl' -print -quit)" || (echo "missing wheel: paddlex-3.4*.whl" && exit 1); \
       test -n "$(find /wheels -maxdepth 1 -type f -name 'opencv_contrib_python-4.10.0.84*.whl' -print -quit)" || (echo "missing wheel: opencv_contrib_python-4.10.0.84*.whl" && exit 1); \
+      test -n "$(find /wheels -maxdepth 1 -type f -name 'protobuf-4.25.8*.whl' -print -quit)" || (echo "missing wheel: protobuf-4.25.8*.whl" && exit 1); \
       pip install --no-cache-dir --no-index --find-links /wheels --progress-bar off -r /app/requirements.txt -c /app/constraints.txt; \
     else \
       if pip install --no-cache-dir --no-index --find-links /wheels --progress-bar off -r /app/requirements.txt -c /app/constraints.txt; then \
@@ -59,9 +62,11 @@ RUN --mount=type=cache,target=/root/.cache/pip if [ "${OCR_WHEELS_ONLY}" = "1" ]
 RUN mkdir -p /root/.paddlex
 
 COPY app /app/app
+COPY scripts /app/scripts
+RUN chmod +x /app/scripts/start_official_serving.sh
 
 RUN --mount=type=cache,target=/root/.paddlex if [ "$OCR_PPSTRUCTURE_PRELOAD" = "1" ]; then python -m app.preload_models; fi
 
 EXPOSE 8090
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8090"]
+CMD ["/app/scripts/start_official_serving.sh"]

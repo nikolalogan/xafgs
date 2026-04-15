@@ -234,13 +234,8 @@ ON CONFLICT (chunk_id, model_name) DO UPDATE SET
 	return true
 }
 
-<<<<<<< HEAD
-func (repository *PostgresKnowledgeRepository) Search(modelName string, queryText string, queryVector []float64, filter KnowledgeSearchFilter) []model.KnowledgeSearchHitDTO {
-	if strings.TrimSpace(modelName) == "" || strings.TrimSpace(queryText) == "" || len(queryVector) == 0 {
-=======
 func (repository *PostgresKnowledgeRepository) Search(modelName string, queryVector []float64, filter KnowledgeSearchFilter) []model.KnowledgeSearchHitDTO {
-	if strings.TrimSpace(modelName) == "" || len(queryVector) != 1536 {
->>>>>>> parent of d998be6 (优化)
+	if strings.TrimSpace(modelName) == "" || len(queryVector) == 0 {
 		return nil
 	}
 	topK := filter.TopK

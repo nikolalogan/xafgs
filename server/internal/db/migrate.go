@@ -11,24 +11,6 @@ import (
 )
 
 const schemaSQL = `
-<<<<<<< HEAD
-DO $$
-BEGIN
-  BEGIN
-    CREATE EXTENSION IF NOT EXISTS pg_trgm;
-  EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'pg_trgm extension unavailable: %', SQLERRM;
-  END;
-  BEGIN
-    CREATE EXTENSION IF NOT EXISTS vector;
-  EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'vector extension unavailable: %', SQLERRM;
-  END;
-END $$;
-=======
-CREATE EXTENSION IF NOT EXISTS vector;
->>>>>>> parent of d998be6 (优化)
-
 CREATE TABLE IF NOT EXISTS app_user (
   id BIGSERIAL PRIMARY KEY,
   username VARCHAR(128) NOT NULL UNIQUE,
@@ -250,33 +232,18 @@ CREATE TABLE IF NOT EXISTS knowledge_chunk (
 CREATE INDEX IF NOT EXISTS idx_knowledge_job_status_updated ON knowledge_index_job(status, updated_at ASC, id ASC);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_file_version ON knowledge_chunk(file_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_biz_key ON knowledge_chunk(biz_key);
-<<<<<<< HEAD
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_text_tsv ON knowledge_chunk USING GIN (to_tsvector('simple', coalesce(chunk_text, '')));
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_text_trgm ON knowledge_chunk USING GIN (chunk_text gin_trgm_ops)';
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_text_trgm ON knowledge_chunk USING GIN (chunk_text gin_trgm_ops);
 
-DO $$
-BEGIN
-	IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
-	  EXECUTE 'CREATE TABLE IF NOT EXISTS knowledge_embedding (
-	    chunk_id BIGINT NOT NULL REFERENCES knowledge_chunk(id) ON DELETE CASCADE,
-	    model_name VARCHAR(128) NOT NULL,
-	    embedding vector NOT NULL,
-	    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-	    PRIMARY KEY (chunk_id, model_name)
-	  )';
-	  EXECUTE 'CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_model_name ON knowledge_embedding(model_name)';
-	END IF;
-END $$;
-=======
+CREATE TABLE IF NOT EXISTS knowledge_embedding (
+  chunk_id BIGINT NOT NULL REFERENCES knowledge_chunk(id) ON DELETE CASCADE,
+  model_name VARCHAR(128) NOT NULL,
+  embedding vector NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chunk_id, model_name)
+);
+
 CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_model_name ON knowledge_embedding(model_name);
-CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_vector_cosine
-ON knowledge_embedding USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
->>>>>>> parent of d998be6 (优化)
 
 CREATE TABLE IF NOT EXISTS debug_feedback (
   id BIGSERIAL PRIMARY KEY,

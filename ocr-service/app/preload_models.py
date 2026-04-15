@@ -3,23 +3,22 @@ from __future__ import annotations
 import os
 import sys
 
-from app.providers.local_pp_structure import LocalPPStructureProvider
-
-
 def main() -> int:
-    provider = LocalPPStructureProvider()
-    if not provider.is_configured():
-        print("skip preload: local pp-structure is disabled")
+    try:
+        from paddlex import create_pipeline
+    except Exception as exc:
+        print(f"skip preload: paddlex runtime unavailable: {exc}")
         return 0
 
-    preload_tables = os.getenv("OCR_PPSTRUCTURE_ENABLE_TABLES", "1").strip() in {"1", "true", "True", "yes", "on"}
-    provider._get_pipeline(enable_tables=preload_tables)
+    pipeline = os.getenv("OCR_PDX_PIPELINE", "PP-StructureV3").strip() or "PP-StructureV3"
+    device = os.getenv("OCR_PPSTRUCTURE_DEVICE", "cpu").strip() or "cpu"
+    create_pipeline(pipeline, device=device)
     print(
         "preload success:",
         {
-            "enable_tables": preload_tables,
+            "pipeline": pipeline,
             "paddlex_home": os.getenv("PADDLEX_HOME", "").strip(),
-            "model_root": os.getenv("OCR_PPSTRUCTURE_MODEL_ROOT", "").strip(),
+            "device": device,
         },
     )
     return 0

@@ -1,8 +1,9 @@
 fastapi==0.115.0
-uvicorn[standard]==0.30.6
-httpx==0.27.2
-numpy==1.26.4
+uvicorn==0.30.6
+aiohttp==3.12.15
+filetype==1.2.0
 Pillow==11.2.1
-PyMuPDF==1.24.14
+PyMuPDF==1.26.0
+protobuf==4.25.8
 paddleocr[doc-parser]==3.4.0
 paddlepaddle==3.2.0; platform_system == "Linux" and platform_machine == "x86_64"

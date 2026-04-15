@@ -84,12 +84,19 @@ class OCRTaskManager:
                 return
             except Exception as exc:
                 errors.append(f"{provider.name}: {exc}")
+                classified_error_code, classified_error_message = _classify_provider_error(provider.name, exc)
+                if classified_error_code:
+                    with state.lock:
+                        state.error_code = classified_error_code
+                        state.error_message = classified_error_message
 
         with state.lock:
             state.status = "failed"
             state.progress = 100
-            state.error_code = "ocr_failed"
-            state.error_message = "; ".join(errors) or "all OCR providers failed"
+            if not state.error_code:
+                state.error_code = "ocr_failed"
+            if not state.error_message:
+                state.error_message = "; ".join(errors) or "all OCR providers failed"
 
     def _resolve_providers(self, mode: str):
         mode = (mode or "auto").strip().lower()
@@ -128,6 +135,8 @@ class OCRTaskManager:
             payload = None
 
         if process.exitcode not in {0, None} and payload is None:
+            if process.exitcode == -11:
+                raise RuntimeError("local_pp_structure_v3 subprocess crashed by SIGSEGV (paddle cpu runtime)")
             raise RuntimeError(f"local_pp_structure_v3 subprocess crashed (exitcode={process.exitcode})")
         if payload is None:
             raise RuntimeError("local_pp_structure_v3 returned empty payload")
@@ -169,3 +178,14 @@ def _env_bool(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip() in {"1", "true", "True", "yes", "on"}
+
+
+def _classify_provider_error(provider_name: str, exc: Exception) -> tuple[str, str]:
+    message = str(exc).strip()
+    lowered = message.lower()
+    if provider_name == "local_pp_structure_v3":
+        if "sigsegv" in lowered or "segmentation fault" in lowered:
+            return ("ocr_local_runtime_crash", "local pp-structure runtime crashed (SIGSEGV); check cpu runtime flags and model/engine compatibility")
+        if "timed out" in lowered:
+            return ("ocr_local_timeout", message)
+    return ("", "")

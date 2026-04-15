@@ -83,8 +83,20 @@ func (service *ocrTaskService) EnsureTask(ctx context.Context, version model.Fil
 	task.ProviderTaskID = strings.TrimSpace(resp.TaskID)
 	task.ProviderUsed = strings.TrimSpace(resp.Provider)
 	task.Status = normalizeOCRTaskStatus(resp.Status)
+	task.PageCount = resp.PageCount
+	task.Confidence = resp.Confidence
+	task.ErrorCode = strings.TrimSpace(resp.ErrorCode)
+	task.ErrorMessage = strings.TrimSpace(resp.ErrorMessage)
 	task.StartedAt = &startedAt
 	task.UpdatedAt = startedAt
+	if resp.Result != nil {
+		raw, _ := json.Marshal(resp.Result)
+		task.ResultPayloadJSON = raw
+	}
+	if task.Status == model.OCRTaskStatusSucceeded || task.Status == model.OCRTaskStatusFailed || task.Status == model.OCRTaskStatusCancelled {
+		finishedAt := startedAt
+		task.FinishedAt = &finishedAt
+	}
 	updated, _ := service.fileRepository.UpdateOCRTask(task)
 	return updated, nil
 }
