@@ -9,6 +9,16 @@ app = FastAPI(title="ocr-service", version="0.1.0")
 manager = OCRTaskManager()
 
 
+@app.on_event("startup")
+def on_startup():
+    manager.start()
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    manager.shutdown()
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

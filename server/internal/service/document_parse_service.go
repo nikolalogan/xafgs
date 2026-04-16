@@ -133,7 +133,8 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 		}
 		slices := buildTextSlices(caseFile, version, text, profile)
 		tables, fragments, cells := buildDelimitedTables(caseFile, version, text, profile, ',')
-		return ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}, nil
+		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}
+		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
 	case "csv":
 		text := decodePlainTextPayload(raw)
 		if text == "" {
@@ -145,7 +146,8 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 		}
 		slices := buildTextSlices(caseFile, version, text, profile)
 		tables, fragments, cells := buildDelimitedTables(caseFile, version, text, profile, ',')
-		return ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}, nil
+		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}
+		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
 	case "tsv":
 		text := decodePlainTextPayload(raw)
 		if text == "" {
@@ -157,16 +159,20 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 		}
 		slices := buildTextSlices(caseFile, version, text, profile)
 		tables, fragments, cells := buildDelimitedTables(caseFile, version, text, profile, '\t')
-		return ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}, nil
+		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}
+		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
 	case "docx":
 		slices, tables, fragments, cells := parseDOCXDocument(caseFile, version, raw, profile)
-		return ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}, nil
+		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}
+		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
 	case "xlsx":
 		slices, tables, fragments, cells := parseXLSXDocument(caseFile, version, raw, profile)
-		return ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}, nil
+		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}
+		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
 	case "xls":
 		slices := parseLegacyXLSDocument(caseFile, version, raw, profile)
-		return ParsedDocument{Version: version, Profile: profile, Slices: slices}, nil
+		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices}
+		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
 	case "pdf":
 		if profile.OCRRequired {
 			if service.ocrTaskService != nil {
@@ -197,7 +203,8 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 		}
 		slices, tables, fragments, cells, figures := parsePDFDocument(caseFile, version, raw, profile)
 		logPDFParseSummary(caseFile, version, profile, len(slices), len(tables))
-		return ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells, Figures: figures}, nil
+		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells, Figures: figures}
+		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
 	default:
 		if profile.OCRRequired {
 			if service.ocrTaskService != nil {
@@ -249,11 +256,12 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 				},
 			}, nil
 		}
-		return ParsedDocument{
+		parsed := ParsedDocument{
 			Version: version,
 			Profile: profile,
 			Slices:  buildTextSlices(caseFile, version, text, profile),
-		}, nil
+		}
+		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
 	}
 }
 

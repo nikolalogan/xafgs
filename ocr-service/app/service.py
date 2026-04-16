@@ -33,24 +33,70 @@ class OCRTaskManager:
         self.tasks: Dict[str, OCRTaskState] = {}
         self.local_provider = LocalPPStructureProvider()
         self.remote_provider = RemoteTencentOCRProvider()
+        self._tasks_lock = threading.RLock()
+        self._pending_queue: queue.Queue[tuple[str, OCRTaskCreateRequest] | None] = queue.Queue()
+        self._stop_event = threading.Event()
+        self._worker_thread: Optional[threading.Thread] = None
+        self.start()
+
+    def start(self) -> None:
+        with self._tasks_lock:
+            if self._worker_thread is not None and self._worker_thread.is_alive():
+                return
+            self._stop_event.clear()
+            self._worker_thread = threading.Thread(target=self._worker_loop, name="ocr-task-worker", daemon=True)
+            self._worker_thread.start()
+
+    def shutdown(self, timeout_sec: float = 5.0) -> None:
+        self._stop_event.set()
+        self._pending_queue.put(None)
+        worker = self._worker_thread
+        if worker is not None:
+            worker.join(timeout=timeout_sec)
 
     def create_task(self, request: OCRTaskCreateRequest) -> OCRTaskView:
         task_id = str(uuid.uuid4())
         state = OCRTaskState(task_id=task_id, status="pending", progress=0)
-        self.tasks[task_id] = state
-        threading.Thread(target=self._run_task, args=(state, request), daemon=True).start()
+        with self._tasks_lock:
+            self.tasks[task_id] = state
+        self._pending_queue.put((task_id, request))
         return self._to_view(state)
 
     def get_task(self, task_id: str) -> OCRTaskView:
-        state = self.tasks[task_id]
+        with self._tasks_lock:
+            state = self.tasks[task_id]
         return self._to_view(state)
+
+    def _worker_loop(self) -> None:
+        while not self._stop_event.is_set():
+            item = self._pending_queue.get()
+            if item is None:
+                self._pending_queue.task_done()
+                break
+            task_id, request = item
+            with self._tasks_lock:
+                state = self.tasks.get(task_id)
+            if state is None:
+                self._pending_queue.task_done()
+                continue
+            self._run_task(state, request)
+            self._pending_queue.task_done()
 
     def _run_task(self, state: OCRTaskState, request: OCRTaskCreateRequest) -> None:
         with state.lock:
             state.status = "running"
             state.progress = 10
 
-        content = base64.b64decode(request.contentBase64.encode("utf-8"))
+        try:
+            content = base64.b64decode(request.contentBase64.encode("utf-8"))
+        except Exception as exc:
+            with state.lock:
+                state.status = "failed"
+                state.progress = 100
+                state.error_code = "ocr_invalid_payload"
+                state.error_message = f"invalid base64 content: {exc}"
+            return
+
         providers = self._resolve_providers(request.providerMode)
         if not providers:
             with state.lock:
