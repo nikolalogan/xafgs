@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -22,7 +23,10 @@ type FileService interface {
 	ListFiles(ctx context.Context) ([]model.FileDTO, *model.APIError)
 	CreateSession(ctx context.Context, operatorID int64, request model.CreateUploadSessionRequest) (model.UploadSessionDTO, *model.APIError)
 	UploadBySession(ctx context.Context, operatorID int64, sessionID string, fileHeader *multipart.FileHeader) (model.FileUploadResultDTO, *model.APIError)
+	UploadBySessionWithoutIndex(ctx context.Context, operatorID int64, sessionID string, fileHeader *multipart.FileHeader) (model.FileUploadResultDTO, *model.APIError)
 	UploadVersion(ctx context.Context, operatorID int64, fileID int64, fileHeader *multipart.FileHeader) (model.FileUploadResultDTO, *model.APIError)
+	CreateFileFromContent(ctx context.Context, operatorID int64, bizKey string, originName string, mimeType string, content []byte) (model.FileUploadResultDTO, *model.APIError)
+	UploadVersionFromContent(ctx context.Context, operatorID int64, fileID int64, originName string, mimeType string, content []byte) (model.FileUploadResultDTO, *model.APIError)
 	CancelSession(ctx context.Context, operatorID int64, sessionID string) *model.APIError
 	GetFile(ctx context.Context, fileID int64) (model.FileDTO, *model.APIError)
 	ListVersions(ctx context.Context, fileID int64) ([]model.FileVersionDTO, *model.APIError)
@@ -39,7 +43,7 @@ type fileService struct {
 }
 
 const (
-	maxUploadSizeBytes              int64 = 10 * 1024 * 1024
+	maxUploadSizeBytes              int64 = 200 * 1024 * 1024
 	maxDebugFeedbackUploadSizeBytes int64 = 10 * 1024 * 1024
 	debugFeedbackBizKeyPrefix             = "debug-feedback_"
 )
@@ -101,6 +105,14 @@ func (service *fileService) CreateSession(_ context.Context, operatorID int64, r
 }
 
 func (service *fileService) UploadBySession(_ context.Context, operatorID int64, sessionID string, fileHeader *multipart.FileHeader) (model.FileUploadResultDTO, *model.APIError) {
+	return service.uploadBySessionInternal(operatorID, sessionID, fileHeader, true)
+}
+
+func (service *fileService) UploadBySessionWithoutIndex(_ context.Context, operatorID int64, sessionID string, fileHeader *multipart.FileHeader) (model.FileUploadResultDTO, *model.APIError) {
+	return service.uploadBySessionInternal(operatorID, sessionID, fileHeader, false)
+}
+
+func (service *fileService) uploadBySessionInternal(operatorID int64, sessionID string, fileHeader *multipart.FileHeader, enqueueIndex bool) (model.FileUploadResultDTO, *model.APIError) {
 	service.expireSessions()
 	cleanSessionID := strings.TrimSpace(sessionID)
 	fileName := ""
@@ -152,7 +164,9 @@ func (service *fileService) UploadBySession(_ context.Context, operatorID int64,
 	log.Printf("file-upload session success operator=%d session=%s fileId=%d versionNo=%d storage=%s size=%d", operatorID, cleanSessionID, fileEntity.ID, versionEntity.VersionNo, meta.StorageKey, meta.SizeBytes)
 
 	latestVersion := versionEntity
-	service.enqueueIndexTask(context.Background(), versionEntity.FileID, versionEntity.VersionNo)
+	if enqueueIndex {
+		service.enqueueIndexTask(context.Background(), versionEntity.FileID, versionEntity.VersionNo)
+	}
 	return model.FileUploadResultDTO{
 		FileID:    fileEntity.ID,
 		VersionNo: versionEntity.VersionNo,
@@ -182,6 +196,75 @@ func (service *fileService) UploadVersion(_ context.Context, operatorID int64, f
 
 	latestVersion := versionEntity
 	service.enqueueIndexTask(context.Background(), versionEntity.FileID, versionEntity.VersionNo)
+	return model.FileUploadResultDTO{
+		FileID:    fileEntity.ID,
+		VersionNo: versionEntity.VersionNo,
+		File:      fileEntity.ToDTO(&latestVersion),
+		Version:   versionEntity.ToDTO(),
+	}, nil
+}
+
+func (service *fileService) CreateFileFromContent(_ context.Context, operatorID int64, bizKey string, originName string, mimeType string, content []byte) (model.FileUploadResultDTO, *model.APIError) {
+	service.expireSessions()
+	trimmedBizKey := strings.TrimSpace(bizKey)
+	if trimmedBizKey == "" {
+		return model.FileUploadResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "bizKey 不能为空")
+	}
+	if len(content) == 0 {
+		return model.FileUploadResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "内容不能为空")
+	}
+
+	sessionID, err := generateSessionID()
+	if err != nil {
+		return model.FileUploadResultDTO{}, model.NewAPIError(500, response.CodeInternal, "生成上传会话失败")
+	}
+	session, ok := service.fileRepository.CreateSession(sessionID, 0, trimmedBizKey, time.Now().UTC().Add(service.sessionTTL), operatorID)
+	if !ok {
+		return model.FileUploadResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "创建上传会话失败")
+	}
+	if _, ok := service.fileRepository.MarkSessionUploading(session.ID, operatorID); !ok {
+		return model.FileUploadResultDTO{}, model.NewAPIError(409, response.CodeBadRequest, "上传会话状态不可用")
+	}
+
+	meta, apiError := service.persistRawContent(session.FileID, session.TargetVersionNo, originName, mimeType, content)
+	if apiError != nil {
+		return model.FileUploadResultDTO{}, apiError
+	}
+	fileEntity, versionEntity, ok := service.fileRepository.CompleteSessionUpload(session.ID, operatorID, meta)
+	if !ok {
+		_ = service.fileStorage.Delete(meta.StorageKey)
+		return model.FileUploadResultDTO{}, model.NewAPIError(409, response.CodeBadRequest, "创建文件失败")
+	}
+	latestVersion := versionEntity
+	return model.FileUploadResultDTO{
+		FileID:    fileEntity.ID,
+		VersionNo: versionEntity.VersionNo,
+		SessionID: session.ID,
+		File:      fileEntity.ToDTO(&latestVersion),
+		Version:   versionEntity.ToDTO(),
+	}, nil
+}
+
+func (service *fileService) UploadVersionFromContent(_ context.Context, operatorID int64, fileID int64, originName string, mimeType string, content []byte) (model.FileUploadResultDTO, *model.APIError) {
+	service.expireSessions()
+	fileEntity, ok := service.fileRepository.FindFileByID(fileID)
+	if !ok {
+		return model.FileUploadResultDTO{}, model.NewAPIError(404, response.CodeNotFound, "文件不存在")
+	}
+	if len(content) == 0 {
+		return model.FileUploadResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "内容不能为空")
+	}
+	nextVersionNo := fileEntity.LatestVersionNo + 1
+	meta, apiError := service.persistRawContent(fileID, nextVersionNo, originName, mimeType, content)
+	if apiError != nil {
+		return model.FileUploadResultDTO{}, apiError
+	}
+	fileEntity, versionEntity, ok := service.fileRepository.CreateVersion(fileID, operatorID, meta)
+	if !ok {
+		_ = service.fileStorage.Delete(meta.StorageKey)
+		return model.FileUploadResultDTO{}, model.NewAPIError(409, response.CodeBadRequest, "创建版本失败")
+	}
+	latestVersion := versionEntity
 	return model.FileUploadResultDTO{
 		FileID:    fileEntity.ID,
 		VersionNo: versionEntity.VersionNo,
@@ -320,7 +403,7 @@ func (service *fileService) persistUploadedFile(fileID int64, versionNo int, fil
 		return model.UploadedFileMeta{}, model.NewAPIError(400, response.CodeBadRequest, "缺少上传文件")
 	}
 	if fileHeader.Size > 0 && fileHeader.Size > maxUploadSizeBytes {
-		return model.UploadedFileMeta{}, model.NewAPIError(400, response.CodeBadRequest, "上传文件大小不能超过 10MB")
+		return model.UploadedFileMeta{}, model.NewAPIError(400, response.CodeBadRequest, "上传文件大小不能超过 200MB")
 	}
 	fileName := sanitizeFileName(fileHeader.Filename)
 	openedFile, err := fileHeader.Open()
@@ -344,6 +427,28 @@ func (service *fileService) persistUploadedFile(fileID int64, versionNo int, fil
 		OriginName: fileName,
 		MimeType:   mimeType,
 		SizeBytes:  writtenBytes,
+		Checksum:   checksum,
+		StorageKey: storageKey,
+	}, nil
+}
+
+func (service *fileService) persistRawContent(fileID int64, versionNo int, originName string, mimeType string, content []byte) (model.UploadedFileMeta, *model.APIError) {
+	trimmedOriginName := sanitizeFileName(originName)
+	if trimmedOriginName == "" {
+		trimmedOriginName = "file.bin"
+	}
+	if mimeType == "" {
+		mimeType = mimeTypeByExt(trimmedOriginName)
+	}
+	storageKey := buildStorageKey(fileID, versionNo, trimmedOriginName)
+	sizeBytes, checksum, err := service.fileStorage.Save(storageKey, bytes.NewReader(content))
+	if err != nil {
+		return model.UploadedFileMeta{}, model.NewAPIError(500, response.CodeInternal, "保存文件内容失败")
+	}
+	return model.UploadedFileMeta{
+		OriginName: trimmedOriginName,
+		MimeType:   mimeType,
+		SizeBytes:  sizeBytes,
 		Checksum:   checksum,
 		StorageKey: storageKey,
 	}, nil

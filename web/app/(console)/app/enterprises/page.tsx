@@ -44,6 +44,21 @@ type EnterprisePageResult = {
   total: number
 }
 
+type ReportTemplateDTO = {
+  id: number
+  templateKey: string
+  name: string
+}
+
+type EnterpriseProjectDTO = {
+  id: number
+  enterpriseId: number
+  templateId: number
+  reportCaseId: number
+  name: string
+  status: string
+}
+
 type ApiResponse<T> = {
   message?: string
   data?: T
@@ -58,6 +73,11 @@ type EnterpriseFormValues = {
   shortName: string
   unifiedCreditCode: string
   admissionStatus: AdmissionStatus
+}
+
+type ProjectFormValues = {
+  templateId: number
+  name: string
 }
 
 const admissionStatusOptions = [
@@ -99,12 +119,17 @@ export default function EnterprisesPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingID, setEditingID] = useState<number | null>(null)
   const [editingDetail, setEditingDetail] = useState<EnterpriseDetailDTO | null>(null)
+  const [projectModalOpen, setProjectModalOpen] = useState(false)
+  const [creatingProject, setCreatingProject] = useState(false)
+  const [projectEnterprise, setProjectEnterprise] = useState<EnterpriseDTO | null>(null)
+  const [templates, setTemplates] = useState<ReportTemplateDTO[]>([])
   const [items, setItems] = useState<EnterpriseDTO[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [filters, setFilters] = useState<ListFilters>({ keyword: '' })
   const lastQueryRef = useRef('')
+  const [projectForm] = Form.useForm<ProjectFormValues>()
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
@@ -280,6 +305,19 @@ export default function EnterprisesPage() {
     fetchList()
   }, [page, pageSize, filters])
 
+  useEffect(() => {
+    const loadTemplates = async () => {
+      try {
+        const rows = await request<ReportTemplateDTO[]>('/api/report-templates', { method: 'GET' })
+        setTemplates(Array.isArray(rows) ? rows : [])
+      }
+      catch (error) {
+        msgApi.error(error instanceof Error ? error.message : '加载模板失败')
+      }
+    }
+    loadTemplates()
+  }, [])
+
   const openCreate = () => {
     setEditingID(null)
     setEditingDetail(null)
@@ -364,6 +402,42 @@ export default function EnterprisesPage() {
     }
   }
 
+  const openCreateProject = (enterprise: EnterpriseDTO) => {
+    setProjectEnterprise(enterprise)
+    setProjectModalOpen(true)
+    projectForm.setFieldsValue({
+      templateId: undefined,
+      name: `${enterprise.shortName || '企业'} 项目`,
+    })
+  }
+
+  const createProject = async () => {
+    if (!projectEnterprise) {
+      msgApi.warning('请先选择企业')
+      return
+    }
+    try {
+      const values = await projectForm.validateFields()
+      setCreatingProject(true)
+      const created = await request<EnterpriseProjectDTO>(`/api/enterprises/${projectEnterprise.id}/projects`, {
+        method: 'POST',
+        body: JSON.stringify({
+          templateId: Number(values.templateId),
+          name: String(values.name || '').trim(),
+        }),
+      })
+      setProjectModalOpen(false)
+      msgApi.success('项目已创建，正在跳转')
+      router.push(`/app/enterprise-projects/${created.id}`)
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '创建项目失败')
+    }
+    finally {
+      setCreatingProject(false)
+    }
+  }
+
   const pagination = useMemo(() => ({
     current: page,
     pageSize,
@@ -409,6 +483,7 @@ export default function EnterprisesPage() {
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold text-gray-900">企业列表</div>
           <Space>
+            <Button onClick={() => router.push('/app/enterprise-projects')}>项目列表</Button>
             <Button onClick={exportExcel} loading={exporting}>导出Excel</Button>
             <Button type="primary" onClick={openCreate}>新增企业</Button>
           </Space>
@@ -436,6 +511,8 @@ export default function EnterprisesPage() {
               render: (_, record) => (
                 <Space>
                   <Button size="small" onClick={() => openEdit(record.id)}>编辑</Button>
+                  <Button size="small" onClick={() => router.push(`/app/enterprise-projects?enterpriseId=${record.id}`)}>查看项目</Button>
+                  <Button size="small" type="primary" onClick={() => openCreateProject(record)}>增加项目</Button>
                   <Popconfirm
                     title="确认删除该企业？"
                     okText="删除"
@@ -461,8 +538,6 @@ export default function EnterprisesPage() {
         onOk={submit}
         confirmLoading={submitting}
         width={680}
-        getContainer={false}
-        forceRender
       >
         <Form form={form} layout="vertical" initialValues={{ admissionStatus: 'pending' }}>
           <Form.Item label="企业名称" name="shortName" rules={[{ required: true, message: '请输入企业名称' }]}>
@@ -473,6 +548,33 @@ export default function EnterprisesPage() {
           </Form.Item>
           <Form.Item label="准入状态" name="admissionStatus">
             <Select options={admissionStatusOptions} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={projectEnterprise ? `新增项目 - ${projectEnterprise.shortName}` : '新增项目'}
+        open={projectModalOpen}
+        onCancel={() => {
+          setProjectModalOpen(false)
+          setProjectEnterprise(null)
+        }}
+        onOk={createProject}
+        confirmLoading={creatingProject}
+        width={560}
+      >
+        <Form form={projectForm} layout="vertical">
+          <Form.Item label="报告模板" name="templateId" rules={[{ required: true, message: '请选择报告模板' }]}>
+            <Select
+              placeholder="请选择模板"
+              options={templates.map(item => ({
+                value: item.id,
+                label: `${item.name}（${item.templateKey}）`,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item label="项目名称" name="name" rules={[{ required: true, message: '请输入项目名称' }]}>
+            <Input placeholder="请输入项目名称" />
           </Form.Item>
         </Form>
       </Modal>

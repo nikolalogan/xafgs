@@ -47,7 +47,7 @@ func NewApp() (*fiber.App, Config) {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  30 * time.Second,
 		AppName:      cfg.AppName,
-		BodyLimit:    200 * 1024 * 1024,
+		BodyLimit:    220 * 1024 * 1024,
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			var apiError *model.APIError
 			if errors.As(err, &apiError) {
@@ -97,6 +97,7 @@ func NewApp() (*fiber.App, Config) {
 	fileRepository := repository.NewFileRepository()
 	templateRepository := repository.NewTemplateRepository()
 	reportingRepository := repository.NewReportingRepository()
+	resourceShareRepository := repository.NewResourceShareRepository()
 	chatRepository := repository.NewChatRepository()
 	debugFeedbackRepository := repository.NewDebugFeedbackRepository()
 	authRepository := repository.NewAuthRepository(cfg.APIToken)
@@ -136,6 +137,8 @@ func NewApp() (*fiber.App, Config) {
 				knowledgeRepository = repository.NewPostgresKnowledgeRepository(result.DB)
 			}
 			templateRepository = repository.NewPostgresTemplateRepository(result.DB)
+			reportingRepository = repository.NewPostgresReportingRepository(result.DB)
+			resourceShareRepository = repository.NewPostgresResourceShareRepository(result.DB)
 			chatRepository = repository.NewPostgresChatRepository(result.DB)
 			debugFeedbackRepository = repository.NewPostgresDebugFeedbackRepository(result.DB)
 			if err := db.Seed(ctx, result.DB); err != nil {
@@ -166,7 +169,19 @@ func NewApp() (*fiber.App, Config) {
 	knowledgeService = service.NewKnowledgeService(knowledgeRepository, fileRepository, fileService, systemConfigService, documentParseService, embeddingClient)
 	templateRenderer := service.NewGonjaTemplateRenderer()
 	templateService := service.NewTemplateService(templateRepository, templateRenderer)
-	reportingService := service.NewReportingService(reportingRepository, fileRepository, documentParseService)
+	reportingService := service.NewReportingService(
+		reportingRepository,
+		resourceShareRepository,
+		userRepository,
+		enterpriseRepository,
+		fileRepository,
+		fileService,
+		documentParseService,
+		userConfigService,
+		systemConfigService,
+		aiClient,
+		knowledgeService,
+	)
 	webSearchClient := service.NewTavilySearchClient(nil)
 	chatService := service.NewChatService(chatRepository, systemConfigService, userConfigService, fileService, webSearchClient, aiClient, knowledgeService)
 	debugFeedbackService := service.NewDebugFeedbackService(debugFeedbackRepository, userRepository, fileRepository, fileService)
@@ -203,6 +218,7 @@ func NewApp() (*fiber.App, Config) {
 	workflowDSLGenerateHandler := handler.NewWorkflowDSLGenerateHandler(workflowDSLGenerateService, apiRegistry)
 	knowledgeHandler := handler.NewKnowledgeHandler(knowledgeService, apiRegistry)
 	knowledgeService.StartWorker(context.Background(), 3*time.Second)
+	reportingService.StartParseWorker(context.Background(), 2*time.Second)
 
 	traceStore := apimeta.NewTraceStore(300)
 	traceMiddleware := middleware.NewTraceMiddleware(traceStore)

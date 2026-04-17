@@ -82,6 +82,11 @@ type DocumentProfile struct {
 	ParseStrategy      string  `json:"parseStrategy"`
 	PageCount          int     `json:"pageCount"`
 	SourceType         string  `json:"sourceType"`
+	BizClass           string  `json:"bizClass,omitempty"`
+	OCRSkipReason      string  `json:"ocrSkipReason,omitempty"`
+	ImageOCRApplied    bool    `json:"imageOcrApplied,omitempty"`
+	ImageOCRAppendCount int    `json:"imageOcrAppendCount,omitempty"`
+	OCRQueueMode       string  `json:"ocrQueueMode,omitempty"`
 	PDFDiagnostics     any     `json:"pdfDiagnostics,omitempty"`
 }
 
@@ -120,7 +125,12 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 		return ParsedDocument{}, apiError
 	}
 
+	bizKey := ""
+	if fileDTO, fileError := service.fileService.GetFile(ctx, caseFile.FileID); fileError == nil {
+		bizKey = fileDTO.BizKey
+	}
 	profile := buildDocumentProfile(version, raw)
+	applyBusinessProfileHints(&profile, bizKey)
 	switch profile.FileType {
 	case "text", "json":
 		text := decodePlainTextPayload(raw)
@@ -364,6 +374,43 @@ func buildDocumentProfile(version model.FileVersionDTO, raw []byte) DocumentProf
 			extracted.Diagnostics.HasTextOperators = extracted.HasTextOperators
 			return extracted.Diagnostics
 		}(),
+	}
+}
+
+func applyBusinessProfileHints(profile *DocumentProfile, bizKey string) {
+	if profile == nil {
+		return
+	}
+	profile.BizClass = detectBizClassByBizKey(bizKey)
+	profile.OCRQueueMode = "single_worker"
+	if profile.BizClass == "std_doc" && isTextualDocumentProfile(*profile) {
+		profile.OCRSkipReason = "std_doc_textual_skip_ocr"
+	}
+}
+
+func detectBizClassByBizKey(bizKey string) string {
+	normalized := strings.ToLower(strings.TrimSpace(bizKey))
+	switch {
+	case strings.HasPrefix(normalized, "std_doc:"):
+		return "std_doc"
+	case strings.HasPrefix(normalized, "std_att:"):
+		return "std_att"
+	default:
+		return "other"
+	}
+}
+
+func isTextualDocumentProfile(profile DocumentProfile) bool {
+	if profile.OCRRequired {
+		return false
+	}
+	switch strings.TrimSpace(strings.ToLower(profile.FileType)) {
+	case "text", "json", "csv", "tsv", "docx", "xlsx", "xls":
+		return true
+	case "pdf":
+		return profile.HasTextLayer
+	default:
+		return false
 	}
 }
 

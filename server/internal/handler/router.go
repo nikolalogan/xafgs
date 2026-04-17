@@ -30,6 +30,7 @@ func RegisterRoutes(
 	publicGroup := router.Group("")
 	healthHandler.Register(publicGroup)
 	authHandler.Register(publicGroup)
+	reportingHandler.RegisterPublic(publicGroup)
 
 	protectedGroup := router.Group("", authMiddleware)
 	userHandler.Register(protectedGroup, adminMiddleware)

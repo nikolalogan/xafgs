@@ -7,6 +7,8 @@ services:
     environment:
       TZ: "Asia/Shanghai"
       CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+      WATCHPACK_POLLING_INTERVAL: "1000"
       NPM_CONFIG_REGISTRY: "https://registry.npmmirror.com"
       APK_MIRROR: "${APK_MIRROR:-mirrors.aliyun.com}"
     volumes:
@@ -66,6 +68,8 @@ services:
       redis:
         condition: service_started
       ocr-service:
+        condition: service_healthy
+      frontend:
         condition: service_started
     restart: unless-stopped
 
@@ -75,14 +79,14 @@ services:
       context: ./ocr-service
       dockerfile: Dockerfile
       args:
-        BASE_REGISTRY: "${BASE_REGISTRY:-docker.m.daocloud.io}"
+        BASE_REGISTRY: "${OCR_BASE_REGISTRY:-docker.m.daocloud.io}"
         APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
         APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
         PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
         PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
         PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
         PIP_RETRIES: "${PIP_RETRIES:-10}"
-        OCR_WHEELS_ONLY: "${OCR_WHEELS_ONLY:-1}"
+        OCR_WHEELS_ONLY: "${OCR_WHEELS_ONLY:-0}"
         OCR_PPSTRUCTURE_PRELOAD: "${OCR_PPSTRUCTURE_PRELOAD:-1}"
     image: sxfgssever-ocr-service-dev:latest
     environment:
@@ -122,7 +126,6 @@ services:
       - ./deploy/nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - frontend
-      - backend
     restart: unless-stopped
 
   postgres:

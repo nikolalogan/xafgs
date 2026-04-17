@@ -21,6 +21,17 @@ type ReportingRepository interface {
 	CreateReportCase(reportCase model.ReportCase) model.ReportCaseDTO
 	UpdateReportCase(reportCase model.ReportCase) (model.ReportCaseDTO, bool)
 
+	FindEnterpriseProjectByID(projectID int64) (model.EnterpriseProject, bool)
+	FindEnterpriseProjectsByEnterpriseID(enterpriseID int64) []model.EnterpriseProjectDTO
+	CreateEnterpriseProject(project model.EnterpriseProject) model.EnterpriseProjectDTO
+	UpdateEnterpriseProject(project model.EnterpriseProject) (model.EnterpriseProjectDTO, bool)
+
+	CreateReportParseJob(job model.ReportParseJob) model.ReportParseJob
+	FindReportParseJobsByProjectID(projectID int64) []model.ReportParseJob
+	FindReportParseJobByID(jobID int64) (model.ReportParseJob, bool)
+	ClaimNextReportParseJob(maxRetry int) (model.ReportParseJob, bool)
+	UpdateReportParseJob(job model.ReportParseJob) (model.ReportParseJob, bool)
+
 	FindReportCaseFiles(caseID int64) []model.ReportCaseFile
 	FindReportCaseFileByID(caseFileID int64) (model.ReportCaseFile, bool)
 	FindReportCaseFile(caseID int64, fileID int64) (model.ReportCaseFile, bool)
@@ -61,28 +72,32 @@ type ReportingRepository interface {
 }
 
 type reportingRepository struct {
-	reportTemplates      map[int64]model.ReportTemplate
-	reportCases          map[int64]model.ReportCase
-	reportCaseFiles      map[int64]model.ReportCaseFile
-	documentSlices       map[int64]model.DocumentSlice
-	documentTables       map[int64]model.DocumentTable
-	documentTableParts   map[int64]model.DocumentTableFragment
-	documentTableCells   map[int64]model.DocumentTableCell
-	extractionFacts      map[int64]model.ExtractionFact
-	factSourceRefs       map[int64]model.FactSourceRef
-	subjectAssets        map[int64]model.SubjectAsset
-	assemblyItems        map[int64]model.AssemblyItem
-	nextTemplateID       int64
-	nextCaseID           int64
-	nextCaseFileID       int64
-	nextSliceID          int64
-	nextTableID          int64
-	nextTableFragmentID  int64
-	nextTableCellID      int64
-	nextFactID           int64
-	nextSourceRefID      int64
-	nextSubjectAssetID   int64
-	nextAssemblyItemID   int64
+	reportTemplates         map[int64]model.ReportTemplate
+	reportCases             map[int64]model.ReportCase
+	enterpriseProjects      map[int64]model.EnterpriseProject
+	reportCaseFiles         map[int64]model.ReportCaseFile
+	reportParseJobs         map[int64]model.ReportParseJob
+	documentSlices          map[int64]model.DocumentSlice
+	documentTables          map[int64]model.DocumentTable
+	documentTableParts      map[int64]model.DocumentTableFragment
+	documentTableCells      map[int64]model.DocumentTableCell
+	extractionFacts         map[int64]model.ExtractionFact
+	factSourceRefs          map[int64]model.FactSourceRef
+	subjectAssets           map[int64]model.SubjectAsset
+	assemblyItems           map[int64]model.AssemblyItem
+	nextTemplateID          int64
+	nextCaseID              int64
+	nextEnterpriseProjectID int64
+	nextCaseFileID          int64
+	nextReportParseJobID    int64
+	nextSliceID             int64
+	nextTableID             int64
+	nextTableFragmentID     int64
+	nextTableCellID         int64
+	nextFactID              int64
+	nextSourceRefID         int64
+	nextSubjectAssetID      int64
+	nextAssemblyItemID      int64
 }
 
 func NewReportingRepository() ReportingRepository {
@@ -99,6 +114,9 @@ func NewReportingRepository() ReportingRepository {
 		"reviewRequired":     true,
 		"traceability":       true,
 	})
+	outline, _ := json.Marshal([]model.ReportTemplateOutlineNode{
+		{ID: "line-1", Title: "模板说明", Level: 2, Line: 1},
+	})
 
 	return &reportingRepository{
 		reportTemplates: map[int64]model.ReportTemplate{
@@ -108,31 +126,41 @@ func NewReportingRepository() ReportingRepository {
 				Name:                 "默认报告组装模板",
 				Description:          "包含主体、区域、财务、项目、反担保五大类的最小模板",
 				Status:               model.ReportTemplateStatusActive,
+				DocFileID:            0,
+				DocVersionNo:         0,
 				CategoriesJSON:       categories,
 				ProcessingConfigJSON: config,
+				ContentMarkdown:      "## 模板说明\n\n请在此编辑报告模板内容。",
+				OutlineJSON:          outline,
+				EditorConfigJSON:     json.RawMessage(`{}`),
+				AnnotationsJSON:      json.RawMessage(`[]`),
 			},
 		},
-		reportCases:        map[int64]model.ReportCase{},
-		reportCaseFiles:    map[int64]model.ReportCaseFile{},
-		documentSlices:     map[int64]model.DocumentSlice{},
-		documentTables:     map[int64]model.DocumentTable{},
-		documentTableParts: map[int64]model.DocumentTableFragment{},
-		documentTableCells: map[int64]model.DocumentTableCell{},
-		extractionFacts:    map[int64]model.ExtractionFact{},
-		factSourceRefs:     map[int64]model.FactSourceRef{},
-		subjectAssets:      map[int64]model.SubjectAsset{},
-		assemblyItems:      map[int64]model.AssemblyItem{},
-		nextTemplateID:     2,
-		nextCaseID:         1,
-		nextCaseFileID:     1,
-		nextSliceID:        1,
-		nextTableID:        1,
-		nextTableFragmentID: 1,
-		nextTableCellID:    1,
-		nextFactID:         1,
-		nextSourceRefID:    1,
-		nextSubjectAssetID: 1,
-		nextAssemblyItemID: 1,
+		reportCases:             map[int64]model.ReportCase{},
+		enterpriseProjects:      map[int64]model.EnterpriseProject{},
+		reportCaseFiles:         map[int64]model.ReportCaseFile{},
+		reportParseJobs:         map[int64]model.ReportParseJob{},
+		documentSlices:          map[int64]model.DocumentSlice{},
+		documentTables:          map[int64]model.DocumentTable{},
+		documentTableParts:      map[int64]model.DocumentTableFragment{},
+		documentTableCells:      map[int64]model.DocumentTableCell{},
+		extractionFacts:         map[int64]model.ExtractionFact{},
+		factSourceRefs:          map[int64]model.FactSourceRef{},
+		subjectAssets:           map[int64]model.SubjectAsset{},
+		assemblyItems:           map[int64]model.AssemblyItem{},
+		nextTemplateID:          2,
+		nextCaseID:              1,
+		nextEnterpriseProjectID: 1,
+		nextCaseFileID:          1,
+		nextReportParseJobID:    1,
+		nextSliceID:             1,
+		nextTableID:             1,
+		nextTableFragmentID:     1,
+		nextTableCellID:         1,
+		nextFactID:              1,
+		nextSourceRefID:         1,
+		nextSubjectAssetID:      1,
+		nextAssemblyItemID:      1,
 	}
 }
 
@@ -182,8 +210,14 @@ func (repository *reportingRepository) UpdateReportTemplate(templateID int64, up
 	entity.Name = update.Name
 	entity.Description = update.Description
 	entity.Status = update.Status
+	entity.DocFileID = update.DocFileID
+	entity.DocVersionNo = update.DocVersionNo
 	entity.CategoriesJSON = update.CategoriesJSON
 	entity.ProcessingConfigJSON = update.ProcessingConfigJSON
+	entity.ContentMarkdown = update.ContentMarkdown
+	entity.OutlineJSON = update.OutlineJSON
+	entity.EditorConfigJSON = update.EditorConfigJSON
+	entity.AnnotationsJSON = update.AnnotationsJSON
 	entity.UpdatedAt = time.Now().UTC()
 	entity.UpdatedBy = update.UpdatedBy
 	repository.reportTemplates[templateID] = entity
@@ -233,6 +267,125 @@ func (repository *reportingRepository) UpdateReportCase(reportCase model.ReportC
 	entity.UpdatedBy = reportCase.UpdatedBy
 	repository.reportCases[entity.ID] = entity
 	return entity.ToDTO(), true
+}
+
+func (repository *reportingRepository) FindEnterpriseProjectByID(projectID int64) (model.EnterpriseProject, bool) {
+	entity, ok := repository.enterpriseProjects[projectID]
+	return entity, ok
+}
+
+func (repository *reportingRepository) FindEnterpriseProjectsByEnterpriseID(enterpriseID int64) []model.EnterpriseProjectDTO {
+	out := make([]model.EnterpriseProjectDTO, 0)
+	for _, entity := range repository.enterpriseProjects {
+		if enterpriseID <= 0 || entity.EnterpriseID == enterpriseID {
+			out = append(out, entity.ToDTO())
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	return out
+}
+
+func (repository *reportingRepository) CreateEnterpriseProject(project model.EnterpriseProject) model.EnterpriseProjectDTO {
+	now := time.Now().UTC()
+	project.ID = repository.nextEnterpriseProjectID
+	repository.nextEnterpriseProjectID++
+	project.CreatedAt = now
+	project.UpdatedAt = now
+	repository.enterpriseProjects[project.ID] = project
+	return project.ToDTO()
+}
+
+func (repository *reportingRepository) UpdateEnterpriseProject(project model.EnterpriseProject) (model.EnterpriseProjectDTO, bool) {
+	entity, ok := repository.enterpriseProjects[project.ID]
+	if !ok {
+		return model.EnterpriseProjectDTO{}, false
+	}
+	entity.Name = project.Name
+	entity.Status = project.Status
+	entity.TemplateID = project.TemplateID
+	entity.ReportCaseID = project.ReportCaseID
+	entity.EnterpriseID = project.EnterpriseID
+	entity.UpdatedAt = time.Now().UTC()
+	entity.UpdatedBy = project.UpdatedBy
+	repository.enterpriseProjects[entity.ID] = entity
+	return entity.ToDTO(), true
+}
+
+func (repository *reportingRepository) CreateReportParseJob(job model.ReportParseJob) model.ReportParseJob {
+	now := time.Now().UTC()
+	job.ID = repository.nextReportParseJobID
+	repository.nextReportParseJobID++
+	job.CreatedAt = now
+	job.UpdatedAt = now
+	repository.reportParseJobs[job.ID] = job
+	return job
+}
+
+func (repository *reportingRepository) FindReportParseJobsByProjectID(projectID int64) []model.ReportParseJob {
+	out := make([]model.ReportParseJob, 0)
+	for _, entity := range repository.reportParseJobs {
+		if projectID <= 0 || entity.ProjectID == projectID {
+			out = append(out, entity)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func (repository *reportingRepository) FindReportParseJobByID(jobID int64) (model.ReportParseJob, bool) {
+	entity, ok := repository.reportParseJobs[jobID]
+	return entity, ok
+}
+
+func (repository *reportingRepository) ClaimNextReportParseJob(maxRetry int) (model.ReportParseJob, bool) {
+	if maxRetry <= 0 {
+		maxRetry = 3
+	}
+	var selected model.ReportParseJob
+	found := false
+	for _, job := range repository.reportParseJobs {
+		if job.Status != model.ReportParseJobStatusPending && job.Status != model.ReportParseJobStatusFailed {
+			continue
+		}
+		if job.RetryCount >= maxRetry {
+			continue
+		}
+		if !found || job.UpdatedAt.Before(selected.UpdatedAt) || (job.UpdatedAt.Equal(selected.UpdatedAt) && job.ID < selected.ID) {
+			selected = job
+			found = true
+		}
+	}
+	if !found {
+		return model.ReportParseJob{}, false
+	}
+	now := time.Now().UTC()
+	selected.Status = model.ReportParseJobStatusRunning
+	selected.StartedAt = &now
+	selected.UpdatedAt = now
+	repository.reportParseJobs[selected.ID] = selected
+	return selected, true
+}
+
+func (repository *reportingRepository) UpdateReportParseJob(job model.ReportParseJob) (model.ReportParseJob, bool) {
+	entity, ok := repository.reportParseJobs[job.ID]
+	if !ok {
+		return model.ReportParseJob{}, false
+	}
+	entity.ProjectID = job.ProjectID
+	entity.CaseID = job.CaseID
+	entity.CaseFileID = job.CaseFileID
+	entity.FileID = job.FileID
+	entity.VersionNo = job.VersionNo
+	entity.ManualCategory = job.ManualCategory
+	entity.FileTypeGroup = job.FileTypeGroup
+	entity.Status = job.Status
+	entity.RetryCount = job.RetryCount
+	entity.ErrorMessage = job.ErrorMessage
+	entity.StartedAt = job.StartedAt
+	entity.FinishedAt = job.FinishedAt
+	entity.UpdatedAt = time.Now().UTC()
+	repository.reportParseJobs[entity.ID] = entity
+	return entity, true
 }
 
 func (repository *reportingRepository) FindReportCaseFiles(caseID int64) []model.ReportCaseFile {

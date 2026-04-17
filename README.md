@@ -13,6 +13,19 @@
 - `deploy/nginx/nginx.conf`：网关配置（静态资源 + API 反向代理）
 - `docker-compose.yml`：一键编排（frontend/backend/gateway/postgres/redis）
 
+## 报告模板编辑器（TipTap + AI 工具栏）
+
+报告模板编辑页已从 ONLYOFFICE 迁移为 TipTap：
+
+- 模板主内容仍持久化到 `contentMarkdown`
+- 保留 Word 导入（`.docx`）与 Word 导出
+- 提供 AI 工具栏（改写/扩写/总结/润色/续写），后端复用现有 AI 配置
+
+若要使用 AI 功能，请先在用户配置中填写：
+
+- `AIBaseURL`
+- `AIApiKey`
+
 ## 快速启动
 
 ```bash

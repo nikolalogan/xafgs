@@ -499,7 +499,13 @@ export default function ReportCasesPage() {
   return (
     <div className="space-y-4">
       {contextHolder}
-      <Card title="新建报告实例" extra={<Button onClick={refreshBase} loading={loading}>刷新</Button>}>
+      <Card title="新建报告实例" extra={(
+        <Space>
+          <Button onClick={() => router.push('/app/report-templates')}>报告模板</Button>
+          <Button onClick={refreshBase} loading={loading}>刷新</Button>
+        </Space>
+      )}
+      >
         <Form form={caseForm} layout="inline">
           <Form.Item name="templateId" label="报告模板" rules={[{ required: true, message: '请选择模板' }]}>
             <Select style={{ width: 280 }} options={templateOptions} />

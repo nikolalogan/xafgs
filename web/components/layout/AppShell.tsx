@@ -41,9 +41,11 @@ const menuItems: MenuItem[] = [
   { key: 'review', label: '评审', href: '/app/workflows?menuKey=review', roles: ['admin'] as ConsoleRole[] },
   { key: 'postloan', label: '保后', href: '/app/workflows?menuKey=postloan', roles: ['admin'] as ConsoleRole[] },
   { key: 'templates', label: '模板配置', href: '/app/templates', roles: ['admin'] as ConsoleRole[] },
+  { key: 'report-templates', label: '报告模板', href: '/app/report-templates', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'report-cases', label: '报告组装', href: '/app/report-cases', roles: ['admin'] as ConsoleRole[] },
   { key: 'files', label: '文件管理', href: '/app/files', roles: ['admin'] as ConsoleRole[] },
   { key: 'enterprises', label: '企业管理', href: '/app/enterprises', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'file-processing', label: '文件处理清单', href: '/app/file-processing', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'admin-divisions', label: '行政区划', href: '/app/admin-divisions', roles: ['admin'] as ConsoleRole[] },
   { key: 'system-settings', label: '系统设置', href: '/app/system-settings', roles: ['admin'] as ConsoleRole[] },
   { key: 'user-config', label: '用户配置', href: '/app/user-config', roles: ['admin', 'user'] as ConsoleRole[] },
@@ -83,11 +85,15 @@ const getPageTitle = (pathname: string, search: string) => {
     return '用户管理'
   if (pathname.startsWith('/app/templates'))
     return '模板配置'
+  if (pathname.startsWith('/app/report-templates'))
+    return '报告模板'
   if (pathname.startsWith('/app/report-cases'))
     return '报告组装'
   if (pathname.startsWith('/app/files'))
     return '文件管理'
-  if (pathname.startsWith('/app/enterprises'))
+  if (pathname.startsWith('/app/file-processing'))
+    return '文件处理清单'
+  if (pathname.startsWith('/app/enterprises') || pathname.startsWith('/app/enterprise-projects'))
     return '企业管理'
   if (pathname.startsWith('/app/admin-divisions'))
     return '行政区划'
@@ -179,11 +185,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['控制台', '用户管理']
     if (pathname.startsWith('/app/templates'))
       return ['控制台', '模板配置']
+    if (pathname.startsWith('/app/report-templates'))
+      return ['控制台', '报告模板']
     if (pathname.startsWith('/app/report-cases'))
       return ['控制台', '报告组装']
     if (pathname.startsWith('/app/files'))
       return ['控制台', '文件管理']
-    if (pathname.startsWith('/app/enterprises'))
+    if (pathname.startsWith('/app/file-processing'))
+      return ['控制台', '文件处理清单']
+    if (pathname.startsWith('/app/enterprises') || pathname.startsWith('/app/enterprise-projects'))
       return ['控制台', '企业管理']
     if (pathname.startsWith('/app/admin-divisions'))
       return ['控制台', '行政区划']
@@ -306,6 +316,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     'chat',
     'workflow-config',
     'templates',
+    'report-templates',
     'admin-divisions',
     'system-settings',
     'api-meta',
@@ -359,6 +370,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
 
     pushIfVisible('enterprises')
+    pushIfVisible('file-processing')
     pushIfVisible('user-config')
 
     return items
@@ -369,13 +381,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['home']
     if (pathname.startsWith('/app/templates'))
       return ['templates']
+    if (pathname.startsWith('/app/report-templates'))
+      return ['report-templates']
     if (pathname.startsWith('/app/report-cases'))
       return ['report-cases']
     if (pathname.startsWith('/app/files'))
       return ['files']
+    if (pathname.startsWith('/app/file-processing'))
+      return ['file-processing']
     if (pathname.startsWith('/app/workflow-tasks'))
       return ['workflow-tasks']
-    if (pathname.startsWith('/app/enterprises'))
+    if (pathname.startsWith('/app/enterprises') || pathname.startsWith('/app/enterprise-projects'))
       return ['enterprises']
     if (pathname.startsWith('/app/admin-divisions'))
       return ['admin-divisions']
@@ -435,10 +451,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       router.push('/app/workflows')
     else if (key === 'templates')
       router.push('/app/templates')
+    else if (key === 'report-templates')
+      router.push('/app/report-templates')
     else if (key === 'report-cases')
       router.push('/app/report-cases')
     else if (key === 'files')
       router.push('/app/files')
+    else if (key === 'file-processing')
+      router.push('/app/file-processing')
     else if (key === 'enterprises')
       router.push('/app/enterprises')
     else if (key === 'admin-divisions')

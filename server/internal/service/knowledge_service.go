@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -20,8 +21,11 @@ const (
 	knowledgeChunkMaxLen  = 800
 	knowledgeChunkMinLen  = 500
 	knowledgeChunkOverlap = 80
+	knowledgeChunkContext = 20
 	knowledgeTableWindow  = 20
 )
+
+var errKnowledgeIndexCancelled = errors.New("knowledge index cancelled")
 
 type KnowledgeSearchRequest struct {
 	Query     string
@@ -35,6 +39,7 @@ type KnowledgeSearchRequest struct {
 
 type KnowledgeService interface {
 	Enqueue(ctx context.Context, fileID int64, versionNo int) *model.APIError
+	Cancel(ctx context.Context, fileID int64, versionNo int) *model.APIError
 	Reindex(ctx context.Context, fileID int64, versionNo int) (model.KnowledgeIndexStatusDTO, *model.APIError)
 	GetStatus(ctx context.Context, fileID int64, versionNo int) (model.KnowledgeIndexStatusDTO, *model.APIError)
 	Search(ctx context.Context, userID int64, request KnowledgeSearchRequest) (model.KnowledgeSearchResultDTO, *model.APIError)
@@ -80,6 +85,19 @@ func (service *knowledgeService) Enqueue(_ context.Context, fileID int64, versio
 	}
 	if _, ok := service.repository.EnqueueJob(fileID, versionNo); !ok {
 		return model.NewAPIError(500, response.CodeInternal, "索引任务入队失败")
+	}
+	return nil
+}
+
+func (service *knowledgeService) Cancel(_ context.Context, fileID int64, versionNo int) *model.APIError {
+	if !service.enabled {
+		return model.NewAPIError(503, response.CodeInternal, "知识检索能力未启用")
+	}
+	if fileID <= 0 || versionNo <= 0 {
+		return model.NewAPIError(400, response.CodeBadRequest, "fileId/versionNo 不合法")
+	}
+	if ok := service.repository.CancelJob(fileID, versionNo); !ok {
+		return model.NewAPIError(404, response.CodeNotFound, "索引任务不存在")
 	}
 	return nil
 }
@@ -159,6 +177,9 @@ func (service *knowledgeService) RunOnce(ctx context.Context) bool {
 		return false
 	}
 	if err := service.runJob(ctx, job); err != nil {
+		if errors.Is(err, errKnowledgeIndexCancelled) {
+			return true
+		}
 		_ = service.repository.MarkJobFailed(job.ID, err.Error())
 		log.Printf("knowledge-index failed fileId=%d versionNo=%d err=%v", job.FileID, job.VersionNo, err)
 		return true
@@ -190,6 +211,9 @@ func (service *knowledgeService) StartWorker(ctx context.Context, interval time.
 }
 
 func (service *knowledgeService) runJob(ctx context.Context, job model.KnowledgeIndexJob) error {
+	if service.isCancelled(job.FileID, job.VersionNo) {
+		return errKnowledgeIndexCancelled
+	}
 	fileEntity, ok := service.fileRepository.FindFileByID(job.FileID)
 	if !ok {
 		return fmt.Errorf("file 不存在")
@@ -208,9 +232,15 @@ func (service *knowledgeService) runJob(ctx context.Context, job model.Knowledge
 	if parseError != nil {
 		return fmt.Errorf("文档解析失败: %s", parseError.Message)
 	}
+	if service.isCancelled(job.FileID, job.VersionNo) {
+		return errKnowledgeIndexCancelled
+	}
 	chunks := buildKnowledgeChunks(parsed, fileEntity.BizKey)
 	if len(chunks) == 0 {
 		return fmt.Errorf("未提取到有效文本分块")
+	}
+	if service.isCancelled(job.FileID, job.VersionNo) {
+		return errKnowledgeIndexCancelled
 	}
 	inputs := make([]string, 0, len(chunks))
 	for _, chunk := range chunks {
@@ -226,6 +256,9 @@ func (service *knowledgeService) runJob(ctx context.Context, job model.Knowledge
 	if embedError != nil {
 		return fmt.Errorf("向量化失败: %w", embedError)
 	}
+	if service.isCancelled(job.FileID, job.VersionNo) {
+		return errKnowledgeIndexCancelled
+	}
 	if len(embeddings) != len(chunks) {
 		return fmt.Errorf("embedding 数量不匹配")
 	}
@@ -235,10 +268,24 @@ func (service *knowledgeService) runJob(ctx context.Context, job model.Knowledge
 		}
 		chunks[index].Embedding = embeddings[index]
 	}
+	if service.isCancelled(job.FileID, job.VersionNo) {
+		return errKnowledgeIndexCancelled
+	}
 	if ok := service.repository.ReplaceChunks(job.FileID, job.VersionNo, embeddingConfig.Model, chunks); !ok {
 		return fmt.Errorf("落库失败")
 	}
 	return nil
+}
+
+func (service *knowledgeService) isCancelled(fileID int64, versionNo int) bool {
+	if fileID <= 0 || versionNo <= 0 {
+		return false
+	}
+	job, ok := service.repository.FindLatestJob(fileID, versionNo)
+	if !ok {
+		return false
+	}
+	return job.Status == model.KnowledgeIndexJobStatusCancelled
 }
 
 func (service *knowledgeService) embedSingle(ctx context.Context, config embeddingRuntimeConfig, input string) ([]float64, error) {
@@ -411,7 +458,16 @@ func splitTextWithOverlap(text string, maxLen int, overlap int) []string {
 		if end > len(runes) {
 			end = len(runes)
 		}
-		segment := strings.TrimSpace(string(runes[start:end]))
+
+		segmentStart := start - knowledgeChunkContext
+		if segmentStart < 0 {
+			segmentStart = 0
+		}
+		segmentEnd := end + knowledgeChunkContext
+		if segmentEnd > len(runes) {
+			segmentEnd = len(runes)
+		}
+		segment := strings.TrimSpace(string(runes[segmentStart:segmentEnd]))
 		if segment != "" {
 			out = append(out, segment)
 		}

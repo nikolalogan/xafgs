@@ -11,13 +11,21 @@ import (
 )
 
 func (service *documentParseService) applyOCRSupplementIfNeeded(ctx context.Context, caseFile model.ReportCaseFile, version model.FileVersionDTO, raw []byte, parsed ParsedDocument) ParsedDocument {
-	if parsed.Profile.OCRRequired || service.ocrTaskService == nil {
+	if service.ocrTaskService == nil {
+		return parsed
+	}
+	if parsed.Profile.BizClass == "std_doc" && isTextualDocumentProfile(parsed.Profile) {
+		if strings.TrimSpace(parsed.Profile.OCRSkipReason) == "" {
+			parsed.Profile.OCRSkipReason = "std_doc_textual_skip_ocr"
+		}
 		return parsed
 	}
 	if !isSupplementCandidateFileType(parsed.Profile.FileType) {
 		return parsed
 	}
-	if !hasUnreadableOrMissingSlices(parsed.Slices) {
+	requiresOCRSupplement := hasUnreadableOrMissingSlices(parsed.Slices)
+	forceAppendByBusinessRule := parsed.Profile.BizClass == "std_att"
+	if !requiresOCRSupplement && !forceAppendByBusinessRule {
 		return parsed
 	}
 
@@ -32,6 +40,13 @@ func (service *documentParseService) applyOCRSupplementIfNeeded(ctx context.Cont
 
 	ocrResult, ok := parseOCRTaskResult(task)
 	if !ok {
+		return parsed
+	}
+	if forceAppendByBusinessRule {
+		merged, appendCount := appendOCRSupplementsAfterTextSlices(caseFile, version, parsed.Slices, ocrResult.Pages)
+		parsed.Slices = merged
+		parsed.Profile.ImageOCRApplied = appendCount > 0
+		parsed.Profile.ImageOCRAppendCount = appendCount
 		return parsed
 	}
 	parsed.Slices = mergeSlicesWithOCRSupplements(caseFile, version, parsed.Slices, ocrResult.Pages)
@@ -135,6 +150,30 @@ func mergeSlicesWithOCRSupplements(caseFile model.ReportCaseFile, version model.
 	}
 
 	return out
+}
+
+func appendOCRSupplementsAfterTextSlices(caseFile model.ReportCaseFile, version model.FileVersionDTO, original []model.DocumentSlice, pages []OCRResultPage) ([]model.DocumentSlice, int) {
+	supplements := collectOCRSupplements(pages)
+	if len(supplements) == 0 {
+		return original, 0
+	}
+	out := make([]model.DocumentSlice, 0, len(original)+len(supplements))
+	out = append(out, original...)
+	pageNos := make([]int, 0, len(supplements))
+	for pageNo := range supplements {
+		pageNos = append(pageNos, pageNo)
+	}
+	sort.Ints(pageNos)
+	appendCount := 0
+	for _, pageNo := range pageNos {
+		supplementText := strings.TrimSpace(supplements[pageNo])
+		if supplementText == "" {
+			continue
+		}
+		out = append(out, buildOCRSupplementSlice(caseFile, version, pageNo, supplementText, "std_att_append_after_text"))
+		appendCount++
+	}
+	return out, appendCount
 }
 
 func collectOCRSupplements(pages []OCRResultPage) map[int]string {

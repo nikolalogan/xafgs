@@ -63,7 +63,8 @@ RUN mkdir -p /root/.paddlex
 
 COPY app /app/app
 COPY scripts /app/scripts
-RUN chmod +x /app/scripts/start_official_serving.sh
+RUN sed -i 's/\r$//' /app/scripts/*.sh \
+    && chmod +x /app/scripts/start_official_serving.sh
 
 RUN --mount=type=cache,target=/root/.paddlex if [ "$OCR_PPSTRUCTURE_PRELOAD" = "1" ]; then python -m app.preload_models; fi
 

@@ -97,8 +97,14 @@ type ReportTemplate struct {
 	Name                 string          `json:"name"`
 	Description          string          `json:"description"`
 	Status               string          `json:"status"`
+	DocFileID            int64           `json:"docFileId"`
+	DocVersionNo         int             `json:"docVersionNo"`
 	CategoriesJSON       json.RawMessage `json:"categoriesJson"`
 	ProcessingConfigJSON json.RawMessage `json:"processingConfigJson"`
+	ContentMarkdown      string          `json:"contentMarkdown"`
+	OutlineJSON          json.RawMessage `json:"outlineJson"`
+	EditorConfigJSON     json.RawMessage `json:"editorConfigJson"`
+	AnnotationsJSON      json.RawMessage `json:"annotationsJson"`
 }
 
 type ReportTemplateDTO struct {
@@ -107,6 +113,8 @@ type ReportTemplateDTO struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Status      string          `json:"status"`
+	DocFileID   int64           `json:"docFileId"`
+	DocVersionNo int            `json:"docVersionNo"`
 	Categories  json.RawMessage `json:"categories"`
 	CreatedAt   time.Time       `json:"createdAt"`
 	UpdatedAt   time.Time       `json:"updatedAt"`
@@ -115,6 +123,23 @@ type ReportTemplateDTO struct {
 type ReportTemplateDetailDTO struct {
 	ReportTemplateDTO
 	ProcessingConfig json.RawMessage `json:"processingConfig"`
+	ContentMarkdown  string          `json:"contentMarkdown"`
+	Outline          json.RawMessage `json:"outline"`
+	EditorConfig     json.RawMessage `json:"editorConfig"`
+	Annotations      json.RawMessage `json:"annotations"`
+}
+
+type ReportTemplateOutlineNode struct {
+	ID       string                      `json:"id"`
+	Title    string                      `json:"title"`
+	Level    int                         `json:"level"`
+	Line     int                         `json:"line"`
+	Children []ReportTemplateOutlineNode `json:"children,omitempty"`
+}
+
+type ReportTemplateWordImportResult struct {
+	ContentMarkdown string                      `json:"contentMarkdown"`
+	Outline         []ReportTemplateOutlineNode `json:"outline"`
 }
 
 type ReportCase struct {
@@ -490,6 +515,27 @@ type AssemblyViewDTO struct {
 	SourceRefs []FactSourceRefDTO  `json:"sourceRefs"`
 }
 
+type TemplateCommentGuidanceItem struct {
+	ID           string `json:"id"`
+	CommentText  string `json:"commentText"`
+	AnchorText   string `json:"anchorText"`
+	AnchorIndex  int    `json:"anchorIndex"`
+	SectionTitle string `json:"sectionTitle"`
+	SectionLevel int    `json:"sectionLevel"`
+	SourceType   string `json:"sourceType"`
+}
+
+type ReportCaseGenerationContextDTO struct {
+	CaseID         int64                         `json:"caseId"`
+	TemplateID     int64                         `json:"templateId"`
+	TemplateName   string                        `json:"templateName"`
+	Outline        json.RawMessage               `json:"outline"`
+	GuidanceItems  []TemplateCommentGuidanceItem `json:"guidanceItems"`
+	Consumed       bool                          `json:"consumed"`
+	ConsumedCount  int                           `json:"consumedCount"`
+	RemainingCount int                           `json:"remainingCount"`
+}
+
 func (entity ReportTemplate) ToDTO() ReportTemplateDTO {
 	return ReportTemplateDTO{
 		ID:          entity.ID,
@@ -497,6 +543,8 @@ func (entity ReportTemplate) ToDTO() ReportTemplateDTO {
 		Name:        entity.Name,
 		Description: entity.Description,
 		Status:      entity.Status,
+		DocFileID:   entity.DocFileID,
+		DocVersionNo: entity.DocVersionNo,
 		Categories:  entity.CategoriesJSON,
 		CreatedAt:   entity.CreatedAt,
 		UpdatedAt:   entity.UpdatedAt,
@@ -507,6 +555,10 @@ func (entity ReportTemplate) ToDetailDTO() ReportTemplateDetailDTO {
 	return ReportTemplateDetailDTO{
 		ReportTemplateDTO: entity.ToDTO(),
 		ProcessingConfig:  entity.ProcessingConfigJSON,
+		ContentMarkdown:   entity.ContentMarkdown,
+		Outline:           entity.OutlineJSON,
+		EditorConfig:      entity.EditorConfigJSON,
+		Annotations:       entity.AnnotationsJSON,
 	}
 }
 

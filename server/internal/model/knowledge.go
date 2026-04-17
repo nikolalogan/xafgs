@@ -10,6 +10,7 @@ const (
 	KnowledgeIndexJobStatusRunning   = "running"
 	KnowledgeIndexJobStatusSucceeded = "succeeded"
 	KnowledgeIndexJobStatusFailed    = "failed"
+	KnowledgeIndexJobStatusCancelled = "cancelled"
 )
 
 type KnowledgeIndexJob struct {

@@ -14,6 +14,7 @@ type KnowledgeSearchFilter struct {
 
 type KnowledgeRepository interface {
 	EnqueueJob(fileID int64, versionNo int) (model.KnowledgeIndexJob, bool)
+	CancelJob(fileID int64, versionNo int) bool
 	ClaimNextJob(maxRetry int) (model.KnowledgeIndexJob, bool)
 	MarkJobSucceeded(jobID int64) bool
 	MarkJobFailed(jobID int64, errorMessage string) bool

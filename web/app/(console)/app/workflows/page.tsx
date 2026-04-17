@@ -73,7 +73,7 @@ const statusLabelMap: Record<WorkflowStatus, string> = {
   disabled: '停用',
 }
 
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 const getToken = () => {
   if (typeof window === 'undefined')
@@ -631,7 +631,7 @@ function WorkflowsPageInner() {
               multiple={false}
               beforeUpload={(file) => {
                 if (file.size > MAX_UPLOAD_BYTES) {
-                  msgApi.warning('文件不能超过 10MB')
+                  msgApi.warning('文件不能超过 200MB')
                   return Upload.LIST_IGNORE
                 }
                 setAIUploadFile(file as File)

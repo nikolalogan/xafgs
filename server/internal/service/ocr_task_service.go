@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"sxfgssever/server/internal/model"
@@ -20,6 +22,7 @@ type OCRTaskService interface {
 type ocrTaskService struct {
 	fileRepository repository.FileRepository
 	ocrClient      OCRClient
+	keyLocks       sync.Map
 }
 
 func NewOCRTaskService(fileRepository repository.FileRepository, ocrClient OCRClient) OCRTaskService {
@@ -30,6 +33,8 @@ func NewOCRTaskService(fileRepository repository.FileRepository, ocrClient OCRCl
 }
 
 func (service *ocrTaskService) EnsureTask(ctx context.Context, version model.FileVersionDTO, raw []byte, _ DocumentProfile) (model.OCRTask, *model.APIError) {
+	unlock := service.lockFor(version.FileID, version.VersionNo)
+	defer unlock()
 	if existing, ok := service.fileRepository.FindLatestOCRTask(version.FileID, version.VersionNo); ok {
 		if existing.Status == model.OCRTaskStatusPending || existing.Status == model.OCRTaskStatusRunning {
 			synced, apiError := service.syncTask(ctx, existing)
@@ -99,6 +104,14 @@ func (service *ocrTaskService) EnsureTask(ctx context.Context, version model.Fil
 	}
 	updated, _ := service.fileRepository.UpdateOCRTask(task)
 	return updated, nil
+}
+
+func (service *ocrTaskService) lockFor(fileID int64, versionNo int) func() {
+	key := fmt.Sprintf("%d:%d", fileID, versionNo)
+	actual, _ := service.keyLocks.LoadOrStore(key, &sync.Mutex{})
+	lock := actual.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
 }
 
 func (service *ocrTaskService) GetTaskStatus(ctx context.Context, fileID int64, versionNo int) (model.OCRTaskDTO, *model.APIError) {

@@ -71,6 +71,44 @@ CREATE TABLE IF NOT EXISTS template (
   CHECK (jsonb_typeof(default_context_json) = 'object')
 );
 
+CREATE TABLE IF NOT EXISTS report_template (
+  id BIGSERIAL PRIMARY KEY,
+  template_key VARCHAR(128) NOT NULL UNIQUE,
+  name VARCHAR(256) NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+  doc_file_id BIGINT NOT NULL DEFAULT 0,
+  doc_version_no INT NOT NULL DEFAULT 0,
+  categories_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  processing_config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  content_markdown TEXT NOT NULL DEFAULT '',
+  outline_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  editor_config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  annotations_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0,
+  CHECK (jsonb_typeof(categories_json) = 'array'),
+  CHECK (jsonb_typeof(processing_config_json) = 'object'),
+  CHECK (jsonb_typeof(outline_json) = 'array'),
+  CHECK (jsonb_typeof(editor_config_json) = 'object'),
+  CHECK (jsonb_typeof(annotations_json) = 'array')
+);
+
+CREATE TABLE IF NOT EXISTS resource_share (
+  id BIGSERIAL PRIMARY KEY,
+  resource_type VARCHAR(64) NOT NULL,
+  resource_id BIGINT NOT NULL,
+  target_user_id BIGINT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  permission VARCHAR(32) NOT NULL DEFAULT 'edit',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0,
+  UNIQUE (resource_type, resource_id, target_user_id)
+);
+
 CREATE TABLE IF NOT EXISTS workflow (
   id BIGSERIAL PRIMARY KEY,
   workflow_key VARCHAR(128) NOT NULL UNIQUE,
@@ -105,6 +143,162 @@ CREATE TABLE IF NOT EXISTS workflow_version (
 CREATE INDEX IF NOT EXISTS idx_workflow_status ON workflow(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_version_workflow_version ON workflow_version(workflow_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_template_status ON template(status);
+CREATE INDEX IF NOT EXISTS idx_report_template_status ON report_template(status);
+CREATE INDEX IF NOT EXISTS idx_resource_share_type_resource ON resource_share(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_resource_share_type_user ON resource_share(resource_type, target_user_id);
+
+CREATE TABLE IF NOT EXISTS enterprise_project (
+  id BIGSERIAL PRIMARY KEY,
+  enterprise_id BIGINT NOT NULL,
+  template_id BIGINT NOT NULL,
+  report_case_id BIGINT NOT NULL DEFAULT 0,
+  name VARCHAR(256) NOT NULL DEFAULT '',
+  status VARCHAR(32) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'processing', 'completed', 'failed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS report_case (
+  id BIGSERIAL PRIMARY KEY,
+  template_id BIGINT NOT NULL,
+  name VARCHAR(256) NOT NULL DEFAULT '',
+  subject_id BIGINT NOT NULL DEFAULT 0,
+  subject_name VARCHAR(256) NOT NULL DEFAULT '',
+  status VARCHAR(32) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'processing', 'pending_review', 'ready')),
+  summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS report_case_file (
+  id BIGSERIAL PRIMARY KEY,
+  case_id BIGINT NOT NULL REFERENCES report_case(id) ON DELETE CASCADE,
+  file_id BIGINT NOT NULL,
+  version_no INT NOT NULL DEFAULT 0,
+  manual_category VARCHAR(128) NOT NULL DEFAULT '',
+  suggested_sub_category VARCHAR(128) NOT NULL DEFAULT '',
+  final_sub_category VARCHAR(128) NOT NULL DEFAULT '',
+  status VARCHAR(32) NOT NULL DEFAULT 'uploaded' CHECK (status IN ('uploaded', 'processed', 'pending_review', 'approved', 'rejected')),
+  review_status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (review_status IN ('pending', 'approved', 'rejected')),
+  confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+  file_type VARCHAR(64) NOT NULL DEFAULT '',
+  source_type VARCHAR(64) NOT NULL DEFAULT '',
+  parse_status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (parse_status IN ('pending', 'parsed', 'needs_ocr', 'failed')),
+  ocr_pending BOOLEAN NOT NULL DEFAULT false,
+  is_scanned_suspected BOOLEAN NOT NULL DEFAULT false,
+  processing_notes_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT NOT NULL DEFAULT 0,
+  updated_by BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS report_parse_job (
+  id BIGSERIAL PRIMARY KEY,
+  project_id BIGINT NOT NULL,
+  case_id BIGINT NOT NULL DEFAULT 0,
+  case_file_id BIGINT NOT NULL DEFAULT 0,
+  file_id BIGINT NOT NULL,
+  version_no INT NOT NULL DEFAULT 0,
+  manual_category VARCHAR(128) NOT NULL DEFAULT '',
+  file_type_group VARCHAR(64) NOT NULL DEFAULT 'other',
+  status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')),
+  retry_count INT NOT NULL DEFAULT 0,
+  error_message TEXT NOT NULL DEFAULT '',
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS document_slice (
+  id BIGSERIAL PRIMARY KEY,
+  parse_job_id BIGINT NOT NULL DEFAULT 0,
+  parent_slice_id BIGINT NOT NULL DEFAULT 0,
+  case_file_id BIGINT NOT NULL REFERENCES report_case_file(id) ON DELETE CASCADE,
+  file_id BIGINT NOT NULL DEFAULT 0,
+  version_no INT NOT NULL DEFAULT 0,
+  slice_type VARCHAR(64) NOT NULL DEFAULT '',
+  source_type VARCHAR(64) NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  title_level INT NOT NULL DEFAULT 0,
+  page_start INT NOT NULL DEFAULT 1,
+  page_end INT NOT NULL DEFAULT 1,
+  bbox_json JSONB NOT NULL DEFAULT 'null'::jsonb,
+  raw_text TEXT NOT NULL DEFAULT '',
+  clean_text TEXT NOT NULL DEFAULT '',
+  table_json JSONB NOT NULL DEFAULT 'null'::jsonb,
+  confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+  parse_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  ocr_pending BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS document_table (
+  id BIGSERIAL PRIMARY KEY,
+  case_file_id BIGINT NOT NULL REFERENCES report_case_file(id) ON DELETE CASCADE,
+  file_id BIGINT NOT NULL DEFAULT 0,
+  version_no INT NOT NULL DEFAULT 0,
+  title TEXT NOT NULL DEFAULT '',
+  page_start INT NOT NULL DEFAULT 1,
+  page_end INT NOT NULL DEFAULT 1,
+  header_row_count INT NOT NULL DEFAULT 0,
+  column_count INT NOT NULL DEFAULT 0,
+  source_type VARCHAR(64) NOT NULL DEFAULT '',
+  parse_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  is_cross_page BOOLEAN NOT NULL DEFAULT false,
+  bbox_json JSONB NOT NULL DEFAULT 'null'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS document_table_fragment (
+  id BIGSERIAL PRIMARY KEY,
+  table_id BIGINT NOT NULL REFERENCES document_table(id) ON DELETE CASCADE,
+  case_file_id BIGINT NOT NULL REFERENCES report_case_file(id) ON DELETE CASCADE,
+  page_no INT NOT NULL DEFAULT 1,
+  row_start INT NOT NULL DEFAULT 0,
+  row_end INT NOT NULL DEFAULT 0,
+  fragment_order INT NOT NULL DEFAULT 0,
+  bbox_json JSONB NOT NULL DEFAULT 'null'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS document_table_cell (
+  id BIGSERIAL PRIMARY KEY,
+  table_id BIGINT NOT NULL REFERENCES document_table(id) ON DELETE CASCADE,
+  fragment_id BIGINT NOT NULL DEFAULT 0,
+  case_file_id BIGINT NOT NULL REFERENCES report_case_file(id) ON DELETE CASCADE,
+  row_index INT NOT NULL DEFAULT 0,
+  col_index INT NOT NULL DEFAULT 0,
+  row_span INT NOT NULL DEFAULT 1,
+  col_span INT NOT NULL DEFAULT 1,
+  raw_text TEXT NOT NULL DEFAULT '',
+  normalized_value TEXT NOT NULL DEFAULT '',
+  bbox_json JSONB NOT NULL DEFAULT 'null'::jsonb,
+  confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_enterprise_project_enterprise ON enterprise_project(enterprise_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_enterprise_project_template ON enterprise_project(template_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_report_case_template ON report_case(template_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_report_case_subject ON report_case(subject_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_report_case_status_updated ON report_case(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_report_case_file_case ON report_case_file(case_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_report_case_file_file ON report_case_file(file_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_report_case_file_status_updated ON report_case_file(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_report_parse_job_project ON report_parse_job(project_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_report_parse_job_status_updated ON report_parse_job(status, updated_at ASC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_document_slice_case_file ON document_slice(case_file_id, id ASC);
+CREATE INDEX IF NOT EXISTS idx_document_slice_file_version ON document_slice(file_id, version_no, id ASC);
+CREATE INDEX IF NOT EXISTS idx_document_table_case_file ON document_table(case_file_id, id ASC);
+CREATE INDEX IF NOT EXISTS idx_document_table_file_version ON document_table(file_id, version_no, id ASC);
+CREATE INDEX IF NOT EXISTS idx_document_table_fragment_case_file ON document_table_fragment(case_file_id, id ASC);
+CREATE INDEX IF NOT EXISTS idx_document_table_cell_case_file ON document_table_cell(case_file_id, id ASC);
 
 CREATE TABLE IF NOT EXISTS workflow_execution_task (
   execution_id VARCHAR(64) PRIMARY KEY,
@@ -199,7 +393,7 @@ CREATE TABLE IF NOT EXISTS knowledge_index_job (
   id BIGSERIAL PRIMARY KEY,
   file_id BIGINT NOT NULL REFERENCES file(id) ON DELETE CASCADE,
   version_no INT NOT NULL,
-  status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'succeeded', 'failed')),
+  status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')),
   retry_count INT NOT NULL DEFAULT 0,
   error_message TEXT NOT NULL DEFAULT '',
   started_at TIMESTAMPTZ,
@@ -564,6 +758,12 @@ CREATE INDEX IF NOT EXISTS idx_chat_message_conversation_id_id ON chat_message(c
 `
 
 func Migrate(ctx context.Context, conn *sql.DB) error {
+	if _, err := conn.ExecContext(ctx, `CREATE EXTENSION IF NOT EXISTS pg_trgm;`); err != nil {
+		return fmt.Errorf("enable pg_trgm extension: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `CREATE EXTENSION IF NOT EXISTS vector;`); err != nil {
+		return fmt.Errorf("enable vector extension: %w", err)
+	}
 	if _, err := conn.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
 	}
@@ -577,6 +777,11 @@ ADD COLUMN IF NOT EXISTS region_code VARCHAR(64);
 ALTER TABLE region
 ADD COLUMN IF NOT EXISTS region_name VARCHAR(128);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_region_region_code_unique ON region(region_code) WHERE region_code IS NOT NULL;
+
+ALTER TABLE report_template
+ADD COLUMN IF NOT EXISTS doc_file_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE report_template
+ADD COLUMN IF NOT EXISTS doc_version_no INT NOT NULL DEFAULT 0;
 
 ALTER TABLE region_economy
 DROP COLUMN IF EXISTS gdp_rank_province;
@@ -791,6 +996,53 @@ ADD COLUMN IF NOT EXISTS enable_web_search BOOLEAN NOT NULL DEFAULT false;
 		return fmt.Errorf("migrate chat_conversation enable_web_search: %w", err)
 	}
 	if _, err := conn.ExecContext(ctx, `
+DO $$
+DECLARE
+  row_item RECORD;
+BEGIN
+  FOR row_item IN
+    SELECT c.conname
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE c.contype = 'c'
+      AND n.nspname = current_schema()
+      AND t.relname = 'report_parse_job'
+      AND pg_get_constraintdef(c.oid) ILIKE '%status%'
+  LOOP
+    EXECUTE format('ALTER TABLE report_parse_job DROP CONSTRAINT %I', row_item.conname);
+  END LOOP;
+END $$;
+
+ALTER TABLE report_parse_job
+ADD CONSTRAINT report_parse_job_status_check
+CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled'));
+
+DO $$
+DECLARE
+  row_item RECORD;
+BEGIN
+  FOR row_item IN
+    SELECT c.conname
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE c.contype = 'c'
+      AND n.nspname = current_schema()
+      AND t.relname = 'knowledge_index_job'
+      AND pg_get_constraintdef(c.oid) ILIKE '%status%'
+  LOOP
+    EXECUTE format('ALTER TABLE knowledge_index_job DROP CONSTRAINT %I', row_item.conname);
+  END LOOP;
+END $$;
+
+ALTER TABLE knowledge_index_job
+ADD CONSTRAINT knowledge_index_job_status_check
+CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled'));
+`); err != nil {
+		return fmt.Errorf("migrate parse/vector cancelled status: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
 ALTER TABLE user_config
 ADD COLUMN IF NOT EXISTS search_ai_base_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_config
@@ -889,6 +1141,36 @@ ON CONFLICT (username) DO NOTHING
 	}
 	if err := seedAdminDivisions(ctx, conn, now); err != nil {
 		return err
+	}
+
+	_, err = conn.ExecContext(ctx, `
+INSERT INTO report_template (
+  template_key, name, description, status,
+  doc_file_id, doc_version_no,
+  categories_json, processing_config_json,
+  content_markdown, outline_json, editor_config_json, annotations_json,
+  created_at, updated_at, created_by, updated_by
+) VALUES (
+  'default_report_pack',
+  '默认报告组装模板',
+  '包含主体、区域、财务、项目、反担保五大类的最小模板',
+  'active',
+  0,
+  0,
+  '[{"key":"subject","name":"主体","required":true},{"key":"region","name":"区域","required":true},{"key":"finance","name":"财务","required":true},{"key":"project","name":"项目","required":false},{"key":"counter_guarantee","name":"反担保","required":false}]'::jsonb,
+  '{"classificationMode":"manual_category+rule+ai_fallback","reviewRequired":true,"traceability":true}'::jsonb,
+  '## 模板说明
+
+请在此编辑报告模板内容。',
+  '[{"id":"heading-1","title":"模板说明","level":2,"line":1}]'::jsonb,
+  '{}'::jsonb,
+  '[]'::jsonb,
+  $1, $1, 1, 1
+)
+ON CONFLICT (template_key) DO NOTHING
+`, now)
+	if err != nil {
+		return fmt.Errorf("seed report template: %w", err)
 	}
 
 	// demo template

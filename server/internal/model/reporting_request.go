@@ -9,6 +9,9 @@ type CreateReportTemplateRequest struct {
 	Status               string          `json:"status"`
 	CategoriesJSON       json.RawMessage `json:"categoriesJson"`
 	ProcessingConfigJSON json.RawMessage `json:"processingConfigJson"`
+	ContentMarkdown      string          `json:"contentMarkdown"`
+	EditorConfigJSON     json.RawMessage `json:"editorConfigJson"`
+	AnnotationsJSON      json.RawMessage `json:"annotationsJson"`
 }
 
 type UpdateReportTemplateRequest struct {
@@ -17,6 +20,26 @@ type UpdateReportTemplateRequest struct {
 	Status               string          `json:"status"`
 	CategoriesJSON       json.RawMessage `json:"categoriesJson"`
 	ProcessingConfigJSON json.RawMessage `json:"processingConfigJson"`
+	ContentMarkdown      string          `json:"contentMarkdown"`
+	EditorConfigJSON     json.RawMessage `json:"editorConfigJson"`
+	AnnotationsJSON      json.RawMessage `json:"annotationsJson"`
+}
+
+type ReportTemplateAIAssistRequest struct {
+	Mode         string `json:"mode"`
+	Instruction  string `json:"instruction"`
+	SelectedText string `json:"selectedText"`
+	FullMarkdown string `json:"fullMarkdown"`
+	Model        string `json:"model"`
+}
+
+type ReportTemplateAIAssistResponse struct {
+	ResultText string `json:"resultText"`
+	Model      string `json:"model"`
+}
+
+type UpdateReportTemplateShareUsersRequest struct {
+	UserIDs []int64 `json:"userIds"`
 }
 
 type CreateReportCaseRequest struct {

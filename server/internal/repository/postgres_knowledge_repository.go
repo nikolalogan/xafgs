@@ -46,6 +46,36 @@ RETURNING id, file_id, version_no, status, retry_count, error_message, started_a
 	return job, true
 }
 
+func (repository *PostgresKnowledgeRepository) CancelJob(fileID int64, versionNo int) bool {
+	if fileID <= 0 || versionNo <= 0 {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := repository.db.ExecContext(ctx, `
+UPDATE knowledge_index_job
+SET status = $3, error_message = '', finished_at = NOW(), updated_at = NOW()
+WHERE file_id = $1 AND version_no = $2 AND status IN ($4, $5)
+`, fileID, versionNo, model.KnowledgeIndexJobStatusCancelled, model.KnowledgeIndexJobStatusPending, model.KnowledgeIndexJobStatusRunning)
+	if err != nil {
+		return false
+	}
+	affected, _ := result.RowsAffected()
+	if affected > 0 {
+		return true
+	}
+	existsResult, existsErr := repository.db.ExecContext(ctx, `
+UPDATE knowledge_index_job
+SET updated_at = updated_at
+WHERE file_id = $1 AND version_no = $2
+`, fileID, versionNo)
+	if existsErr != nil {
+		return false
+	}
+	existsAffected, _ := existsResult.RowsAffected()
+	return existsAffected > 0
+}
+
 func (repository *PostgresKnowledgeRepository) ClaimNextJob(maxRetry int) (model.KnowledgeIndexJob, bool) {
 	if maxRetry <= 0 {
 		maxRetry = 3
@@ -102,8 +132,8 @@ func (repository *PostgresKnowledgeRepository) MarkJobSucceeded(jobID int64) boo
 	result, err := repository.db.ExecContext(ctx, `
 UPDATE knowledge_index_job
 SET status = $2, error_message = '', finished_at = NOW(), updated_at = NOW()
-WHERE id = $1
-`, jobID, model.KnowledgeIndexJobStatusSucceeded)
+WHERE id = $1 AND status <> $3
+`, jobID, model.KnowledgeIndexJobStatusSucceeded, model.KnowledgeIndexJobStatusCancelled)
 	if err != nil {
 		return false
 	}
@@ -117,8 +147,8 @@ func (repository *PostgresKnowledgeRepository) MarkJobFailed(jobID int64, errorM
 	result, err := repository.db.ExecContext(ctx, `
 UPDATE knowledge_index_job
 SET status = $2, retry_count = retry_count + 1, error_message = $3, finished_at = NOW(), updated_at = NOW()
-WHERE id = $1
-`, jobID, model.KnowledgeIndexJobStatusFailed, truncateText(strings.TrimSpace(errorMessage), 1000))
+WHERE id = $1 AND status <> $4
+`, jobID, model.KnowledgeIndexJobStatusFailed, truncateText(strings.TrimSpace(errorMessage), 1000), model.KnowledgeIndexJobStatusCancelled)
 	if err != nil {
 		return false
 	}
