@@ -298,6 +298,13 @@ func (handler *ReportingHandler) Register(router fiber.Router, adminMiddleware f
 		Auth:               "auth",
 		SuccessDataExample: apimeta.ExampleFromType[model.EnterpriseProjectFileTerminateResultDTO](),
 	}, handler.TerminateEnterpriseProjectFile)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[enterpriseProjectFileTerminatePathRequest]{
+		Method:             fiber.MethodDelete,
+		Path:               "/enterprise-projects/:projectId/files/:caseFileId",
+		Summary:            "移除单个企业项目附件",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.EnterpriseProjectFileRemoveResultDTO](),
+	}, handler.RemoveEnterpriseProjectFile)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[enterpriseProjectIDPathRequest]{
 		Method:             fiber.MethodGet,
 		Path:               "/enterprise-projects/:projectId/progress",
@@ -710,6 +717,18 @@ func (handler *ReportingHandler) TerminateEnterpriseProjectFile(c *fiber.Ctx, re
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, result, "终止请求已处理")
+}
+
+func (handler *ReportingHandler) RemoveEnterpriseProjectFile(c *fiber.Ctx, request *enterpriseProjectFileTerminatePathRequest) error {
+	operatorID, ok := c.Locals(middleware.LocalAuthUserID).(int64)
+	if !ok || operatorID <= 0 {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+	result, apiError := handler.reportingService.RemoveEnterpriseProjectFile(c.UserContext(), request.ProjectID, request.CaseFileID, operatorID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, result, "项目附件已移除")
 }
 
 func (handler *ReportingHandler) GetEnterpriseProjectProgress(c *fiber.Ctx, request *enterpriseProjectIDPathRequest) error {

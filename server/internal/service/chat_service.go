@@ -19,7 +19,6 @@ import (
 
 const DefaultChatModel = "gpt-4o-mini"
 const chatSearchReferencesMarker = "[WEB_SEARCH_REFERENCES]"
-const maxAIAttachmentBytes int64 = 10 * 1024 * 1024
 const maxAITextFileBytes int64 = 1 * 1024 * 1024
 const (
 	chatTimeoutBase = 60 * time.Second
@@ -365,7 +364,7 @@ func (service *chatService) buildAttachmentPayload(ctx context.Context, attachme
 		if attachment.FileID <= 0 {
 			return nil, "", 0, model.NewAPIError(400, response.CodeBadRequest, "attachments.fileId 不合法")
 		}
-		version, raw, apiError := service.fileService.ReadReferenceContent(ctx, attachment.FileID, attachment.VersionNo, maxAIAttachmentBytes)
+		version, raw, apiError := service.fileService.ReadReferenceContentWithScene(ctx, attachment.FileID, attachment.VersionNo, maxAIProcessBytes, "chat_attachment")
 		if apiError != nil {
 			return nil, "", 0, apiError
 		}

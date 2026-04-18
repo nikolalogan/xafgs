@@ -21,6 +21,9 @@ class LocalPPStructureProvider(OCRProvider):
     def is_configured(self) -> bool:
         return os.getenv("OCR_LOCAL_PPSTRUCTURE_ENABLED", "1").strip() not in {"0", "false", "False"}
 
+    def warmup(self, enable_tables: bool = False) -> None:
+        self._get_pipeline(enable_tables=enable_tables)
+
     def extract(self, content: bytes, file_name: str, mime_type: str, enable_tables: bool) -> OCRResult:
         if not self.is_configured():
             raise RuntimeError("local_pp_structure is disabled")

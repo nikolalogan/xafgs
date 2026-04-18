@@ -32,6 +32,7 @@ type FileService interface {
 	ListVersions(ctx context.Context, fileID int64) ([]model.FileVersionDTO, *model.APIError)
 	ResolveReference(ctx context.Context, fileID int64, versionNo int) (model.FileVersionDTO, *model.APIError)
 	ReadReferenceContent(ctx context.Context, fileID int64, versionNo int, maxBytes int64) (model.FileVersionDTO, []byte, *model.APIError)
+	ReadReferenceContentWithScene(ctx context.Context, fileID int64, versionNo int, maxBytes int64, scene string) (model.FileVersionDTO, []byte, *model.APIError)
 	DeleteFile(ctx context.Context, fileID int64) *model.APIError
 }
 
@@ -341,27 +342,65 @@ func (service *fileService) ResolveReference(_ context.Context, fileID int64, ve
 }
 
 func (service *fileService) ReadReferenceContent(ctx context.Context, fileID int64, versionNo int, maxBytes int64) (model.FileVersionDTO, []byte, *model.APIError) {
-	log.Printf("file-read start fileId=%d versionNo=%d maxBytes=%d", fileID, versionNo, maxBytes)
+	return service.ReadReferenceContentWithScene(ctx, fileID, versionNo, maxBytes, "")
+}
+
+func (service *fileService) ReadReferenceContentWithScene(ctx context.Context, fileID int64, versionNo int, maxBytes int64, scene string) (model.FileVersionDTO, []byte, *model.APIError) {
+	scene = normalizeFileReadScene(scene)
+	log.Printf("file-read start fileId=%d versionNo=%d maxBytes=%d scene=%s", fileID, versionNo, maxBytes, scene)
 	version, apiError := service.ResolveReference(ctx, fileID, versionNo)
 	if apiError != nil {
-		log.Printf("file-read failed fileId=%d versionNo=%d reason=resolve_failed err=%s", fileID, versionNo, apiError.Message)
+		log.Printf("file-read failed fileId=%d versionNo=%d reason=resolve_failed scene=%s err=%s", fileID, versionNo, scene, apiError.Message)
 		return model.FileVersionDTO{}, nil, apiError
 	}
 	if maxBytes > 0 && version.SizeBytes > maxBytes {
-		log.Printf("file-read failed fileId=%d versionNo=%d reason=size_exceeded size=%d maxBytes=%d", fileID, version.VersionNo, version.SizeBytes, maxBytes)
-		return model.FileVersionDTO{}, nil, model.NewAPIError(400, response.CodeBadRequest, "文件超过 AI 处理大小限制")
+		log.Printf("file-read failed fileId=%d versionNo=%d reason=size_exceeded size=%d maxBytes=%d scene=%s", fileID, version.VersionNo, version.SizeBytes, maxBytes, scene)
+		return model.FileVersionDTO{}, nil, model.NewAPIError(400, response.CodeBadRequest, buildAIFileSizeExceededMessage(version.SizeBytes, maxBytes, scene))
 	}
 	raw, err := service.fileStorage.Read(version.StorageKey)
 	if err != nil {
-		log.Printf("file-read failed fileId=%d versionNo=%d reason=storage_read_failed storage=%s err=%v", fileID, version.VersionNo, version.StorageKey, err)
+		log.Printf("file-read failed fileId=%d versionNo=%d reason=storage_read_failed scene=%s storage=%s err=%v", fileID, version.VersionNo, scene, version.StorageKey, err)
 		return model.FileVersionDTO{}, nil, model.NewAPIError(500, response.CodeInternal, "读取上传文件失败")
 	}
 	if maxBytes > 0 && int64(len(raw)) > maxBytes {
-		log.Printf("file-read failed fileId=%d versionNo=%d reason=content_exceeded actual=%d maxBytes=%d", fileID, version.VersionNo, len(raw), maxBytes)
-		return model.FileVersionDTO{}, nil, model.NewAPIError(400, response.CodeBadRequest, "文件超过 AI 处理大小限制")
+		log.Printf("file-read failed fileId=%d versionNo=%d reason=content_exceeded actual=%d maxBytes=%d scene=%s", fileID, version.VersionNo, len(raw), maxBytes, scene)
+		return model.FileVersionDTO{}, nil, model.NewAPIError(400, response.CodeBadRequest, buildAIFileSizeExceededMessage(int64(len(raw)), maxBytes, scene))
 	}
-	log.Printf("file-read success fileId=%d versionNo=%d storage=%s bytes=%d mime=%s", fileID, version.VersionNo, version.StorageKey, len(raw), version.MimeType)
+	log.Printf("file-read success fileId=%d versionNo=%d scene=%s storage=%s bytes=%d mime=%s", fileID, version.VersionNo, scene, version.StorageKey, len(raw), version.MimeType)
 	return version, raw, nil
+}
+
+func normalizeFileReadScene(scene string) string {
+	trimmed := strings.TrimSpace(scene)
+	if trimmed == "" {
+		return "generic"
+	}
+	return trimmed
+}
+
+func fileReadSceneLabel(scene string) string {
+	switch normalizeFileReadScene(scene) {
+	case "project_parse":
+		return "项目文件解析"
+	case "chat_attachment":
+		return "聊天附件处理"
+	case "workflow_generate":
+		return "工作流生成"
+	default:
+		return "通用处理"
+	}
+}
+
+func formatSizeInMB(sizeBytes int64) string {
+	if sizeBytes <= 0 {
+		return "0MB"
+	}
+	sizeMB := float64(sizeBytes) / 1024.0 / 1024.0
+	return fmt.Sprintf("%.2fMB", sizeMB)
+}
+
+func buildAIFileSizeExceededMessage(actualBytes int64, maxBytes int64, scene string) string {
+	return fmt.Sprintf("文件大小 %s，超过 AI 处理上限 %s（%s）", formatSizeInMB(actualBytes), formatSizeInMB(maxBytes), fileReadSceneLabel(scene))
 }
 
 func (service *fileService) DeleteFile(_ context.Context, fileID int64) *model.APIError {
@@ -405,7 +444,7 @@ func (service *fileService) persistUploadedFile(fileID int64, versionNo int, fil
 	if fileHeader.Size > 0 && fileHeader.Size > maxUploadSizeBytes {
 		return model.UploadedFileMeta{}, model.NewAPIError(400, response.CodeBadRequest, "上传文件大小不能超过 200MB")
 	}
-	fileName := sanitizeFileName(fileHeader.Filename)
+	fileName := sanitizeDisplayFileName(fileHeader.Filename)
 	openedFile, err := fileHeader.Open()
 	if err != nil {
 		return model.UploadedFileMeta{}, model.NewAPIError(400, response.CodeBadRequest, "读取上传文件失败")
@@ -433,7 +472,7 @@ func (service *fileService) persistUploadedFile(fileID int64, versionNo int, fil
 }
 
 func (service *fileService) persistRawContent(fileID int64, versionNo int, originName string, mimeType string, content []byte) (model.UploadedFileMeta, *model.APIError) {
-	trimmedOriginName := sanitizeFileName(originName)
+	trimmedOriginName := sanitizeDisplayFileName(originName)
 	if trimmedOriginName == "" {
 		trimmedOriginName = "file.bin"
 	}
@@ -490,7 +529,7 @@ func buildStorageKey(fileID int64, versionNo int, fileName string) string {
 	if ext == "" {
 		ext = ".bin"
 	}
-	return fmt.Sprintf("%d/v%d/%s_%s%s", fileID, versionNo, prefix, sanitizeFileName(name), ext)
+	return fmt.Sprintf("%d/v%d/%s_%s%s", fileID, versionNo, prefix, sanitizeStorageFileName(name), ext)
 }
 
 func detectMimeType(file multipart.File, fileName string) string {

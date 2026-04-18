@@ -31,12 +31,14 @@ type ReportingRepository interface {
 	FindReportParseJobByID(jobID int64) (model.ReportParseJob, bool)
 	ClaimNextReportParseJob(maxRetry int) (model.ReportParseJob, bool)
 	UpdateReportParseJob(job model.ReportParseJob) (model.ReportParseJob, bool)
+	DeleteReportParseJobsByCaseFileID(caseFileID int64)
 
 	FindReportCaseFiles(caseID int64) []model.ReportCaseFile
 	FindReportCaseFileByID(caseFileID int64) (model.ReportCaseFile, bool)
 	FindReportCaseFile(caseID int64, fileID int64) (model.ReportCaseFile, bool)
 	CreateReportCaseFile(caseFile model.ReportCaseFile) model.ReportCaseFileDTO
 	UpdateReportCaseFile(caseFile model.ReportCaseFile) (model.ReportCaseFileDTO, bool)
+	DeleteReportCaseFile(caseFileID int64) bool
 
 	DeleteSlicesByCaseFileID(caseFileID int64)
 	CreateDocumentSlice(slice model.DocumentSlice) model.DocumentSliceDTO
@@ -388,6 +390,14 @@ func (repository *reportingRepository) UpdateReportParseJob(job model.ReportPars
 	return entity, true
 }
 
+func (repository *reportingRepository) DeleteReportParseJobsByCaseFileID(caseFileID int64) {
+	for id, entity := range repository.reportParseJobs {
+		if entity.CaseFileID == caseFileID {
+			delete(repository.reportParseJobs, id)
+		}
+	}
+}
+
 func (repository *reportingRepository) FindReportCaseFiles(caseID int64) []model.ReportCaseFile {
 	out := make([]model.ReportCaseFile, 0)
 	for _, entity := range repository.reportCaseFiles {
@@ -445,6 +455,14 @@ func (repository *reportingRepository) UpdateReportCaseFile(caseFile model.Repor
 	entity.UpdatedBy = caseFile.UpdatedBy
 	repository.reportCaseFiles[entity.ID] = entity
 	return entity.ToDTO(), true
+}
+
+func (repository *reportingRepository) DeleteReportCaseFile(caseFileID int64) bool {
+	if _, ok := repository.reportCaseFiles[caseFileID]; !ok {
+		return false
+	}
+	delete(repository.reportCaseFiles, caseFileID)
+	return true
 }
 
 func (repository *reportingRepository) DeleteSlicesByCaseFileID(caseFileID int64) {

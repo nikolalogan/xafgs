@@ -61,15 +61,21 @@ services:
         APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
         PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
         PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-        OCR_WHEELS_ONLY: "${OCR_WHEELS_ONLY:-1}"
+        OCR_WHEELS_ONLY: "${OCR_WHEELS_ONLY:-0}"
         OCR_PPSTRUCTURE_PRELOAD: "${OCR_PPSTRUCTURE_PRELOAD:-1}"
+        OCR_PADDLE_PACKAGE: "${OCR_PADDLE_PACKAGE:-paddlepaddle-gpu==3.2.0}"
+        OCR_PADDLE_EXTRA_INDEX_URL: "${OCR_PADDLE_EXTRA_INDEX_URL:-https://www.paddlepaddle.org.cn/packages/stable/cu118/}"
+        OCR_PADDLE_EXPECT_VERSION: "${OCR_PADDLE_EXPECT_VERSION:-3.2.0}"
     image: sxfgssever-ocr-service-prod:latest
+    gpus: all
     environment:
       TZ: "Asia/Shanghai"
       PADDLEX_HOME: "/root/.paddlex"
       PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: "False"
       OCR_PDX_PIPELINE: "PP-StructureV3"
-      OCR_PPSTRUCTURE_DEVICE: "cpu"
+      OCR_PPSTRUCTURE_DEVICE: "gpu"
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
@@ -77,6 +83,12 @@ services:
       FLAGS_enable_pir_api: "0"
       FLAGS_enable_pir_in_executor: "0"
       CPU_NUM: "1"
+      OCR_LOCAL_TIMEOUT_BASE_SEC: "120"
+      OCR_LOCAL_TIMEOUT_PER_PAGE_SEC: "18"
+      OCR_LOCAL_TIMEOUT_SIZE_STEP_MB: "50"
+      OCR_LOCAL_TIMEOUT_SIZE_BONUS_SEC: "30"
+      OCR_LOCAL_TIMEOUT_MIN_SEC: "120"
+      OCR_LOCAL_TIMEOUT_MAX_SEC: "900"
     volumes:
       - ./ocr-service/model_cache:/root/.paddlex
     expose:

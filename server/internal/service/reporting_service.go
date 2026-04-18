@@ -49,6 +49,7 @@ type ReportingService interface {
 	UpdateEnterpriseProjectFileBlock(ctx context.Context, projectID int64, caseFileID int64, blockID int64, currentHTML string, operatorID int64) (model.EnterpriseProjectFileBlockUpdateResultDTO, *model.APIError)
 	ConfirmEnterpriseProjectVectorization(ctx context.Context, projectID int64, operatorID int64) (model.EnterpriseProjectVectorConfirmResultDTO, *model.APIError)
 	TerminateEnterpriseProjectFile(ctx context.Context, projectID int64, caseFileID int64, operatorID int64) (model.EnterpriseProjectFileTerminateResultDTO, *model.APIError)
+	RemoveEnterpriseProjectFile(ctx context.Context, projectID int64, caseFileID int64, operatorID int64) (model.EnterpriseProjectFileRemoveResultDTO, *model.APIError)
 	GetEnterpriseProjectProgress(ctx context.Context, projectID int64) (model.EnterpriseProjectProgressDTO, *model.APIError)
 	RunParseQueueOnce(ctx context.Context) bool
 	StartParseWorker(ctx context.Context, interval time.Duration)
@@ -1288,6 +1289,43 @@ func (service *reportingService) TerminateEnterpriseProjectFile(ctx context.Cont
 		ParseStatus:  parseStatus,
 		VectorStatus: vectorStatus,
 		Message:      message,
+	}, nil
+}
+
+func (service *reportingService) RemoveEnterpriseProjectFile(ctx context.Context, projectID int64, caseFileID int64, operatorID int64) (model.EnterpriseProjectFileRemoveResultDTO, *model.APIError) {
+	if projectID <= 0 || caseFileID <= 0 {
+		return model.EnterpriseProjectFileRemoveResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "projectId/caseFileId 不合法")
+	}
+	project, ok := service.reportingRepository.FindEnterpriseProjectByID(projectID)
+	if !ok {
+		return model.EnterpriseProjectFileRemoveResultDTO{}, model.NewAPIError(404, response.CodeNotFound, "项目不存在")
+	}
+	caseFile, ok := service.reportingRepository.FindReportCaseFileByID(caseFileID)
+	if !ok || caseFile.CaseID != project.ReportCaseID {
+		return model.EnterpriseProjectFileRemoveResultDTO{}, model.NewAPIError(404, response.CodeNotFound, "项目文件不存在")
+	}
+
+	_, _ = service.TerminateEnterpriseProjectFile(ctx, projectID, caseFileID, operatorID)
+	if service.knowledgeQueue != nil {
+		_ = service.knowledgeQueue.Cancel(ctx, caseFile.FileID, caseFile.VersionNo)
+	}
+	service.reportingRepository.DeleteReportParseJobsByCaseFileID(caseFile.ID)
+	service.reportingRepository.DeleteSlicesByCaseFileID(caseFile.ID)
+	service.reportingRepository.DeleteTablesByCaseFileID(caseFile.ID)
+	removedFactIDs := service.reportingRepository.DeleteFactsByCaseFileID(caseFile.ID)
+	service.reportingRepository.DeleteSourceRefsByFactIDs(removedFactIDs)
+	if !service.reportingRepository.DeleteReportCaseFile(caseFile.ID) {
+		return model.EnterpriseProjectFileRemoveResultDTO{}, model.NewAPIError(500, response.CodeInternal, "移除项目文件失败")
+	}
+
+	if operatorID > 0 {
+		project.UpdatedBy = operatorID
+		_, _ = service.reportingRepository.UpdateEnterpriseProject(project)
+	}
+	return model.EnterpriseProjectFileRemoveResultDTO{
+		ProjectID:  project.ID,
+		CaseFileID: caseFile.ID,
+		Message:    "已移除项目附件",
 	}, nil
 }
 

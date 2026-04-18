@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 type FileStorage interface {
@@ -79,17 +80,34 @@ func (storage *LocalFileStorage) Read(storageKey string) ([]byte, error) {
 	return os.ReadFile(fullPath)
 }
 
-var unsafeFileNameChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+var unsafeStorageFileNameChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
-func sanitizeFileName(name string) string {
-	base := strings.TrimSpace(filepath.Base(name))
+func sanitizeDisplayFileName(name string) string {
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	base := strings.TrimSpace(filepath.Base(normalized))
 	if base == "" || base == "." || base == string(filepath.Separator) {
 		return "file.bin"
 	}
-	sanitized := unsafeFileNameChars.ReplaceAllString(base, "_")
-	sanitized = strings.Trim(sanitized, "._")
+	sanitized := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, base)
+	sanitized = strings.TrimSpace(sanitized)
+	sanitized = strings.NewReplacer("/", "_", "\\", "_", "\x00", "_").Replace(sanitized)
 	if sanitized == "" {
 		return "file.bin"
+	}
+	return sanitized
+}
+
+func sanitizeStorageFileName(name string) string {
+	displayName := sanitizeDisplayFileName(name)
+	sanitized := unsafeStorageFileNameChars.ReplaceAllString(displayName, "_")
+	sanitized = strings.Trim(sanitized, "._")
+	if sanitized == "" {
+		return "file"
 	}
 	return sanitized
 }

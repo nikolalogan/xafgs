@@ -103,6 +103,12 @@ type EnterpriseProjectFileTerminateResultDTO struct {
 	Message      string `json:"message"`
 }
 
+type EnterpriseProjectFileRemoveResultDTO struct {
+	ProjectID  int64  `json:"projectId"`
+	CaseFileID int64  `json:"caseFileId"`
+	Message    string `json:"message"`
+}
+
 type EnterpriseProjectFileManualAdjustResultDTO struct {
 	ProjectID        int64     `json:"projectId"`
 	CaseFileID       int64     `json:"caseFileId"`

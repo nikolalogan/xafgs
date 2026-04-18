@@ -1,8 +1,11 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Card, Collapse, Space, Tag, Typography, message } from 'antd'
-import { SimpleEditor } from '@/components/tiptap-templates/simple/simple-editor'
+import { Button, Card, Space, Tag, Typography, message } from 'antd'
+import { Extension, mergeAttributes, Node } from '@tiptap/core'
+import { EditorContent, useEditor } from '@tiptap/react'
+import { StarterKit } from '@tiptap/starter-kit'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
 
 type ApiResponse<T> = {
   message?: string
@@ -54,7 +57,76 @@ type CaseFileBlockEditorProps = {
 }
 
 const SAVE_DEBOUNCE_MS = 800
-const PREVIEW_ITEM_HEIGHT = 92
+
+const SegmentBlock = Node.create({
+  name: 'segmentBlock',
+  group: 'block',
+  content: 'block+',
+  isolating: true,
+  defining: true,
+  selectable: true,
+  addAttributes() {
+    return {
+      blockId: { default: 0 },
+      sectionId: { default: '' },
+      title: { default: '' },
+      sliceType: { default: '' },
+      pageStart: { default: 0 },
+      pageEnd: { default: 0 },
+    }
+  },
+  parseHTML() {
+    return [{ tag: 'section[data-segment-block]' }]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['section', mergeAttributes(HTMLAttributes, { 'data-segment-block': '1' }), 0]
+  },
+})
+
+const SegmentIsolation = Extension.create({
+  name: 'segmentIsolation',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey('segment-isolation'),
+        props: {
+          handleKeyDown(view, event) {
+            const selection = view.state.selection
+            const from = selection.from
+            const to = selection.to
+            const segmentNameAt = (position: number) => {
+              const $pos = view.state.doc.resolve(position)
+              for (let depth = $pos.depth; depth >= 0; depth--) {
+                if ($pos.node(depth).type.name === 'segmentBlock') {
+                  const attrs = $pos.node(depth).attrs as { blockId?: number }
+                  return String(attrs?.blockId || '')
+                }
+              }
+              return ''
+            }
+
+            const fromSegment = segmentNameAt(from)
+            const toSegment = segmentNameAt(Math.max(from, to))
+            if (from !== to && fromSegment && toSegment && fromSegment !== toSegment)
+              return true
+
+            if (event.key === 'Backspace' && from === to && from > 1) {
+              const leftSegment = segmentNameAt(from - 1)
+              if (fromSegment && leftSegment && fromSegment !== leftSegment)
+                return true
+            }
+            if (event.key === 'Delete' && from === to && to < view.state.doc.content.size) {
+              const rightSegment = segmentNameAt(to + 1)
+              if (fromSegment && rightSegment && fromSegment !== rightSegment)
+                return true
+            }
+            return false
+          },
+        },
+      }),
+    ]
+  },
+})
 
 const getToken = () => {
   if (typeof window === 'undefined')
@@ -65,23 +137,31 @@ const getToken = () => {
     || ''
 }
 
-const stripHTML = (value: string) => value
-  .replace(/<[^>]+>/g, ' ')
-  .replace(/\s+/g, ' ')
-  .trim()
+const escapeAttr = (value: string) => value
+  .replaceAll('&', '&amp;')
+  .replaceAll('"', '&quot;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+
+const normalizeHTML = (value: string) => String(value || '<p></p>').trim()
 
 export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: CaseFileBlockEditorProps) {
   const [msgApi, contextHolder] = message.useMessage()
   const [loading, setLoading] = useState(false)
   const [sections, setSections] = useState<FileBlockSectionDTO[]>([])
   const [blocks, setBlocks] = useState<FileBlockItemDTO[]>([])
-  const [activeSectionKeys, setActiveSectionKeys] = useState<string[]>([])
-  const [scrollTopBySection, setScrollTopBySection] = useState<Record<string, number>>({})
-  const [activeBlockID, setActiveBlockID] = useState(0)
-  const [draftByBlockID, setDraftByBlockID] = useState<Record<number, string>>({})
   const [saveStateByBlockID, setSaveStateByBlockID] = useState<Record<number, SaveState>>({})
+  const [activeOutlineSectionID, setActiveOutlineSectionID] = useState('')
   const baselineByBlockIDRef = useRef<Record<number, string>>({})
   const saveTimerByBlockIDRef = useRef<Record<number, number>>({})
+  const isHydratingRef = useRef(false)
+  const editorRootRef = useRef<HTMLDivElement | null>(null)
+
+  const blockMap = useMemo(() => {
+    const map = new Map<number, FileBlockItemDTO>()
+    blocks.forEach(block => map.set(block.blockId, block))
+    return map
+  }, [blocks])
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
@@ -97,31 +177,97 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
     return payload.data as T
   }
 
+  const persistBlock = async (blockId: number, currentHtml: string) => {
+    setSaveStateByBlockID(prev => ({ ...prev, [blockId]: 'saving' }))
+    try {
+      const payload = await request<BlockSaveResultDTO>(
+        `/api/enterprise-projects/${projectId}/files/${caseFileId}/blocks/${blockId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ currentHtml }),
+        },
+      )
+      const normalized = normalizeHTML(payload?.currentHtml || currentHtml)
+      baselineByBlockIDRef.current[blockId] = normalized
+      setSaveStateByBlockID(prev => ({ ...prev, [blockId]: 'saved' }))
+      window.setTimeout(() => {
+        setSaveStateByBlockID((prev) => {
+          if (prev[blockId] !== 'saved')
+            return prev
+          return { ...prev, [blockId]: 'idle' }
+        })
+      }, 1200)
+    } catch (error) {
+      setSaveStateByBlockID(prev => ({ ...prev, [blockId]: 'error' }))
+      msgApi.error(error instanceof Error ? error.message : '自动保存失败')
+    }
+  }
+
+  const scheduleSave = (blockId: number, currentHtml: string) => {
+    const normalized = normalizeHTML(currentHtml)
+    const baseline = normalizeHTML(baselineByBlockIDRef.current[blockId] || '<p></p>')
+    if (normalized === baseline) {
+      setSaveStateByBlockID(prev => ({ ...prev, [blockId]: 'idle' }))
+      const timer = saveTimerByBlockIDRef.current[blockId]
+      if (timer) {
+        window.clearTimeout(timer)
+        delete saveTimerByBlockIDRef.current[blockId]
+      }
+      return
+    }
+    setSaveStateByBlockID(prev => ({ ...prev, [blockId]: 'dirty' }))
+    const oldTimer = saveTimerByBlockIDRef.current[blockId]
+    if (oldTimer)
+      window.clearTimeout(oldTimer)
+    saveTimerByBlockIDRef.current[blockId] = window.setTimeout(() => {
+      persistBlock(blockId, normalized)
+      delete saveTimerByBlockIDRef.current[blockId]
+    }, SAVE_DEBOUNCE_MS)
+  }
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    editable: enabled,
+    extensions: [
+      StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
+      SegmentBlock,
+      SegmentIsolation,
+    ],
+    content: '<p></p>',
+    onUpdate: ({ editor }) => {
+      if (isHydratingRef.current)
+        return
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(editor.getHTML(), 'text/html')
+      const nodes = Array.from(doc.querySelectorAll('section[data-segment-block]'))
+      for (const node of nodes) {
+        const blockId = Number(node.getAttribute('data-block-id') || 0)
+        if (blockId <= 0)
+          continue
+        scheduleSave(blockId, node.innerHTML || '<p></p>')
+      }
+    },
+  }, [enabled, projectId, caseFileId])
+
   const loadBlocks = async () => {
     if (!enabled || !projectId || !caseFileId)
       return
     setLoading(true)
     try {
       const data = await request<FileBlocksDTO>(`/api/enterprise-projects/${projectId}/files/${caseFileId}/blocks`, { method: 'GET' })
-      setSections(Array.isArray(data?.sections) ? data.sections : [])
       const sectionRows = Array.isArray(data?.sections) ? data.sections : []
-      if (sectionRows.length > 0)
-        setActiveSectionKeys([sectionRows[0].sectionId])
       const blockRows = Array.isArray(data?.blocks) ? data.blocks : []
+      setSections(sectionRows)
       setBlocks(blockRows)
-      const nextDraft: Record<number, string> = {}
       const nextBaseline: Record<number, string> = {}
       const nextStates: Record<number, SaveState> = {}
       for (const block of blockRows) {
-        nextDraft[block.blockId] = String(block.currentHtml || block.initialHtml || '<p></p>')
-        nextBaseline[block.blockId] = String(block.currentHtml || block.initialHtml || '<p></p>')
+        nextBaseline[block.blockId] = normalizeHTML(block.currentHtml || block.initialHtml)
         nextStates[block.blockId] = 'idle'
       }
-      setDraftByBlockID(nextDraft)
       baselineByBlockIDRef.current = nextBaseline
       setSaveStateByBlockID(nextStates)
-      if (!activeBlockID && blockRows.length > 0)
-        setActiveBlockID(blockRows[0].blockId)
+      setActiveOutlineSectionID(sectionRows[0]?.sectionId || '')
     } catch (error) {
       msgApi.error(error instanceof Error ? error.message : '加载分块失败')
     } finally {
@@ -142,61 +288,43 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
     }
   }, [])
 
-  const persistBlock = async (blockId: number, currentHtml: string) => {
-    setSaveStateByBlockID(prev => ({ ...prev, [blockId]: 'saving' }))
-    try {
-      const payload = await request<BlockSaveResultDTO>(
-        `/api/enterprise-projects/${projectId}/files/${caseFileId}/blocks/${blockId}`,
-        {
-          method: 'PATCH',
-          body: JSON.stringify({ currentHtml }),
-        },
-      )
-      const normalized = String(payload?.currentHtml || currentHtml || '<p></p>')
-      baselineByBlockIDRef.current[blockId] = normalized
-      setDraftByBlockID(prev => ({ ...prev, [blockId]: normalized }))
-      setSaveStateByBlockID(prev => ({ ...prev, [blockId]: 'saved' }))
-      window.setTimeout(() => {
-        setSaveStateByBlockID((prev) => {
-          if (prev[blockId] !== 'saved')
-            return prev
-          return { ...prev, [blockId]: 'idle' }
-        })
-      }, 1200)
-    } catch (error) {
-      setSaveStateByBlockID(prev => ({ ...prev, [blockId]: 'error' }))
-      msgApi.error(error instanceof Error ? error.message : '自动保存失败')
-    }
-  }
-
-  const scheduleSave = (blockId: number, currentHtml: string) => {
-    const normalized = String(currentHtml || '<p></p>')
-    const baseline = String(baselineByBlockIDRef.current[blockId] || '<p></p>')
-    setDraftByBlockID(prev => ({ ...prev, [blockId]: normalized }))
-    if (normalized.trim() === baseline.trim()) {
-      setSaveStateByBlockID(prev => ({ ...prev, [blockId]: 'idle' }))
-      const timer = saveTimerByBlockIDRef.current[blockId]
-      if (timer) {
-        window.clearTimeout(timer)
-        delete saveTimerByBlockIDRef.current[blockId]
-      }
+  useEffect(() => {
+    if (!editor)
+      return
+    if (blocks.length === 0) {
+      isHydratingRef.current = true
+      editor.commands.setContent('<p></p>')
+      window.setTimeout(() => { isHydratingRef.current = false }, 0)
       return
     }
-    setSaveStateByBlockID(prev => ({ ...prev, [blockId]: 'dirty' }))
-    const oldTimer = saveTimerByBlockIDRef.current[blockId]
-    if (oldTimer)
-      window.clearTimeout(oldTimer)
-    saveTimerByBlockIDRef.current[blockId] = window.setTimeout(() => {
-      persistBlock(blockId, normalized)
-      delete saveTimerByBlockIDRef.current[blockId]
-    }, SAVE_DEBOUNCE_MS)
-  }
+    const htmlParts: string[] = []
+    for (const section of sections) {
+      const level = Math.min(4, Math.max(1, Number(section.level || 2)))
+      htmlParts.push(`<h${level} data-outline-id="${escapeAttr(section.sectionId)}">${escapeAttr(section.title || '内容')}</h${level}>`)
+      for (const blockId of section.blockIds || []) {
+        const block = blockMap.get(blockId)
+        if (!block)
+          continue
+        const content = normalizeHTML(block.currentHtml || block.initialHtml)
+        htmlParts.push(
+          `<section data-segment-block="1" data-block-id="${block.blockId}" data-section-id="${escapeAttr(block.sectionId)}" data-segment-title="${escapeAttr(block.title || `${block.sliceType} #${block.blockId}`)}" data-segment-type="${escapeAttr(block.sliceType)}" data-page-start="${block.pageStart}" data-page-end="${block.pageEnd}">${content}</section>`,
+        )
+      }
+    }
+    isHydratingRef.current = true
+    editor.commands.setContent(htmlParts.join(''))
+    window.setTimeout(() => { isHydratingRef.current = false }, 0)
+  }, [editor, sections, blocks, blockMap])
 
-  const blockMap = useMemo(() => {
-    const map = new Map<number, FileBlockItemDTO>()
-    blocks.forEach(block => map.set(block.blockId, block))
-    return map
-  }, [blocks])
+  const outlineRows = useMemo(() => {
+    return sections.map((section) => {
+      const dirtyCount = (section.blockIds || []).filter((blockId) => {
+        const state = saveStateByBlockID[blockId] || 'idle'
+        return state === 'dirty' || state === 'saving' || state === 'error'
+      }).length
+      return { section, dirtyCount }
+    })
+  }, [sections, saveStateByBlockID])
 
   const stateTagColor = (state: SaveState) => {
     if (state === 'saving')
@@ -209,126 +337,95 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
       return 'warning'
     return 'default'
   }
-  const stateLabel = (state: SaveState) => {
-    if (state === 'saving')
-      return '保存中'
-    if (state === 'saved')
-      return '已保存'
-    if (state === 'error')
-      return '保存失败'
-    if (state === 'dirty')
-      return '待保存'
-    return '未变更'
+
+  const jumpToSection = (sectionId: string) => {
+    if (!sectionId)
+      return
+    setActiveOutlineSectionID(sectionId)
+    const root = editorRootRef.current
+    if (!root)
+      return
+    const heading = root.querySelector(`[data-outline-id="${CSS.escape(sectionId)}"]`)
+    if (heading instanceof HTMLElement)
+      heading.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
-  const activeSectionSet = useMemo(() => new Set(activeSectionKeys), [activeSectionKeys])
 
   return (
-    <Card size="small" title="文本分块编辑（按解析结果）" loading={loading}>
+    <Card size="small" title="文本分块编辑（单编辑器模式）" loading={loading}>
       {contextHolder}
-      {sections.length === 0 && <div className="text-xs text-gray-500">当前文件暂无可编辑分块。</div>}
-      <div className="mb-3 flex flex-wrap gap-2">
-        {sections.map(section => (
-          <Tag key={section.sectionId}>{section.title}（{section.blockIds.length}）</Tag>
-        ))}
+      <div className="mb-3 text-xs text-gray-500">单文件单编辑器，章节为大纲；每段独立隔离并按段自动保存。</div>
+      <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-3">
+        <div className="max-h-[640px] overflow-auto rounded border border-gray-200 bg-gray-50 p-2">
+          <div className="mb-2 text-xs font-medium text-gray-600">大纲</div>
+          <Space direction="vertical" size={6} className="w-full">
+            {outlineRows.map(({ section, dirtyCount }) => (
+              <Button
+                key={section.sectionId}
+                type={activeOutlineSectionID === section.sectionId ? 'primary' : 'default'}
+                className="justify-start"
+                onClick={() => jumpToSection(section.sectionId)}
+              >
+                <span className="truncate">{section.title || '内容'}</span>
+                <Tag className="ml-2">{section.blockIds.length}</Tag>
+                {dirtyCount > 0 ? <Tag color="warning">{dirtyCount}</Tag> : null}
+              </Button>
+            ))}
+          </Space>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {blocks.map((block) => {
+              const state = saveStateByBlockID[block.blockId] || 'idle'
+              return (
+                <Tag key={block.blockId} color={stateTagColor(state)}>
+                  {block.title || `${block.sliceType} #${block.blockId}`} · p{block.pageStart}-{block.pageEnd}
+                </Tag>
+              )
+            })}
+          </div>
+          <div ref={editorRootRef} className="case-file-single-editor rounded border border-gray-200 bg-white p-3">
+            {editor
+              ? <EditorContent editor={editor} />
+              : <Typography.Text type="secondary">编辑器初始化中…</Typography.Text>}
+          </div>
+        </div>
       </div>
-      <Collapse
-        destroyOnHidden
-        activeKey={activeSectionKeys}
-        onChange={(keys) => {
-          const normalized = Array.isArray(keys) ? keys.map(item => String(item)) : [String(keys)]
-          setActiveSectionKeys(normalized)
-          if (activeBlockID > 0) {
-            const activeBlock = blockMap.get(activeBlockID)
-            if (activeBlock && !normalized.includes(activeBlock.sectionId))
-              setActiveBlockID(0)
-          }
-        }}
-        items={sections.map(section => ({
-          key: section.sectionId,
-          label: `${section.title}（${section.blockIds.length}）`,
-          children: (
-            <div className="space-y-3">
-              {(() => {
-                const editingBlock = activeBlockID > 0 ? blockMap.get(activeBlockID) : null
-                const editingInCurrentSection = editingBlock?.sectionId === section.sectionId
-                return editingInCurrentSection && editingBlock
-                  ? (
-                      <Card
-                        size="small"
-                        title={(
-                          <Space>
-                            <span>{editingBlock.title || `${editingBlock.sliceType} #${editingBlock.blockId}`}</span>
-                            <Tag>{editingBlock.sliceType}</Tag>
-                            <Tag>p{editingBlock.pageStart}-{editingBlock.pageEnd}</Tag>
-                            <Tag color={stateTagColor(saveStateByBlockID[editingBlock.blockId] || 'idle')}>
-                              {stateLabel(saveStateByBlockID[editingBlock.blockId] || 'idle')}
-                            </Tag>
-                          </Space>
-                        )}
-                        extra={<Button size="small" onClick={() => setActiveBlockID(0)}>收起编辑</Button>}
-                      >
-                        {activeSectionSet.has(section.sectionId) && (
-                          <SimpleEditor
-                            initialContent={draftByBlockID[editingBlock.blockId] || editingBlock.currentHtml || editingBlock.initialHtml}
-                            onUpdateHTML={html => scheduleSave(editingBlock.blockId, html)}
-                          />
-                        )}
-                      </Card>
-                    )
-                  : null
-              })()}
-              {(() => {
-                const previewIds = section.blockIds.filter(blockId => blockId !== activeBlockID)
-                const viewportHeight = Math.min(420, Math.max(120, previewIds.length * PREVIEW_ITEM_HEIGHT))
-                const scrollTop = scrollTopBySection[section.sectionId] || 0
-                const total = previewIds.length
-                const visibleCount = Math.ceil(viewportHeight / PREVIEW_ITEM_HEIGHT) + 4
-                const startIndex = Math.max(0, Math.floor(scrollTop / PREVIEW_ITEM_HEIGHT) - 2)
-                const endIndex = Math.min(total, startIndex + visibleCount)
-                const topSpacer = startIndex * PREVIEW_ITEM_HEIGHT
-                const bottomSpacer = Math.max(0, (total - endIndex) * PREVIEW_ITEM_HEIGHT)
-                const visibleIds = previewIds.slice(startIndex, endIndex)
-                return (
-                  <div
-                    className="overflow-auto rounded border border-gray-100 bg-gray-50 p-2"
-                    style={{ height: viewportHeight }}
-                    onScroll={event => setScrollTopBySection(prev => ({
-                      ...prev,
-                      [section.sectionId]: event.currentTarget.scrollTop,
-                    }))}
-                  >
-                    {topSpacer > 0 && <div style={{ height: topSpacer }} />}
-                    {visibleIds.map((blockId) => {
-                      const block = blockMap.get(blockId)
-                      if (!block)
-                        return null
-                      const state = saveStateByBlockID[blockId] || 'idle'
-                      const preview = stripHTML(draftByBlockID[blockId] || block.currentHtml || block.initialHtml)
-                      return (
-                        <div key={blockId} className="mb-2 rounded border border-gray-200 bg-white p-2">
-                          <div className="mb-1 flex items-center justify-between gap-2">
-                            <Space size={6}>
-                              <span className="text-xs font-medium">{block.title || `${block.sliceType} #${blockId}`}</span>
-                              <Tag>{block.sliceType}</Tag>
-                              <Tag>p{block.pageStart}-{block.pageEnd}</Tag>
-                              <Tag color={stateTagColor(state)}>{stateLabel(state)}</Tag>
-                            </Space>
-                            <Button size="small" type="primary" onClick={() => setActiveBlockID(blockId)}>编辑当前块</Button>
-                          </div>
-                          <Typography.Paragraph className="mb-0 text-xs text-gray-600" ellipsis={{ rows: 2 }}>
-                            {preview || '-'}
-                          </Typography.Paragraph>
-                        </div>
-                      )
-                    })}
-                    {bottomSpacer > 0 && <div style={{ height: bottomSpacer }} />}
-                  </div>
-                )
-              })()}
-            </div>
-          ),
-        }))}
-      />
+      <style jsx global>{`
+        .case-file-single-editor .ProseMirror {
+          min-height: 560px;
+          max-height: 640px;
+          overflow: auto;
+          outline: none;
+          line-height: 1.7;
+          padding-right: 6px;
+        }
+        .case-file-single-editor .ProseMirror h1,
+        .case-file-single-editor .ProseMirror h2,
+        .case-file-single-editor .ProseMirror h3,
+        .case-file-single-editor .ProseMirror h4 {
+          position: sticky;
+          top: 0;
+          z-index: 2;
+          background: #fff;
+          margin-top: 16px;
+          margin-bottom: 8px;
+          padding: 2px 6px;
+          border-left: 3px solid #1677ff;
+        }
+        .case-file-single-editor .ProseMirror section[data-segment-block] {
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          background: #fcfcfd;
+          padding: 10px 12px;
+          margin: 10px 0;
+        }
+        .case-file-single-editor .ProseMirror section[data-segment-block]:focus-within {
+          border-color: #1677ff;
+          box-shadow: 0 0 0 1px rgba(22, 119, 255, 0.18);
+          background: #fff;
+        }
+      `}</style>
     </Card>
   )
 }

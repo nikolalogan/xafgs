@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 
 from app.models import OCRTaskCreateRequest
 from app.service import OCRTaskManager
@@ -21,7 +22,9 @@ def on_shutdown():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    payload = manager.health_payload()
+    status_code = 200 if payload.get("serviceReady") else 503
+    return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.post("/api/ocr/tasks")

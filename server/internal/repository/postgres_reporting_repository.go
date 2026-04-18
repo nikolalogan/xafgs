@@ -562,6 +562,12 @@ WHERE id = $1
 	return repository.FindReportParseJobByID(job.ID)
 }
 
+func (repository *PostgresReportingRepository) DeleteReportParseJobsByCaseFileID(caseFileID int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _ = repository.db.ExecContext(ctx, `DELETE FROM report_parse_job WHERE case_file_id = $1`, caseFileID)
+}
+
 func (repository *PostgresReportingRepository) FindReportCaseFiles(caseID int64) []model.ReportCaseFile {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -686,6 +692,249 @@ WHERE id = $1
 		return model.ReportCaseFileDTO{}, false
 	}
 	return entity.ToDTO(), true
+}
+
+func (repository *PostgresReportingRepository) DeleteReportCaseFile(caseFileID int64) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result, err := repository.db.ExecContext(ctx, `DELETE FROM report_case_file WHERE id = $1`, caseFileID)
+	if err != nil {
+		return false
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false
+	}
+	return affected > 0
+}
+
+func (repository *PostgresReportingRepository) DeleteSlicesByCaseFileID(caseFileID int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _ = repository.db.ExecContext(ctx, `DELETE FROM document_slice WHERE case_file_id = $1`, caseFileID)
+}
+
+func (repository *PostgresReportingRepository) CreateDocumentSlice(slice model.DocumentSlice) model.DocumentSliceDTO {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	slice.BBoxJSON = fallbackJSONNull(slice.BBoxJSON)
+	slice.TableJSON = fallbackJSONNull(slice.TableJSON)
+	_ = repository.db.QueryRowContext(ctx, `
+INSERT INTO document_slice (
+  parse_job_id, parent_slice_id, case_file_id, file_id, version_no,
+  slice_type, source_type, title, title_level, page_start, page_end,
+  bbox_json, raw_text, clean_text, table_json, confidence, parse_status, ocr_pending
+) VALUES (
+  $1, $2, $3, $4, $5,
+  $6, $7, $8, $9, $10, $11,
+  $12::jsonb, $13, $14, $15::jsonb, $16, $17, $18
+)
+RETURNING id, created_at
+`, slice.ParseJobID, slice.ParentSliceID, slice.CaseFileID, slice.FileID, slice.VersionNo,
+		slice.SliceType, slice.SourceType, slice.Title, slice.TitleLevel, slice.PageStart, slice.PageEnd,
+		string(slice.BBoxJSON), slice.RawText, slice.CleanText, string(slice.TableJSON), slice.Confidence, slice.ParseStatus, slice.OCRPending,
+	).Scan(&slice.ID, &slice.CreatedAt)
+	return slice.ToDTO()
+}
+
+func (repository *PostgresReportingRepository) FindDocumentSlicesByCaseID(caseID int64) []model.DocumentSliceDTO {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	rows, err := repository.db.QueryContext(ctx, `
+SELECT
+  ds.id, ds.parse_job_id, ds.parent_slice_id, ds.case_file_id, ds.file_id, ds.version_no,
+  ds.slice_type, ds.source_type, ds.title, ds.title_level, ds.page_start, ds.page_end,
+  ds.bbox_json, ds.raw_text, ds.clean_text, ds.table_json, ds.confidence, ds.parse_status, ds.ocr_pending, ds.created_at
+FROM document_slice ds
+JOIN report_case_file rcf ON rcf.id = ds.case_file_id
+WHERE rcf.case_id = $1
+ORDER BY ds.id ASC
+`, caseID)
+	if err != nil {
+		return []model.DocumentSliceDTO{}
+	}
+	defer rows.Close()
+
+	out := make([]model.DocumentSliceDTO, 0)
+	for rows.Next() {
+		entity, ok := scanDocumentSlice(rows)
+		if !ok {
+			continue
+		}
+		out = append(out, entity.ToDTO())
+	}
+	return out
+}
+
+func (repository *PostgresReportingRepository) FindDocumentSlicesByCaseFileID(caseFileID int64) []model.DocumentSlice {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	rows, err := repository.db.QueryContext(ctx, `
+SELECT
+  id, parse_job_id, parent_slice_id, case_file_id, file_id, version_no,
+  slice_type, source_type, title, title_level, page_start, page_end,
+  bbox_json, raw_text, clean_text, table_json, confidence, parse_status, ocr_pending, created_at
+FROM document_slice
+WHERE case_file_id = $1
+ORDER BY id ASC
+`, caseFileID)
+	if err != nil {
+		return []model.DocumentSlice{}
+	}
+	defer rows.Close()
+	out := make([]model.DocumentSlice, 0)
+	for rows.Next() {
+		entity, ok := scanDocumentSlice(rows)
+		if !ok {
+			continue
+		}
+		out = append(out, entity)
+	}
+	return out
+}
+
+func (repository *PostgresReportingRepository) DeleteTablesByCaseFileID(caseFileID int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _ = repository.db.ExecContext(ctx, `DELETE FROM document_table_cell WHERE case_file_id = $1`, caseFileID)
+	_, _ = repository.db.ExecContext(ctx, `DELETE FROM document_table_fragment WHERE case_file_id = $1`, caseFileID)
+	_, _ = repository.db.ExecContext(ctx, `DELETE FROM document_table WHERE case_file_id = $1`, caseFileID)
+}
+
+func (repository *PostgresReportingRepository) CreateDocumentTable(table model.DocumentTable) model.DocumentTableDTO {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	table.BBoxJSON = fallbackJSONNull(table.BBoxJSON)
+	_ = repository.db.QueryRowContext(ctx, `
+INSERT INTO document_table (
+  case_file_id, file_id, version_no, title, page_start, page_end,
+  header_row_count, column_count, source_type, parse_status, is_cross_page, bbox_json
+) VALUES (
+  $1, $2, $3, $4, $5, $6,
+  $7, $8, $9, $10, $11, $12::jsonb
+)
+RETURNING id, created_at
+`, table.CaseFileID, table.FileID, table.VersionNo, table.Title, table.PageStart, table.PageEnd,
+		table.HeaderRowCount, table.ColumnCount, table.SourceType, table.ParseStatus, table.IsCrossPage, string(table.BBoxJSON),
+	).Scan(&table.ID, &table.CreatedAt)
+	return table.ToDTO()
+}
+
+func (repository *PostgresReportingRepository) CreateDocumentTableFragment(fragment model.DocumentTableFragment) model.DocumentTableFragmentDTO {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	fragment.BBoxJSON = fallbackJSONNull(fragment.BBoxJSON)
+	_ = repository.db.QueryRowContext(ctx, `
+INSERT INTO document_table_fragment (
+  table_id, case_file_id, page_no, row_start, row_end, fragment_order, bbox_json
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7::jsonb
+)
+RETURNING id, created_at
+`, fragment.TableID, fragment.CaseFileID, fragment.PageNo, fragment.RowStart, fragment.RowEnd, fragment.FragmentOrder, string(fragment.BBoxJSON),
+	).Scan(&fragment.ID, &fragment.CreatedAt)
+	return fragment.ToDTO()
+}
+
+func (repository *PostgresReportingRepository) CreateDocumentTableCell(cell model.DocumentTableCell) model.DocumentTableCellDTO {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cell.BBoxJSON = fallbackJSONNull(cell.BBoxJSON)
+	_ = repository.db.QueryRowContext(ctx, `
+INSERT INTO document_table_cell (
+  table_id, fragment_id, case_file_id, row_index, col_index, row_span, col_span,
+  raw_text, normalized_value, bbox_json, confidence
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7,
+  $8, $9, $10::jsonb, $11
+)
+RETURNING id, created_at
+`, cell.TableID, cell.FragmentID, cell.CaseFileID, cell.RowIndex, cell.ColIndex, cell.RowSpan, cell.ColSpan,
+		cell.RawText, cell.NormalizedValue, string(cell.BBoxJSON), cell.Confidence,
+	).Scan(&cell.ID, &cell.CreatedAt)
+	return cell.ToDTO()
+}
+
+func (repository *PostgresReportingRepository) FindTablesByCaseID(caseID int64) []model.DocumentTableDTO {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	rows, err := repository.db.QueryContext(ctx, `
+SELECT
+  dt.id, dt.case_file_id, dt.file_id, dt.version_no, dt.title, dt.page_start, dt.page_end,
+  dt.header_row_count, dt.column_count, dt.source_type, dt.parse_status, dt.is_cross_page, dt.bbox_json, dt.created_at
+FROM document_table dt
+JOIN report_case_file rcf ON rcf.id = dt.case_file_id
+WHERE rcf.case_id = $1
+ORDER BY dt.id ASC
+`, caseID)
+	if err != nil {
+		return []model.DocumentTableDTO{}
+	}
+	defer rows.Close()
+
+	out := make([]model.DocumentTableDTO, 0)
+	for rows.Next() {
+		entity, ok := scanDocumentTable(rows)
+		if !ok {
+			continue
+		}
+		out = append(out, entity.ToDTO())
+	}
+	return out
+}
+
+func (repository *PostgresReportingRepository) FindTableFragmentsByCaseID(caseID int64) []model.DocumentTableFragmentDTO {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	rows, err := repository.db.QueryContext(ctx, `
+SELECT
+  tf.id, tf.table_id, tf.case_file_id, tf.page_no, tf.row_start, tf.row_end,
+  tf.fragment_order, tf.bbox_json, tf.created_at
+FROM document_table_fragment tf
+JOIN report_case_file rcf ON rcf.id = tf.case_file_id
+WHERE rcf.case_id = $1
+ORDER BY tf.id ASC
+`, caseID)
+	if err != nil {
+		return []model.DocumentTableFragmentDTO{}
+	}
+	defer rows.Close()
+	out := make([]model.DocumentTableFragmentDTO, 0)
+	for rows.Next() {
+		entity, ok := scanDocumentTableFragment(rows)
+		if !ok {
+			continue
+		}
+		out = append(out, entity.ToDTO())
+	}
+	return out
+}
+
+func (repository *PostgresReportingRepository) FindTableCellsByCaseID(caseID int64) []model.DocumentTableCellDTO {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	rows, err := repository.db.QueryContext(ctx, `
+SELECT
+  tc.id, tc.table_id, tc.fragment_id, tc.case_file_id, tc.row_index, tc.col_index,
+  tc.row_span, tc.col_span, tc.raw_text, tc.normalized_value, tc.bbox_json, tc.confidence, tc.created_at
+FROM document_table_cell tc
+JOIN report_case_file rcf ON rcf.id = tc.case_file_id
+WHERE rcf.case_id = $1
+ORDER BY tc.id ASC
+`, caseID)
+	if err != nil {
+		return []model.DocumentTableCellDTO{}
+	}
+	defer rows.Close()
+	out := make([]model.DocumentTableCellDTO, 0)
+	for rows.Next() {
+		entity, ok := scanDocumentTableCell(rows)
+		if !ok {
+			continue
+		}
+		out = append(out, entity.ToDTO())
+	}
+	return out
 }
 
 func scanReportTemplate(row *sql.Row) (model.ReportTemplate, bool) {
@@ -834,6 +1083,112 @@ func scanReportCaseFileFromRow(row *sql.Row) (model.ReportCaseFile, bool) {
 	return entity, true
 }
 
+func scanDocumentSlice(rows *sql.Rows) (model.DocumentSlice, bool) {
+	var entity model.DocumentSlice
+	var bbox []byte
+	var table []byte
+	err := rows.Scan(
+		&entity.ID,
+		&entity.ParseJobID,
+		&entity.ParentSliceID,
+		&entity.CaseFileID,
+		&entity.FileID,
+		&entity.VersionNo,
+		&entity.SliceType,
+		&entity.SourceType,
+		&entity.Title,
+		&entity.TitleLevel,
+		&entity.PageStart,
+		&entity.PageEnd,
+		&bbox,
+		&entity.RawText,
+		&entity.CleanText,
+		&table,
+		&entity.Confidence,
+		&entity.ParseStatus,
+		&entity.OCRPending,
+		&entity.CreatedAt,
+	)
+	if err != nil {
+		return model.DocumentSlice{}, false
+	}
+	entity.BBoxJSON = fallbackJSONNull(bbox)
+	entity.TableJSON = fallbackJSONNull(table)
+	return entity, true
+}
+
+func scanDocumentTable(rows *sql.Rows) (model.DocumentTable, bool) {
+	var entity model.DocumentTable
+	var bbox []byte
+	err := rows.Scan(
+		&entity.ID,
+		&entity.CaseFileID,
+		&entity.FileID,
+		&entity.VersionNo,
+		&entity.Title,
+		&entity.PageStart,
+		&entity.PageEnd,
+		&entity.HeaderRowCount,
+		&entity.ColumnCount,
+		&entity.SourceType,
+		&entity.ParseStatus,
+		&entity.IsCrossPage,
+		&bbox,
+		&entity.CreatedAt,
+	)
+	if err != nil {
+		return model.DocumentTable{}, false
+	}
+	entity.BBoxJSON = fallbackJSONNull(bbox)
+	return entity, true
+}
+
+func scanDocumentTableFragment(rows *sql.Rows) (model.DocumentTableFragment, bool) {
+	var entity model.DocumentTableFragment
+	var bbox []byte
+	err := rows.Scan(
+		&entity.ID,
+		&entity.TableID,
+		&entity.CaseFileID,
+		&entity.PageNo,
+		&entity.RowStart,
+		&entity.RowEnd,
+		&entity.FragmentOrder,
+		&bbox,
+		&entity.CreatedAt,
+	)
+	if err != nil {
+		return model.DocumentTableFragment{}, false
+	}
+	entity.BBoxJSON = fallbackJSONNull(bbox)
+	return entity, true
+}
+
+func scanDocumentTableCell(rows *sql.Rows) (model.DocumentTableCell, bool) {
+	var entity model.DocumentTableCell
+	var bbox []byte
+	err := rows.Scan(
+		&entity.ID,
+		&entity.TableID,
+		&entity.FragmentID,
+		&entity.CaseFileID,
+		&entity.RowIndex,
+		&entity.ColIndex,
+		&entity.RowSpan,
+		&entity.ColSpan,
+		&entity.RawText,
+		&entity.NormalizedValue,
+		&bbox,
+		&entity.Confidence,
+		&entity.CreatedAt,
+	)
+	if err != nil {
+		return model.DocumentTableCell{}, false
+	}
+	entity.BBoxJSON = fallbackJSONNull(bbox)
+	return entity, true
+}
+
 func fallbackJSONArray(raw []byte) json.RawMessage {
 	if len(raw) == 0 {
 		return json.RawMessage(`[]`)
@@ -844,6 +1199,13 @@ func fallbackJSONArray(raw []byte) json.RawMessage {
 func fallbackJSONObject(raw []byte) json.RawMessage {
 	if len(raw) == 0 {
 		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(raw)
+}
+
+func fallbackJSONNull(raw []byte) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage(`null`)
 	}
 	return json.RawMessage(raw)
 }

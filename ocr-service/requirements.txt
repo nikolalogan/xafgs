@@ -6,4 +6,3 @@ Pillow==11.2.1
 PyMuPDF==1.26.0
 protobuf==4.25.8
 paddleocr[doc-parser]==3.4.0
-paddlepaddle==3.2.0; platform_system == "Linux" and platform_machine == "x86_64"

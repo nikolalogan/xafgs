@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Button, Card, Descriptions, Space, Tag, Upload, message } from 'antd'
+import { Button, Card, Descriptions, Popconfirm, Space, Tag, Upload, message } from 'antd'
 import type { UploadFile } from 'antd/es/upload/interface'
 import ProjectWorkflowSteps from '@/components/enterprise-projects/ProjectWorkflowSteps'
 
@@ -59,6 +59,12 @@ type UploadResult = {
   items: Array<{ id: number }>
 }
 
+type RemoveUploadedFileResult = {
+  projectId: number
+  caseFileId: number
+  message: string
+}
+
 const { Dragger } = Upload
 
 const getToken = () => {
@@ -98,6 +104,7 @@ export default function EnterpriseProjectPage() {
   const [msgApi, contextHolder] = message.useMessage()
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [removingCaseFileIDs, setRemovingCaseFileIDs] = useState<Record<number, boolean>>({})
   const [detail, setDetail] = useState<EnterpriseProjectDetailDTO | null>(null)
   const [uploadFilesByCategory, setUploadFilesByCategory] = useState<Record<string, UploadFile[]>>({})
   const projectId = Number(params?.projectId || 0)
@@ -231,6 +238,27 @@ export default function EnterpriseProjectPage() {
     }
   }
 
+  const removeUploadedFile = async (caseFileID: number) => {
+    if (!projectId || !caseFileID)
+      return
+    setRemovingCaseFileIDs(prev => ({ ...prev, [caseFileID]: true }))
+    try {
+      const result = await request<RemoveUploadedFileResult>(`/api/enterprise-projects/${projectId}/files/${caseFileID}`, { method: 'DELETE' })
+      msgApi.success(result?.message || '已移除附件')
+      await loadDetail()
+    }
+    catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '移除附件失败')
+    }
+    finally {
+      setRemovingCaseFileIDs(prev => {
+        const next = { ...prev }
+        delete next[caseFileID]
+        return next
+      })
+    }
+  }
+
   return (
     <div className="space-y-4">
       {contextHolder}
@@ -290,6 +318,22 @@ export default function EnterpriseProjectPage() {
                           <Tag color={parseProcessStatusColor(item.vectorStatus)}>{item.vectorStatus || '-'}</Tag>
                           <span className="text-gray-500">{item.currentStage || '-'}</span>
                           {item.lastError ? <span className="text-red-500">{item.lastError}</span> : null}
+                          <Popconfirm
+                            title="确认移除该附件？"
+                            description="移除后该附件将不再参与当前项目处理。"
+                            okText="移除"
+                            cancelText="取消"
+                            onConfirm={() => removeUploadedFile(item.caseFileId)}
+                          >
+                            <Button
+                              size="small"
+                              type="link"
+                              danger
+                              loading={Boolean(removingCaseFileIDs[item.caseFileId])}
+                            >
+                              移除
+                            </Button>
+                          </Popconfirm>
                         </div>
                       ))}
                     </div>

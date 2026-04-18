@@ -16,10 +16,9 @@ import (
 )
 
 const (
-	maxWorkflowGenerateFileBytes int64 = 50 * 1024 * 1024
-	maxWorkflowBinarySnippet     int   = 256 * 1024
-	workflowGenerateTimeoutBase        = 90 * time.Second
-	workflowGenerateTimeoutMax         = 300 * time.Second
+	maxWorkflowBinarySnippet    int = 256 * 1024
+	workflowGenerateTimeoutBase     = 90 * time.Second
+	workflowGenerateTimeoutMax      = 300 * time.Second
 )
 
 type WorkflowDSLGenerateRequest struct {
@@ -92,7 +91,7 @@ func (service *workflowDSLGenerateService) Generate(ctx context.Context, userID 
 		return WorkflowDSLGenerateResult{}, model.NewAPIError(400, response.CodeBadRequest, "缺少用户配置：AI 服务商地址、AI APIKey")
 	}
 
-	version, raw, apiError := service.fileService.ReadReferenceContent(ctx, normalized.FileID, normalized.VersionNo, maxWorkflowGenerateFileBytes)
+	version, raw, apiError := service.fileService.ReadReferenceContentWithScene(ctx, normalized.FileID, normalized.VersionNo, maxAIProcessBytes, "workflow_generate")
 	if apiError != nil {
 		log.Printf("workflow-dsl-generate parse-file failed user=%d fileId=%d versionNo=%d err=%s", userID, normalized.FileID, normalized.VersionNo, apiError.Message)
 		return WorkflowDSLGenerateResult{}, apiError

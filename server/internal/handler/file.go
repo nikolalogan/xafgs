@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -251,8 +252,15 @@ func (handler *FileHandler) DownloadReference(c *fiber.Ctx, request *fileVersion
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	c.Set(fiber.HeaderContentType, version.MimeType)
-	c.Set(fiber.HeaderContentDisposition, fmt.Sprintf(`attachment; filename="%s"`, sanitizeDownloadFileName(version.OriginName)))
+	c.Set(fiber.HeaderContentDisposition, buildContentDisposition(version.OriginName))
 	return c.Status(fiber.StatusOK).Send(raw)
+}
+
+func buildContentDisposition(name string) string {
+	utf8Name := sanitizeDownloadFileName(name)
+	asciiName := sanitizeDownloadASCIIFallback(utf8Name)
+	encodedName := strings.ReplaceAll(url.QueryEscape(utf8Name), "+", "%20")
+	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, asciiName, encodedName)
 }
 
 func sanitizeDownloadFileName(name string) string {
@@ -261,6 +269,22 @@ func sanitizeDownloadFileName(name string) string {
 		return "attachment.bin"
 	}
 	return cleaned
+}
+
+func sanitizeDownloadASCIIFallback(name string) string {
+	builder := strings.Builder{}
+	for _, char := range name {
+		if char >= 0x20 && char <= 0x7E && char != '"' && char != '\\' {
+			builder.WriteRune(char)
+		} else {
+			builder.WriteRune('_')
+		}
+	}
+	fallback := strings.TrimSpace(builder.String())
+	if fallback == "" {
+		return "attachment.bin"
+	}
+	return fallback
 }
 
 func authUserID(c *fiber.Ctx) int64 {

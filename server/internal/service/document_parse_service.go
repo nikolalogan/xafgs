@@ -29,8 +29,6 @@ import (
 	"sxfgssever/server/internal/model"
 )
 
-const maxDocumentParseBytes int64 = 20 * 1024 * 1024
-
 const (
 	pdfExtractorPyMuPDF = "pymupdf"
 	pdfExtractorMuPDF   = "mupdf"
@@ -74,20 +72,20 @@ func (provider *NoopOCRProvider) Extract(_ context.Context, _ OCRRequest) (OCRRe
 }
 
 type DocumentProfile struct {
-	FileType           string  `json:"fileType"`
-	HasTextLayer       bool    `json:"hasTextLayer"`
-	TextDensity        float64 `json:"textDensity"`
-	IsScannedSuspected bool    `json:"isScannedSuspected"`
-	OCRRequired        bool    `json:"ocrRequired"`
-	ParseStrategy      string  `json:"parseStrategy"`
-	PageCount          int     `json:"pageCount"`
-	SourceType         string  `json:"sourceType"`
-	BizClass           string  `json:"bizClass,omitempty"`
-	OCRSkipReason      string  `json:"ocrSkipReason,omitempty"`
-	ImageOCRApplied    bool    `json:"imageOcrApplied,omitempty"`
-	ImageOCRAppendCount int    `json:"imageOcrAppendCount,omitempty"`
-	OCRQueueMode       string  `json:"ocrQueueMode,omitempty"`
-	PDFDiagnostics     any     `json:"pdfDiagnostics,omitempty"`
+	FileType            string  `json:"fileType"`
+	HasTextLayer        bool    `json:"hasTextLayer"`
+	TextDensity         float64 `json:"textDensity"`
+	IsScannedSuspected  bool    `json:"isScannedSuspected"`
+	OCRRequired         bool    `json:"ocrRequired"`
+	ParseStrategy       string  `json:"parseStrategy"`
+	PageCount           int     `json:"pageCount"`
+	SourceType          string  `json:"sourceType"`
+	BizClass            string  `json:"bizClass,omitempty"`
+	OCRSkipReason       string  `json:"ocrSkipReason,omitempty"`
+	ImageOCRApplied     bool    `json:"imageOcrApplied,omitempty"`
+	ImageOCRAppendCount int     `json:"imageOcrAppendCount,omitempty"`
+	OCRQueueMode        string  `json:"ocrQueueMode,omitempty"`
+	PDFDiagnostics      any     `json:"pdfDiagnostics,omitempty"`
 }
 
 type ParsedDocument struct {
@@ -120,7 +118,7 @@ func NewDocumentParseService(fileService FileService, ocrProvider OCRProvider, o
 }
 
 func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile model.ReportCaseFile) (ParsedDocument, *model.APIError) {
-	version, raw, apiError := service.fileService.ReadReferenceContent(ctx, caseFile.FileID, caseFile.VersionNo, maxDocumentParseBytes)
+	version, raw, apiError := service.fileService.ReadReferenceContentWithScene(ctx, caseFile.FileID, caseFile.VersionNo, maxAIProcessBytes, "project_parse")
 	if apiError != nil {
 		return ParsedDocument{}, apiError
 	}
