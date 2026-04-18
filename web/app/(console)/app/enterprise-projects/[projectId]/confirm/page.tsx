@@ -182,16 +182,6 @@ const normalizeStageText = (value: string) => {
   return value
 }
 
-const safeJSONString = (value: unknown) => {
-  try {
-    if (value == null)
-      return ''
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
-}
-
 export default function EnterpriseProjectConfirmPage() {
   const params = useParams<{ projectId: string }>()
   const router = useRouter()
@@ -277,7 +267,6 @@ export default function EnterpriseProjectConfirmPage() {
       .map(([category, items]) => ({ category, items }))
   }, [detail?.categories, detail?.uploadedFilesByCategory])
 
-  const caseSlices = caseDetail?.slices || []
   const caseTables = caseDetail?.tables || []
   const caseTableFragments = caseDetail?.tableFragments || []
   const caseTableCells = caseDetail?.tableCells || []
@@ -313,6 +302,36 @@ export default function EnterpriseProjectConfirmPage() {
     if (byCaseFile.length > 0)
       return byCaseFile
     return rows.filter(row => row.fileId === item.fileId && row.versionNo === item.versionNo)
+  }
+  const buildTableDiagnosis = (item: { caseFileId: number, fileId: number, versionNo: number }) => {
+    const tables = matchByCaseFileOrVersion(caseTables, item)
+    const fragments = matchByCaseFileOrVersion(caseTableFragments, item)
+    const cells = matchByCaseFileOrVersion(caseTableCells, item)
+    const hasStructuredTable = tables.length > 0
+    const hasCells = cells.length > 0
+    const hasFragments = fragments.length > 0
+    if (hasStructuredTable && hasCells) {
+      return {
+        level: 'success' as const,
+        text: '解析产物完整（表格+单元格已产出），若页面仍异常更可能是渲染问题。',
+      }
+    }
+    if (hasStructuredTable && !hasCells) {
+      return {
+        level: 'warning' as const,
+        text: '表格已解析但缺少单元格明细，属于解析部分缺失（当前会降级展示）。',
+      }
+    }
+    if (!hasStructuredTable && hasFragments) {
+      return {
+        level: 'warning' as const,
+        text: '仅有表格分片，结构化表格未完整产出，优先排查解析流程。',
+      }
+    }
+    return {
+      level: 'error' as const,
+      text: '未识别到结构化表格产物，当前表现为解析问题（非前端渲染）。',
+    }
   }
 
   const confirmableCount = useMemo(() => {
@@ -474,72 +493,24 @@ export default function EnterpriseProjectConfirmPage() {
                         />
                       )}
 
-                      <Card size="small" title={`切片明细 (${matchByCaseFileOrVersion(caseSlices, item).length})`}>
-                        <div className="max-h-64 overflow-auto space-y-2">
-                          {matchByCaseFileOrVersion(caseSlices, item).map(slice => (
-                            <div key={slice.id} className="rounded border border-gray-100 p-2">
-                              <div className="mb-1 flex flex-wrap gap-2">
-                                <Tag>{slice.sliceType || '-'}</Tag>
-                                <Tag>{slice.sourceType || '-'}</Tag>
-                                <Tag>p{slice.pageStart}-{slice.pageEnd}</Tag>
-                                {slice.title ? <Tag color="blue">{slice.title}</Tag> : null}
-                              </div>
-                              <div className="whitespace-pre-wrap break-words text-gray-700">{slice.cleanText || slice.rawText || '-'}</div>
-                            </div>
-                          ))}
-                          {matchByCaseFileOrVersion(caseSlices, item).length === 0 && <div className="text-gray-500">暂无切片明细</div>}
-                        </div>
-                      </Card>
-
-                      <Card size="small" title={`表格明细 (${matchByCaseFileOrVersion(caseTables, item).length})`}>
-                        <div className="max-h-64 overflow-auto space-y-2">
-                          {matchByCaseFileOrVersion(caseTables, item).map(table => (
-                            <div key={table.id} className="rounded border border-gray-100 p-2">
-                              <div className="mb-1 flex flex-wrap gap-2">
-                                <Tag color="blue">{table.title || `表格-${table.id}`}</Tag>
-                                <Tag>p{table.pageStart}-{table.pageEnd}</Tag>
-                                <Tag>列{table.columnCount}</Tag>
-                                <Tag>表头{table.headerRowCount}</Tag>
-                              </div>
-                              <pre className="overflow-auto rounded bg-gray-50 p-2">{safeJSONString(table.bbox)}</pre>
-                            </div>
-                          ))}
-                          {matchByCaseFileOrVersion(caseTables, item).length === 0 && <div className="text-gray-500">暂无表格明细</div>}
-                        </div>
-                      </Card>
-
-                      <Card size="small" title={`表格分片 (${matchByCaseFileOrVersion(caseTableFragments, item).length})`}>
-                        <div className="max-h-64 overflow-auto space-y-2">
-                          {matchByCaseFileOrVersion(caseTableFragments, item).map(fragment => (
-                            <div key={fragment.id} className="rounded border border-gray-100 p-2">
-                              <div className="mb-1 flex flex-wrap gap-2">
-                                <Tag>table#{fragment.tableId}</Tag>
-                                <Tag>p{fragment.pageNo}</Tag>
-                                <Tag>{fragment.partIndex + 1}/{fragment.totalParts}</Tag>
-                              </div>
-                              <div className="mb-2 whitespace-pre-wrap break-words text-gray-700">{fragment.summaryText || '-'}</div>
-                              <pre className="overflow-auto rounded bg-gray-50 p-2">{safeJSONString(fragment.tableJson)}</pre>
-                            </div>
-                          ))}
-                          {matchByCaseFileOrVersion(caseTableFragments, item).length === 0 && <div className="text-gray-500">暂无表格分片</div>}
-                        </div>
-                      </Card>
-
-                      <Card size="small" title={`单元格明细 (${matchByCaseFileOrVersion(caseTableCells, item).length})`}>
-                        <div className="max-h-64 overflow-auto space-y-2">
-                          {matchByCaseFileOrVersion(caseTableCells, item).map(cell => (
-                            <div key={cell.id} className="rounded border border-gray-100 p-2">
-                              <div className="mb-1 flex flex-wrap gap-2">
-                                <Tag>table#{cell.tableId}</Tag>
-                                <Tag>r{cell.rowIndex + 1}c{cell.colIndex + 1}</Tag>
-                                <Tag>span {cell.rowSpan}x{cell.colSpan}</Tag>
-                                <Tag>{cell.dataType || '-'}</Tag>
-                              </div>
-                              <div className="whitespace-pre-wrap break-words text-gray-700">{cell.normalizedValue || cell.rawText || '-'}</div>
-                            </div>
-                          ))}
-                          {matchByCaseFileOrVersion(caseTableCells, item).length === 0 && <div className="text-gray-500">暂无单元格明细</div>}
-                        </div>
+                      <Card size="small" title="表格诊断">
+                        {(() => {
+                          const diagnosis = buildTableDiagnosis(item)
+                          const tableCount = matchByCaseFileOrVersion(caseTables, item).length
+                          const fragmentCount = matchByCaseFileOrVersion(caseTableFragments, item).length
+                          const cellCount = matchByCaseFileOrVersion(caseTableCells, item).length
+                          return (
+                            <Space direction="vertical" size={6}>
+                              <Space>
+                                <Tag>表格 {tableCount}</Tag>
+                                <Tag>分片 {fragmentCount}</Tag>
+                                <Tag>单元格 {cellCount}</Tag>
+                                <Tag color={diagnosis.level}>{diagnosis.level === 'success' ? '诊断：渲染侧' : diagnosis.level === 'warning' ? '诊断：解析部分缺失' : '诊断：解析侧'}</Tag>
+                              </Space>
+                              <div className="text-xs text-gray-600">{diagnosis.text}</div>
+                            </Space>
+                          )
+                        })()}
                       </Card>
                     </div>
                   ),

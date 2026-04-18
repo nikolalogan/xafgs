@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { GlobalOutlined, UploadOutlined } from '@ant-design/icons'
 import { Button, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Upload, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
+import { MAX_SINGLE_UPLOAD_BYTES, MAX_SINGLE_UPLOAD_TEXT } from '@/lib/upload-limit'
 
 type ApiResponse<T> = {
   message?: string
@@ -62,7 +63,6 @@ type SystemConfigDTO = {
   defaultModel: string
 }
 
-const MAX_CHAT_UPLOAD_BYTES = 200 * 1024 * 1024
 const SEARCH_REFERENCES_MARKER = '[WEB_SEARCH_REFERENCES]'
 
 type ChatReference = {
@@ -602,8 +602,8 @@ export default function ChatPage() {
               multiple={false}
               disabled={sending || !activeConversationID}
               beforeUpload={(file) => {
-                if (file.size > MAX_CHAT_UPLOAD_BYTES) {
-                  msgApi.warning(`文件过大，单文件上限 200MB，当前 ${formatSize(file.size)}`)
+                if (file.size > MAX_SINGLE_UPLOAD_BYTES) {
+                  msgApi.warning(`文件过大，单文件上限 ${MAX_SINGLE_UPLOAD_TEXT}，当前 ${formatSize(file.size)}`)
                   return Upload.LIST_IGNORE
                 }
                 setPendingFiles(prev => [...prev, file as File])

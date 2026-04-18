@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { Button, Card, Descriptions, Popconfirm, Space, Tag, Upload, message } from 'antd'
 import type { UploadFile } from 'antd/es/upload/interface'
 import ProjectWorkflowSteps from '@/components/enterprise-projects/ProjectWorkflowSteps'
+import { MAX_SINGLE_UPLOAD_TEXT, isSingleUploadOversized } from '@/lib/upload-limit'
 
 type ApiResponse<T> = {
   message?: string
@@ -202,6 +203,13 @@ export default function EnterpriseProjectPage() {
         return { category, files }
       })
       .filter(item => item.files.length > 0)
+    const oversizedItem = readyCategories
+      .flatMap(item => item.files)
+      .find(file => isSingleUploadOversized(file))
+    if (oversizedItem) {
+      msgApi.warning(`存在超限文件（${oversizedItem.name}），单文件大小不能超过 ${MAX_SINGLE_UPLOAD_TEXT}`)
+      return
+    }
     const hasUploadedHistory = categories.some(category => getUploadedItemsForCategory(category).length > 0)
 
     if (readyCategories.length === 0) {
@@ -341,10 +349,21 @@ export default function EnterpriseProjectPage() {
                 )}
                 <Dragger
                   multiple
-                  beforeUpload={() => false}
+                  beforeUpload={(file) => {
+                    if (isSingleUploadOversized(file as File)) {
+                      msgApi.warning(`单文件大小不能超过 ${MAX_SINGLE_UPLOAD_TEXT}`)
+                      return Upload.LIST_IGNORE
+                    }
+                    return false
+                  }}
                   fileList={fileList}
                   onChange={({ fileList: nextFileList }) => {
-                    const normalized = nextFileList.slice(-50)
+                    const filtered = nextFileList
+                      .filter(item => !isSingleUploadOversized(item.originFileObj as File | undefined))
+                    const ignoredCount = nextFileList.length - filtered.length
+                    if (ignoredCount > 0)
+                      msgApi.warning(`已忽略 ${ignoredCount} 个超限文件，单文件上限 ${MAX_SINGLE_UPLOAD_TEXT}`)
+                    const normalized = filtered.slice(-50)
                     setUploadFilesByCategory(prev => ({ ...prev, [categoryKey]: normalized }))
                   }}
                   showUploadList={{ showRemoveIcon: true }}

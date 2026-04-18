@@ -47,7 +47,7 @@ func NewApp() (*fiber.App, Config) {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  30 * time.Second,
 		AppName:      cfg.AppName,
-		BodyLimit:    220 * 1024 * 1024,
+		BodyLimit:    1024 * 1024 * 1024,
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			var apiError *model.APIError
 			if errors.As(err, &apiError) {

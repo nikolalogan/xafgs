@@ -1075,14 +1075,22 @@ func (service *reportingService) GetEnterpriseProjectFileBlocks(_ context.Contex
 		return model.EnterpriseProjectFileBlocksDTO{}, apiError
 	}
 	slices := service.collectCaseFileEditableSlices(project, caseFile)
+	tables := service.collectCaseFileTables(project, caseFile)
+	cells := service.collectCaseFileTableCells(project, caseFile)
 	sort.SliceStable(slices, func(i, j int) bool {
 		if slices[i].ID == slices[j].ID {
 			return slices[i].CreatedAt.Before(slices[j].CreatedAt)
 		}
 		return slices[i].ID < slices[j].ID
 	})
+	sort.SliceStable(tables, func(i, j int) bool {
+		if tables[i].PageStart == tables[j].PageStart {
+			return tables[i].ID < tables[j].ID
+		}
+		return tables[i].PageStart < tables[j].PageStart
+	})
 	edits := parseCaseFileBlockEdits(caseFile.ProcessingNotesJSON)
-	sections, blocks := buildCaseFileBlocks(slices, edits)
+	sections, blocks := buildCaseFileBlocks(slices, tables, cells, edits)
 	return model.EnterpriseProjectFileBlocksDTO{
 		ProjectID:  project.ID,
 		CaseFileID: caseFile.ID,
@@ -1673,6 +1681,7 @@ func (service *reportingService) collectCaseFileEditableSlices(project model.Ent
 				PageEnd:    row.PageEnd,
 				RawText:    row.RawText,
 				CleanText:  row.CleanText,
+				TableJSON:  row.Table,
 				CreatedAt:  row.CreatedAt,
 			})
 			continue
@@ -1691,8 +1700,45 @@ func (service *reportingService) collectCaseFileEditableSlices(project model.Ent
 				PageEnd:    row.PageEnd,
 				RawText:    row.RawText,
 				CleanText:  row.CleanText,
+				TableJSON:  row.Table,
 				CreatedAt:  row.CreatedAt,
 			})
+		}
+	}
+	return out
+}
+
+func (service *reportingService) collectCaseFileTables(project model.EnterpriseProject, caseFile model.ReportCaseFile) []model.DocumentTableDTO {
+	caseTables := service.reportingRepository.FindTablesByCaseID(project.ReportCaseID)
+	if len(caseTables) == 0 {
+		return nil
+	}
+	out := make([]model.DocumentTableDTO, 0)
+	for _, row := range caseTables {
+		if row.CaseFileID == caseFile.ID || (row.FileID == caseFile.FileID && row.VersionNo == caseFile.VersionNo) {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+func (service *reportingService) collectCaseFileTableCells(project model.EnterpriseProject, caseFile model.ReportCaseFile) []model.DocumentTableCellDTO {
+	caseCells := service.reportingRepository.FindTableCellsByCaseID(project.ReportCaseID)
+	if len(caseCells) == 0 {
+		return nil
+	}
+	caseTables := service.collectCaseFileTables(project, caseFile)
+	if len(caseTables) == 0 {
+		return nil
+	}
+	tableIDSet := make(map[int64]struct{}, len(caseTables))
+	for _, table := range caseTables {
+		tableIDSet[table.ID] = struct{}{}
+	}
+	out := make([]model.DocumentTableCellDTO, 0)
+	for _, row := range caseCells {
+		if _, ok := tableIDSet[row.TableID]; ok {
+			out = append(out, row)
 		}
 	}
 	return out
@@ -1741,10 +1787,10 @@ func parseCaseFileBlockEdits(raw json.RawMessage) map[int64]string {
 	return out
 }
 
-func buildCaseFileBlocks(slices []model.DocumentSlice, edits map[int64]string) ([]model.EnterpriseProjectFileBlockSectionDTO, []model.EnterpriseProjectFileBlockItemDTO) {
+func buildCaseFileBlocks(slices []model.DocumentSlice, tables []model.DocumentTableDTO, cells []model.DocumentTableCellDTO, edits map[int64]string) ([]model.EnterpriseProjectFileBlockSectionDTO, []model.EnterpriseProjectFileBlockItemDTO) {
 	sections := make([]model.EnterpriseProjectFileBlockSectionDTO, 0)
 	blocks := make([]model.EnterpriseProjectFileBlockItemDTO, 0)
-	if len(slices) == 0 {
+	if len(slices) == 0 && len(tables) == 0 {
 		return sections, blocks
 	}
 	rootSection := model.EnterpriseProjectFileBlockSectionDTO{
@@ -1774,11 +1820,49 @@ func buildCaseFileBlocks(slices []model.DocumentSlice, edits map[int64]string) (
 		sectionByID[sectionID] = section
 	}
 
+	type blockSource struct {
+		isTable bool
+		slice   model.DocumentSlice
+		table   model.DocumentTableDTO
+	}
+	sources := make([]blockSource, 0, len(slices)+len(tables))
 	for _, slice := range slices {
-		if !isEditableSliceType(slice.SliceType) {
+		if !isRenderableSliceType(slice.SliceType) {
 			continue
 		}
-		if slice.SliceType == model.DocumentStructureSection {
+		sources = append(sources, blockSource{slice: slice})
+	}
+	for _, table := range tables {
+		sources = append(sources, blockSource{isTable: true, table: table})
+	}
+	sort.SliceStable(sources, func(i, j int) bool {
+		leftPage := 0
+		rightPage := 0
+		leftID := int64(0)
+		rightID := int64(0)
+		if sources[i].isTable {
+			leftPage = sources[i].table.PageStart
+			leftID = sources[i].table.ID
+		} else {
+			leftPage = sources[i].slice.PageStart
+			leftID = sources[i].slice.ID
+		}
+		if sources[j].isTable {
+			rightPage = sources[j].table.PageStart
+			rightID = sources[j].table.ID
+		} else {
+			rightPage = sources[j].slice.PageStart
+			rightID = sources[j].slice.ID
+		}
+		if leftPage == rightPage {
+			return leftID < rightID
+		}
+		return leftPage < rightPage
+	})
+
+	for _, source := range sources {
+		if !source.isTable && source.slice.SliceType == model.DocumentStructureSection {
+			slice := source.slice
 			sectionID := fmt.Sprintf("section-%d", slice.ID)
 			title := strings.TrimSpace(slice.Title)
 			if title == "" {
@@ -1790,6 +1874,30 @@ func buildCaseFileBlocks(slices []model.DocumentSlice, edits map[int64]string) (
 			appendSection(sectionID, title, 2, len(sections)+1)
 			currentSectionID = sectionID
 		}
+		if source.isTable {
+			table := source.table
+			defaultHTML := defaultTableHTML(table, cells)
+			tableBlockID := -table.ID
+			block := model.EnterpriseProjectFileBlockItemDTO{
+				BlockID:     tableBlockID,
+				SectionID:   currentSectionID,
+				SliceType:   model.DocumentStructureTable,
+				SourceType:  table.SourceType,
+				Title:       strings.TrimSpace(table.Title),
+				PageStart:   table.PageStart,
+				PageEnd:     table.PageEnd,
+				InitialHTML: defaultHTML,
+				CurrentHTML: defaultHTML,
+				LastSavedAt: table.CreatedAt,
+			}
+			blocks = append(blocks, block)
+			if section, ok := sectionByID[currentSectionID]; ok {
+				section.BlockIDs = append(section.BlockIDs, block.BlockID)
+			}
+			continue
+		}
+
+		slice := source.slice
 		defaultHTML := defaultSliceHTML(slice)
 		currentHTML := defaultHTML
 		if edited, ok := edits[slice.ID]; ok && strings.TrimSpace(edited) != "" {
@@ -1853,6 +1961,116 @@ func defaultSliceHTML(slice model.DocumentSlice) string {
 	return fmt.Sprintf("<p>%s</p>", escaped)
 }
 
+func defaultTableHTML(table model.DocumentTableDTO, allCells []model.DocumentTableCellDTO) string {
+	rows := buildTableRowsHTML(table, allCells)
+	title := strings.TrimSpace(table.Title)
+	caption := ""
+	if title != "" {
+		caption = fmt.Sprintf("<caption>%s</caption>", html.EscapeString(title))
+	}
+	if rows == "" {
+		return fmt.Sprintf(`<div class="table-fallback"><p>%s</p></div>`, html.EscapeString(title))
+	}
+	return fmt.Sprintf(`<div class="table-wrapper"><table>%s%s</table></div>`, caption, rows)
+}
+
+func buildTableRowsHTML(table model.DocumentTableDTO, allCells []model.DocumentTableCellDTO) string {
+	tableCells := make([]model.DocumentTableCellDTO, 0)
+	minRow := -1
+	maxRow := -1
+	minCol := -1
+	maxCol := -1
+	for _, cell := range allCells {
+		if cell.TableID != table.ID {
+			continue
+		}
+		tableCells = append(tableCells, cell)
+		if minRow < 0 || cell.RowIndex < minRow {
+			minRow = cell.RowIndex
+		}
+		if maxRow < 0 || cell.RowIndex > maxRow {
+			maxRow = cell.RowIndex
+		}
+		if minCol < 0 || cell.ColIndex < minCol {
+			minCol = cell.ColIndex
+		}
+		if maxCol < 0 || cell.ColIndex > maxCol {
+			maxCol = cell.ColIndex
+		}
+	}
+	if len(tableCells) == 0 || minRow < 0 || minCol < 0 {
+		return ""
+	}
+	sort.SliceStable(tableCells, func(i, j int) bool {
+		if tableCells[i].RowIndex == tableCells[j].RowIndex {
+			if tableCells[i].ColIndex == tableCells[j].ColIndex {
+				return tableCells[i].ID < tableCells[j].ID
+			}
+			return tableCells[i].ColIndex < tableCells[j].ColIndex
+		}
+		return tableCells[i].RowIndex < tableCells[j].RowIndex
+	})
+	cellMap := make(map[string]model.DocumentTableCellDTO, len(tableCells))
+	for _, cell := range tableCells {
+		key := fmt.Sprintf("%d:%d", cell.RowIndex, cell.ColIndex)
+		cellMap[key] = cell
+	}
+	occupied := map[string]struct{}{}
+	var body strings.Builder
+	for rowIndex := minRow; rowIndex <= maxRow; rowIndex++ {
+		body.WriteString("<tr>")
+		for colIndex := minCol; colIndex <= maxCol; colIndex++ {
+			positionKey := fmt.Sprintf("%d:%d", rowIndex, colIndex)
+			if _, covered := occupied[positionKey]; covered {
+				continue
+			}
+			cell, ok := cellMap[positionKey]
+			if !ok {
+				body.WriteString("<td></td>")
+				continue
+			}
+			tag := "td"
+			if table.HeaderRowCount > 0 && rowIndex < table.HeaderRowCount {
+				tag = "th"
+			}
+			cellValue := strings.TrimSpace(cell.NormalizedValue)
+			if cellValue == "" {
+				cellValue = strings.TrimSpace(cell.RawText)
+			}
+			if cellValue == "" {
+				cellValue = " "
+			}
+			rowSpan := maxInt(cell.RowSpan, 1)
+			colSpan := maxInt(cell.ColSpan, 1)
+			attrs := ""
+			if rowSpan > 1 {
+				attrs += fmt.Sprintf(` rowspan="%d"`, rowSpan)
+			}
+			if colSpan > 1 {
+				attrs += fmt.Sprintf(` colspan="%d"`, colSpan)
+			}
+			body.WriteString(fmt.Sprintf("<%s%s>%s</%s>", tag, attrs, html.EscapeString(cellValue), tag))
+			for r := rowIndex; r < rowIndex+rowSpan; r++ {
+				for c := colIndex; c < colIndex+colSpan; c++ {
+					if r == rowIndex && c == colIndex {
+						continue
+					}
+					occupied[fmt.Sprintf("%d:%d", r, c)] = struct{}{}
+				}
+			}
+		}
+		body.WriteString("</tr>")
+	}
+	return body.String()
+}
+
+func maxInt(value int, fallback int) int {
+	if value <= 0 {
+		return fallback
+	}
+	return value
+}
+
 func deriveSliceTextSummary(value string, maxLen int) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -1872,6 +2090,13 @@ func isEditableSliceType(sliceType string) bool {
 	default:
 		return false
 	}
+}
+
+func isRenderableSliceType(sliceType string) bool {
+	if isEditableSliceType(sliceType) {
+		return true
+	}
+	return sliceType == model.DocumentStructureTable
 }
 
 func (service *reportingService) processSingleCaseFile(ctx context.Context, reportCase model.ReportCase, caseFile model.ReportCaseFile, operatorID int64) *model.APIError {

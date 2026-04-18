@@ -6,6 +6,10 @@ import { Extension, mergeAttributes, Node } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { StarterKit } from '@tiptap/starter-kit'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Table } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table-row'
+import { TableCell } from '@tiptap/extension-table-cell'
+import { TableHeader } from '@tiptap/extension-table-header'
 
 type ApiResponse<T> = {
   message?: string
@@ -204,6 +208,8 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
   }
 
   const scheduleSave = (blockId: number, currentHtml: string) => {
+    if (blockId <= 0)
+      return
     const normalized = normalizeHTML(currentHtml)
     const baseline = normalizeHTML(baselineByBlockIDRef.current[blockId] || '<p></p>')
     if (normalized === baseline) {
@@ -230,6 +236,10 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
     editable: enabled,
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
       SegmentBlock,
       SegmentIsolation,
     ],
@@ -374,15 +384,10 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
         </div>
 
         <div className="space-y-2">
-          <div className="flex flex-wrap gap-2">
-            {blocks.map((block) => {
-              const state = saveStateByBlockID[block.blockId] || 'idle'
-              return (
-                <Tag key={block.blockId} color={stateTagColor(state)}>
-                  {block.title || `${block.sliceType} #${block.blockId}`} · p{block.pageStart}-{block.pageEnd}
-                </Tag>
-              )
-            })}
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <Tag>总分段 {blocks.length}</Tag>
+            <Tag color="warning">待保存 {blocks.filter(block => saveStateByBlockID[block.blockId] === 'dirty' || saveStateByBlockID[block.blockId] === 'saving').length}</Tag>
+            <Tag color="error">失败 {blocks.filter(block => saveStateByBlockID[block.blockId] === 'error').length}</Tag>
           </div>
           <div ref={editorRootRef} className="case-file-single-editor rounded border border-gray-200 bg-white p-3">
             {editor
@@ -424,6 +429,24 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
           border-color: #1677ff;
           box-shadow: 0 0 0 1px rgba(22, 119, 255, 0.18);
           background: #fff;
+        }
+        .case-file-single-editor .ProseMirror table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 8px 0;
+          table-layout: fixed;
+        }
+        .case-file-single-editor .ProseMirror th,
+        .case-file-single-editor .ProseMirror td {
+          border: 1px solid #d9d9d9;
+          padding: 6px 8px;
+          vertical-align: top;
+          word-break: break-word;
+          white-space: pre-wrap;
+        }
+        .case-file-single-editor .ProseMirror th {
+          background: #f5f7fa;
+          font-weight: 600;
         }
       `}</style>
     </Card>

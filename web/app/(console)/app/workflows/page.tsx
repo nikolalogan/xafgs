@@ -7,6 +7,7 @@ import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Uplo
 import { parseDifyWorkflowDSL } from '@/components/workflow/dify/core/dsl'
 import { validateWorkflow } from '@/components/workflow/dify/core/validation'
 import { formatShanghaiDateTime } from '@/lib/time'
+import { MAX_SINGLE_UPLOAD_BYTES, MAX_SINGLE_UPLOAD_TEXT } from '@/lib/upload-limit'
 
 type WorkflowStatus = 'active' | 'disabled'
 type WorkflowMenuKey = '' | 'reserve' | 'review' | 'postloan'
@@ -72,8 +73,6 @@ const statusLabelMap: Record<WorkflowStatus, string> = {
   active: '启用',
   disabled: '停用',
 }
-
-const MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 const getToken = () => {
   if (typeof window === 'undefined')
@@ -630,8 +629,8 @@ function WorkflowsPageInner() {
               showUploadList={false}
               multiple={false}
               beforeUpload={(file) => {
-                if (file.size > MAX_UPLOAD_BYTES) {
-                  msgApi.warning('文件不能超过 200MB')
+                if (file.size > MAX_SINGLE_UPLOAD_BYTES) {
+                  msgApi.warning(`文件不能超过 ${MAX_SINGLE_UPLOAD_TEXT}`)
                   return Upload.LIST_IGNORE
                 }
                 setAIUploadFile(file as File)

@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Descriptions, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, Upload, message } from 'antd'
+import { Alert, Button, Descriptions, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, Upload, message } from 'antd'
 import type { UploadFile, UploadProps } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
+import { MAX_SINGLE_UPLOAD_TEXT, isSingleUploadOversized } from '@/lib/upload-limit'
 
 type FileVersionDTO = {
   id: number
@@ -302,10 +303,18 @@ const parseFileIDs = (value: string) => String(value || '')
 
 const createUploadPickerProps = (
   onChange: (value: FilePickerValue) => void,
+  onOversized?: (file: File) => void,
 ): UploadProps => ({
   multiple: false,
   maxCount: 1,
-  beforeUpload: () => false,
+  beforeUpload: (file) => {
+    const rawFile = file as File
+    if (isSingleUploadOversized(rawFile)) {
+      onOversized?.(rawFile)
+      return Upload.LIST_IGNORE
+    }
+    return false
+  },
   showUploadList: true,
   onChange: ({ fileList }) => {
     const latest = fileList.at(-1)
@@ -345,6 +354,11 @@ export default function FilesPage() {
   const [deleteLoadingMap, setDeleteLoadingMap] = useState<Record<number, boolean>>({})
   const [parseResultModalOpen, setParseResultModalOpen] = useState(false)
   const [parseResult, setParseResult] = useState<FileParseResultDTO | null>(null)
+  const [parseTargetFileID, setParseTargetFileID] = useState<number>(0)
+  const [parseTargetVersionNo, setParseTargetVersionNo] = useState<number>(0)
+  const [parseResultLoading, setParseResultLoading] = useState(false)
+  const [parseResultError, setParseResultError] = useState('')
+  const [parseAutoFetchFailed, setParseAutoFetchFailed] = useState(false)
   const [reindexLoading, setReindexLoading] = useState(false)
   const [statusLoading, setStatusLoading] = useState(false)
   const [indexStatus, setIndexStatus] = useState<KnowledgeIndexStatusDTO | null>(null)
@@ -565,6 +579,10 @@ export default function FilesPage() {
       msgApi.warning('请先选择要上传的文件')
       return
     }
+    if (isSingleUploadOversized(newFileObject)) {
+      msgApi.warning(`单文件大小不能超过 ${MAX_SINGLE_UPLOAD_TEXT}`)
+      return
+    }
 
     setUploading(true)
     try {
@@ -596,6 +614,10 @@ export default function FilesPage() {
     const selected = newVersionFileMap[fileID]
     if (!selected) {
       msgApi.warning('请先为该文件选择新版本文件')
+      return
+    }
+    if (isSingleUploadOversized(selected)) {
+      msgApi.warning(`单文件大小不能超过 ${MAX_SINGLE_UPLOAD_TEXT}`)
       return
     }
     setUploading(true)
@@ -646,20 +668,34 @@ export default function FilesPage() {
     }
   }
 
-  const parseVersion = async (fileID: number, versionNo: number) => {
+  const parseVersion = async (fileID: number, versionNo: number, fromManualButton = false) => {
     const taskKey = getParseTaskKey(fileID, versionNo)
-    setParseLoadingMap(prev => ({ ...prev, [taskKey]: true }))
+    if (!fromManualButton)
+      setParseLoadingMap(prev => ({ ...prev, [taskKey]: true }))
+    setParseTargetFileID(fileID)
+    setParseTargetVersionNo(versionNo)
+    setParseResultModalOpen(true)
+    setParseResult(null)
+    setParseResultError('')
+    setParseAutoFetchFailed(false)
+    setParseResultLoading(true)
     try {
       const data = await request<FileParseResultDTO>(`/api/files/${fileID}/parse?versionNo=${versionNo}`, { method: 'POST' })
       setParseResult(data)
-      setParseResultModalOpen(true)
+      setParseResultError('')
+      setParseAutoFetchFailed(false)
       msgApi.success(`解析完成：v${data.version.versionNo}，strategy=${getParseStrategyLabel(data.profile)}，table=${data.tableCount}，figure=${data.figureCount}`)
     }
     catch (error) {
-      msgApi.error(error instanceof Error ? error.message : '触发解析失败')
+      const messageText = error instanceof Error ? error.message : '触发解析失败'
+      setParseResultError(messageText)
+      setParseAutoFetchFailed(true)
+      msgApi.error(messageText)
     }
     finally {
-      setParseLoadingMap(prev => ({ ...prev, [taskKey]: false }))
+      setParseResultLoading(false)
+      if (!fromManualButton)
+        setParseLoadingMap(prev => ({ ...prev, [taskKey]: false }))
     }
   }
 
@@ -741,6 +777,8 @@ export default function FilesPage() {
               {...createUploadPickerProps(({ file, fileList }) => {
                 setNewFileObject(file)
                 setNewFileList(fileList)
+              }, () => {
+                msgApi.warning(`单文件大小不能超过 ${MAX_SINGLE_UPLOAD_TEXT}`)
               })}
               fileList={newFileList}
             >
@@ -790,6 +828,8 @@ export default function FilesPage() {
                     {...createUploadPickerProps(({ file, fileList }) => {
                       setNewVersionFileMap(prev => ({ ...prev, [record.id]: file }))
                       setNewVersionFileListMap(prev => ({ ...prev, [record.id]: fileList }))
+                    }, () => {
+                      msgApi.warning(`单文件大小不能超过 ${MAX_SINGLE_UPLOAD_TEXT}`)
                     })}
                     fileList={newVersionFileListMap[record.id] || []}
                   >
@@ -1028,16 +1068,38 @@ export default function FilesPage() {
       </Modal>
 
       <Modal
-        title={parseResult ? `解析结果 · 文件 ${parseResult.version.fileId} / v${parseResult.version.versionNo}` : '解析结果'}
+        title={
+          parseResult
+            ? `解析结果 · 文件 ${parseResult.version.fileId} / v${parseResult.version.versionNo}`
+            : parseTargetFileID > 0
+              ? `解析结果 · 文件 ${parseTargetFileID} / v${parseTargetVersionNo > 0 ? parseTargetVersionNo : 'latest'}`
+              : '解析结果'
+        }
         open={parseResultModalOpen}
         onCancel={() => setParseResultModalOpen(false)}
-        footer={[
-          <Button key="close" type="primary" onClick={() => setParseResultModalOpen(false)}>
-            关闭
-          </Button>,
-        ]}
+        footer={(
+          <Space>
+            {(!parseResult || parseAutoFetchFailed) && parseTargetFileID > 0 && (
+              <Button
+                loading={parseResultLoading}
+                onClick={() => parseVersion(parseTargetFileID, parseTargetVersionNo, true)}
+              >
+                手动获取解析结果
+              </Button>
+            )}
+            <Button key="close" type="primary" onClick={() => setParseResultModalOpen(false)}>
+              关闭
+            </Button>
+          </Space>
+        )}
         width={880}
       >
+        {parseResultLoading && !parseResult && (
+          <div className="mb-3 text-sm text-gray-500">正在解析并获取结果，请稍候...</div>
+        )}
+        {parseResultError && !parseResult && (
+          <Alert className="mb-3" type="warning" showIcon message={parseResultError} description="自动获取结果失败，可点击“手动获取解析结果”重试。" />
+        )}
         {parseResult
           ? (
               <div className="space-y-4">
