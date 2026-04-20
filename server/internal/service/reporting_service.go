@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"log"
 	"mime/multipart"
 	"path/filepath"
 	"sort"
@@ -1100,29 +1101,63 @@ func (service *reportingService) GetEnterpriseProjectFileBlocks(_ context.Contex
 }
 
 func (service *reportingService) UpdateEnterpriseProjectFileBlock(_ context.Context, projectID int64, caseFileID int64, blockID int64, currentHTML string, operatorID int64) (model.EnterpriseProjectFileBlockUpdateResultDTO, *model.APIError) {
-	if blockID <= 0 {
+	if blockID == 0 {
 		return model.EnterpriseProjectFileBlockUpdateResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "blockId 不合法")
 	}
 	project, caseFile, apiError := service.resolveEnterpriseProjectCaseFile(projectID, caseFileID)
 	if apiError != nil {
 		return model.EnterpriseProjectFileBlockUpdateResultDTO{}, apiError
 	}
-	slices := service.collectCaseFileEditableSlices(project, caseFile)
-	sliceMap := map[int64]model.DocumentSlice{}
-	for _, slice := range slices {
-		sliceMap[slice.ID] = slice
-	}
-	targetSlice, ok := sliceMap[blockID]
-	if !ok {
-		return model.EnterpriseProjectFileBlockUpdateResultDTO{}, model.NewAPIError(404, response.CodeNotFound, "分块不存在")
-	}
-	if !isEditableSliceType(targetSlice.SliceType) {
-		return model.EnterpriseProjectFileBlockUpdateResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "当前分块不支持编辑")
-	}
-
 	nextHTML := strings.TrimSpace(currentHTML)
-	if nextHTML == "" {
-		nextHTML = defaultSliceHTML(targetSlice)
+	if blockID > 0 {
+		slices := service.collectCaseFileEditableSlices(project, caseFile)
+		sliceMap := map[int64]model.DocumentSlice{}
+		for _, slice := range slices {
+			sliceMap[slice.ID] = slice
+		}
+		targetSlice, ok := sliceMap[blockID]
+		if !ok {
+			return model.EnterpriseProjectFileBlockUpdateResultDTO{}, model.NewAPIError(404, response.CodeNotFound, "分块不存在")
+		}
+		if !isEditableSliceType(targetSlice.SliceType) {
+			return model.EnterpriseProjectFileBlockUpdateResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "当前分块不支持编辑")
+		}
+		if nextHTML == "" {
+			nextHTML = defaultSliceHTML(targetSlice)
+		}
+	} else {
+		tableID := -blockID
+		tables := service.collectCaseFileTables(project, caseFile)
+		cells := service.collectCaseFileTableCells(project, caseFile)
+		var targetTable model.DocumentTableDTO
+		found := false
+		for _, table := range tables {
+			if table.ID == tableID {
+				targetTable = table
+				found = true
+				break
+			}
+		}
+		if !found {
+			return model.EnterpriseProjectFileBlockUpdateResultDTO{}, model.NewAPIError(404, response.CodeNotFound, "分块不存在")
+		}
+		defaultHTML := defaultTableHTML(targetTable, cells)
+		if nextHTML == "" {
+			nextHTML = defaultHTML
+		}
+		normalizedHTML, reasonCode, fallbackUsed := normalizeTableBlockHTMLForEditor(nextHTML, defaultHTML)
+		if reasonCode != "raw-table" {
+			log.Printf(
+				"reporting: normalize table block html projectId=%d caseFileId=%d blockId=%d tableId=%d reason=%s fallback=%t",
+				projectID,
+				caseFileID,
+				blockID,
+				tableID,
+				reasonCode,
+				fallbackUsed,
+			)
+		}
+		nextHTML = normalizedHTML
 	}
 	notes := parseCaseFileProcessingNotes(caseFile.ProcessingNotesJSON)
 	entries := parseBlockEditEntries(notes["blockEdits"])
@@ -1775,7 +1810,7 @@ func parseCaseFileBlockEdits(raw json.RawMessage) map[int64]string {
 	out := map[int64]string{}
 	for key, value := range rows {
 		blockID, err := strconv.ParseInt(strings.TrimSpace(key), 10, 64)
-		if err != nil || blockID <= 0 {
+		if err != nil || blockID == 0 {
 			continue
 		}
 		currentHTML := strings.TrimSpace(fmt.Sprintf("%v", value["html"]))
@@ -1878,6 +1913,20 @@ func buildCaseFileBlocks(slices []model.DocumentSlice, tables []model.DocumentTa
 			table := source.table
 			defaultHTML := defaultTableHTML(table, cells)
 			tableBlockID := -table.ID
+			currentHTML := defaultHTML
+			if edited, ok := edits[tableBlockID]; ok && strings.TrimSpace(edited) != "" {
+				currentHTML = edited
+			}
+			normalizedHTML, reasonCode, fallbackUsed := normalizeTableBlockHTMLForEditor(currentHTML, defaultHTML)
+			if reasonCode != "raw-table" {
+				log.Printf(
+					"reporting: normalize table block html project_case_unknown blockId=%d tableId=%d reason=%s fallback=%t",
+					tableBlockID,
+					table.ID,
+					reasonCode,
+					fallbackUsed,
+				)
+			}
 			block := model.EnterpriseProjectFileBlockItemDTO{
 				BlockID:     tableBlockID,
 				SectionID:   currentSectionID,
@@ -1887,7 +1936,7 @@ func buildCaseFileBlocks(slices []model.DocumentSlice, tables []model.DocumentTa
 				PageStart:   table.PageStart,
 				PageEnd:     table.PageEnd,
 				InitialHTML: defaultHTML,
-				CurrentHTML: defaultHTML,
+				CurrentHTML: normalizedHTML,
 				LastSavedAt: table.CreatedAt,
 			}
 			blocks = append(blocks, block)
@@ -1972,6 +2021,92 @@ func defaultTableHTML(table model.DocumentTableDTO, allCells []model.DocumentTab
 		return fmt.Sprintf(`<div class="table-fallback"><p>%s</p></div>`, html.EscapeString(title))
 	}
 	return fmt.Sprintf(`<div class="table-wrapper"><table>%s%s</table></div>`, caption, rows)
+}
+
+func normalizeTableBlockHTMLForEditor(inputHTML string, fallbackHTML string) (string, string, bool) {
+	raw := strings.TrimSpace(inputHTML)
+	if raw == "" {
+		return strings.TrimSpace(fallbackHTML), "empty-input-fallback", true
+	}
+	if tableFragment := extractBestTableFragment(raw); tableFragment != "" {
+		return wrapTableWithEditorContainer(tableFragment), "raw-table", false
+	}
+	decoded := strings.TrimSpace(html.UnescapeString(raw))
+	if decoded != "" && decoded != raw {
+		if tableFragment := extractBestTableFragment(decoded); tableFragment != "" {
+			return wrapTableWithEditorContainer(tableFragment), "decoded-table", false
+		}
+	}
+	return strings.TrimSpace(fallbackHTML), "no-table-fallback", true
+}
+
+func wrapTableWithEditorContainer(tableHTML string) string {
+	trimmed := strings.TrimSpace(tableHTML)
+	if trimmed == "" {
+		return `<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>`
+	}
+	return fmt.Sprintf(`<div class="table-wrapper">%s</div>`, trimmed)
+}
+
+func extractBestTableFragment(input string) string {
+	raw := strings.TrimSpace(input)
+	if raw == "" {
+		return ""
+	}
+	lower := strings.ToLower(raw)
+	segments := make([]string, 0)
+	stack := make([]int, 0)
+	cursor := 0
+	for cursor < len(lower) {
+		openPos := strings.Index(lower[cursor:], "<table")
+		closePos := strings.Index(lower[cursor:], "</table>")
+		if openPos >= 0 {
+			openPos += cursor
+		}
+		if closePos >= 0 {
+			closePos += cursor
+		}
+		if openPos >= 0 && (closePos < 0 || openPos < closePos) {
+			stack = append(stack, openPos)
+			cursor = openPos + len("<table")
+			continue
+		}
+		if closePos >= 0 {
+			if len(stack) == 0 {
+				cursor = closePos + len("</table>")
+				continue
+			}
+			start := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			end := closePos + len("</table>")
+			if start >= 0 && end > start && end <= len(raw) {
+				segments = append(segments, raw[start:end])
+			}
+			cursor = end
+			continue
+		}
+		break
+	}
+	if len(segments) == 0 {
+		return ""
+	}
+	best := ""
+	bestTRCount := -1
+	bestLen := -1
+	for _, segment := range segments {
+		trimmed := strings.TrimSpace(segment)
+		if trimmed == "" {
+			continue
+		}
+		trCount := strings.Count(strings.ToLower(trimmed), "<tr")
+		segmentLen := len(trimmed)
+		if trCount > bestTRCount || (trCount == bestTRCount && segmentLen > bestLen) {
+			best = trimmed
+			bestTRCount = trCount
+			bestLen = segmentLen
+		}
+	}
+	return best
 }
 
 func buildTableRowsHTML(table model.DocumentTableDTO, allCells []model.DocumentTableCellDTO) string {
@@ -2143,6 +2278,9 @@ func (service *reportingService) processSingleCaseFile(ctx context.Context, repo
 	caseFile.ProcessingNotesJSON = notes
 	caseFile.UpdatedBy = operatorID
 	_, _ = service.reportingRepository.UpdateReportCaseFile(caseFile)
+	if caseFile.ParseStatus == model.DocumentParseStatusFailed {
+		return model.NewAPIError(500, response.CodeInternal, buildParseFailureMessage(parsed))
+	}
 
 	service.reportingRepository.DeleteSlicesByCaseFileID(caseFile.ID)
 	service.reportingRepository.DeleteTablesByCaseFileID(caseFile.ID)
@@ -2464,6 +2602,14 @@ func (service *reportingService) deriveConfidence(originName string, profile Doc
 }
 
 func chooseParseStatus(parsed ParsedDocument) string {
+	if parsed.OCRTask != nil {
+		switch parsed.OCRTask.Status {
+		case model.OCRTaskStatusFailed, model.OCRTaskStatusCancelled:
+			return model.DocumentParseStatusFailed
+		case model.OCRTaskStatusPending, model.OCRTaskStatusRunning:
+			return model.DocumentParseStatusNeedsOCR
+		}
+	}
 	if parsed.Profile.OCRRequired {
 		return model.DocumentParseStatusNeedsOCR
 	}
@@ -2484,6 +2630,25 @@ func chooseParseStatus(parsed ParsedDocument) string {
 		return model.DocumentParseStatusFailed
 	}
 	return model.DocumentParseStatusParsed
+}
+
+func buildParseFailureMessage(parsed ParsedDocument) string {
+	if parsed.OCRTask != nil {
+		if parsed.OCRTask.Status == model.OCRTaskStatusFailed || parsed.OCRTask.Status == model.OCRTaskStatusCancelled {
+			errorMessage := strings.TrimSpace(parsed.OCRTask.ErrorMessage)
+			if errorMessage == "" {
+				errorMessage = "图像 OCR 或表格识别失败"
+			}
+			return "图像 OCR 解析失败：" + errorMessage
+		}
+	}
+	if strings.TrimSpace(parsed.Profile.OCRSkipReason) != "" {
+		return parsed.Profile.OCRSkipReason
+	}
+	if parsed.Profile.ParseStrategy == "pdf_decode_failed" {
+		return "PDF 文本层解析失败"
+	}
+	return "文件解析失败"
 }
 
 func reportingOCRProvider(parsed ParsedDocument) string {

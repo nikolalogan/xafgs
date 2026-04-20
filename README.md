@@ -121,19 +121,18 @@ make ocr-model-cache-warm
 
 - `make ocr-wheels-sync` 会将依赖下载到 `ocr-service/wheels/`，已存在文件会复用；
 - 若 `paddlepaddle` 在默认索引不可用，可设置 `PADDLE_WHEEL_INDEX_URL`（默认 `https://www.paddlepaddle.org.cn/packages/stable/cpu/`）补充下载源；
-- `uvicorn` 已使用基础包（非 `uvicorn[standard]`），以减少跨平台 wheel 缺失导致的同步失败；
 - `paddlepaddle` 的 wheel 补拉采用 `--no-deps`，仅确保关键 wheel 文件落地，避免主机跨平台依赖解析干扰缓存同步；
 - 已将 `protobuf==4.25.8` 显式纳入 OCR 依赖与离线关键检查，避免 `paddlepaddle` 在离线安装阶段因传递依赖缺失失败；
 - `make ocr-wheels-verify` 默认按 `manylinux_2_17_x86_64 + py311` 离线校验依赖闭包；如需扩展平台可通过 `WHEEL_PLATFORMS_VERIFY` 覆盖；
 - `make ocr-model-cache-warm` 会将 PaddleX 模型下载到本地 `ocr-service/model_cache/`；
 - `make ocr-build` 会先自动同步本地 wheels，再做离线校验与构建，保证可复现；如需临时回源，使用 `make ocr-build-online-fallback`。
 - `docker-compose` 中 `OCR_WHEELS_ONLY` 默认已设为 `1`（本地 wheel 优先且不回源）；仅 `make ocr-build-online-fallback` 会显式传入 `OCR_WHEELS_ONLY=0` 允许回源。
-- OCR 服务已改为官方 PaddleX Serving（`paddlex --serve --pipeline PP-StructureV3`），默认入口为 `POST /layout-parsing`。
+- `ocr-service` 已切换为 GLM OCR 适配服务（调用 `GLM_BASE_URL` + `GLM_API_KEY`），入口保持 `POST /layout-parsing`。
 - CPU 稳定性参数默认启用：`FLAGS_use_mkldnn=0`、`FLAGS_enable_pir_api=0`、`FLAGS_enable_pir_in_executor=0`、`OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`。
 
-## OCR 模型缓存（PaddleX）
+## OCR 模型调用（GLM）
 
-为避免 `python -m app.preload_models` 每次重新下载模型文件，已启用两层缓存：
+为避免模型每次重新下载，已启用两层缓存：
 
 - **构建期缓存**：`Dockerfile` 使用 BuildKit cache mount 挂载 `/root/.paddlex`；
 - **运行期缓存**：`docker-compose` 挂载 `./ocr-service/model_cache:/root/.paddlex`。
@@ -141,11 +140,22 @@ make ocr-model-cache-warm
 首次构建/运行会下载模型，后续重建会直接复用本地缓存目录。
 当前 `docker-compose` 默认设置 `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=False`，会执行模型源连通性探测。
 
-## OCR 官方 Serving 调用
+## OCR 服务调用
 
-- 服务健康检查：`GET /health`
-- PP-StructureV3 推理：`POST /layout-parsing`
-- 网关转发入口：`/ocr/*`（例如 `POST /ocr/layout-parsing`）
+- 官方推理接口：`POST /layout-parsing`
+- 网关入口：`/ocr/*`（例如 `POST /ocr/layout-parsing`）
+- 说明：当前 `ocr-service` 已统一切换为 GLM OCR 适配服务，无旧 OCR Task 接口
+
+## GLM OCR 在线演示（本地）
+
+- 演示入口：`http://localhost:325/app/ocr-demo-v3`
+- 演示调用入口：`/api/ocr/table-repair-preview`
+- 在线演示支持上传文档并展示：Markdown、版面块、OCR 结果、检测框、原始 JSON（可下载）
+
+## 文本提取边界
+
+- Word/PDF 原生文本提取在后端 `server/internal/service/document_parse_service.go` 中执行；
+- OCR 服务仅负责图像/扫描内容识别与补全，不负责 DOCX/PDF 文本层抽取；
 
 示例请求：
 

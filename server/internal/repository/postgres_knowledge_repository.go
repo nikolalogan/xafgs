@@ -187,6 +187,46 @@ WHERE file_id = $1
 	return job, true
 }
 
+func (repository *PostgresKnowledgeRepository) ListJobs(limit int) []model.KnowledgeIndexJob {
+	if limit <= 0 {
+		limit = 100
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+
+	rows, err := repository.db.QueryContext(ctx, `
+SELECT id, file_id, version_no, status, retry_count, error_message, started_at, finished_at, created_at, updated_at
+FROM knowledge_index_job
+ORDER BY updated_at DESC, id DESC
+LIMIT $1
+`, limit)
+	if err != nil {
+		return []model.KnowledgeIndexJob{}
+	}
+	defer rows.Close()
+
+	out := make([]model.KnowledgeIndexJob, 0, limit)
+	for rows.Next() {
+		var item model.KnowledgeIndexJob
+		if scanErr := rows.Scan(
+			&item.ID,
+			&item.FileID,
+			&item.VersionNo,
+			&item.Status,
+			&item.RetryCount,
+			&item.ErrorMessage,
+			&item.StartedAt,
+			&item.FinishedAt,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); scanErr != nil {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 func (repository *PostgresKnowledgeRepository) ReplaceChunks(fileID int64, versionNo int, modelName string, chunks []model.KnowledgeChunk) bool {
 	if fileID <= 0 || versionNo <= 0 {
 		return false
@@ -222,12 +262,12 @@ WHERE file_id = $1 AND version_no = $2
 		err := tx.QueryRowContext(ctx, `
 INSERT INTO knowledge_chunk (
   file_id, version_no, biz_key, chunk_index, chunk_text, chunk_summary,
-  source_type, page_start, page_end, source_ref, bbox_json, parse_strategy,
+  source_type, page_start, page_end, source_ref, bbox_json, anchor_json, parse_strategy,
   content_hash, created_at, updated_at
 ) VALUES (
   $1, $2, $3, $4, $5, $6,
-  $7, $8, $9, $10, $11::jsonb, $12,
-  $13, NOW(), NOW()
+  $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13,
+  $14, NOW(), NOW()
 )
 RETURNING id
 `,
@@ -242,6 +282,7 @@ RETURNING id
 			chunk.PageEnd,
 			chunk.SourceRef,
 			normalizeBBoxJSON(chunk.BBoxJSON),
+			normalizeAnchorJSON(chunk.AnchorJSON, chunk.Anchors),
 			chunk.ParseStrategy,
 			chunk.ContentHash,
 		).Scan(&chunkID)
@@ -287,7 +328,7 @@ func (repository *PostgresKnowledgeRepository) Search(modelName string, queryVec
 	builder.WriteString(`
 SELECT
   c.file_id, c.version_no, c.chunk_index, c.chunk_text, c.chunk_summary,
-  c.source_type, c.page_start, c.page_end, c.source_ref, c.bbox_json,
+  c.source_type, c.page_start, c.page_end, c.source_ref, c.bbox_json, c.anchor_json,
   (1 - (e.embedding <=> $1::vector)) AS score
 FROM knowledge_embedding e
 JOIN knowledge_chunk c ON c.id = e.chunk_id
@@ -346,6 +387,7 @@ WHERE e.model_name = $2
 	out := make([]model.KnowledgeSearchHitDTO, 0, topK)
 	for rows.Next() {
 		var item model.KnowledgeSearchHitDTO
+		var anchorsRaw []byte
 		if err := rows.Scan(
 			&item.FileID,
 			&item.VersionNo,
@@ -357,10 +399,12 @@ WHERE e.model_name = $2
 			&item.PageEnd,
 			&item.SourceRef,
 			&item.BBox,
+			&anchorsRaw,
 			&item.Score,
 		); err != nil {
 			continue
 		}
+		item.Anchors = decodeAnchors(anchorsRaw)
 		out = append(out, item)
 	}
 	return out
@@ -376,6 +420,37 @@ func normalizeBBoxJSON(raw []byte) string {
 		return "null"
 	}
 	return trimmed
+}
+
+func normalizeAnchorJSON(raw []byte, anchors []model.KnowledgeChunkAnchor) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" && len(anchors) > 0 {
+		marshaled, err := json.Marshal(anchors)
+		if err != nil {
+			return "[]"
+		}
+		trimmed = string(marshaled)
+	}
+	if trimmed == "" {
+		return "[]"
+	}
+	var js any
+	if err := json.Unmarshal([]byte(trimmed), &js); err != nil {
+		return "[]"
+	}
+	return trimmed
+}
+
+func decodeAnchors(raw []byte) []model.KnowledgeChunkAnchor {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return []model.KnowledgeChunkAnchor{}
+	}
+	anchors := make([]model.KnowledgeChunkAnchor, 0)
+	if err := json.Unmarshal([]byte(trimmed), &anchors); err != nil {
+		return []model.KnowledgeChunkAnchor{}
+	}
+	return anchors
 }
 
 func toVectorLiteral(values []float64) string {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 
+
 def main() -> int:
     try:
         from paddlex import create_pipeline
@@ -10,8 +11,9 @@ def main() -> int:
         print(f"skip preload: paddlex runtime unavailable: {exc}")
         return 0
 
-    pipeline = os.getenv("OCR_PDX_PIPELINE", "PP-StructureV3").strip() or "PP-StructureV3"
-    device = os.getenv("OCR_PRELOAD_DEVICE", "").strip() or os.getenv("OCR_PPSTRUCTURE_DEVICE", "cpu").strip() or "cpu"
+    pipeline = os.getenv("OCR_V3_PIPELINE", "PP-StructureV3").strip() or "PP-StructureV3"
+    default_device = os.getenv("OCR_V3_DEVICE", "cpu").strip() or "cpu"
+    device = os.getenv("OCR_PRELOAD_DEVICE", "").strip() or default_device
     try:
         create_pipeline(pipeline, device=device)
     except Exception as exc:

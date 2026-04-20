@@ -95,6 +95,7 @@ func NewApp() (*fiber.App, Config) {
 	regionRepository := repository.NewRegionRepository()
 	adminDivisionRepository := repository.NewAdminDivisionRepository()
 	fileRepository := repository.NewFileRepository()
+	fileParseJobRepository := repository.NewFileParseJobRepository()
 	templateRepository := repository.NewTemplateRepository()
 	reportingRepository := repository.NewReportingRepository()
 	resourceShareRepository := repository.NewResourceShareRepository()
@@ -128,6 +129,7 @@ func NewApp() (*fiber.App, Config) {
 			regionRepository = repository.NewPostgresRegionRepository(result.DB)
 			adminDivisionRepository = repository.NewPostgresAdminDivisionRepository(result.DB)
 			fileRepository = repository.NewPostgresFileRepository(result.DB)
+			fileParseJobRepository = repository.NewPostgresFileParseJobRepository(result.DB)
 			vectorEnabled, vectorErr := db.HasExtension(ctx, result.DB, "vector")
 			if vectorErr != nil {
 				log.Printf("检测 PostgreSQL vector 扩展失败，知识检索将禁用: %v", vectorErr)
@@ -160,12 +162,15 @@ func NewApp() (*fiber.App, Config) {
 	ocrProvider := service.NewNoopOCRProvider()
 	ocrClient := service.NewHTTPOCRClient()
 	ocrTaskService := service.NewOCRTaskService(fileRepository, ocrClient)
+	tableRepairPreviewService := service.NewTableRepairPreviewService()
 	aiClient := ai.NewOpenAICompatClient(nil)
 	embeddingClient := ai.NewOpenAICompatEmbeddingClient(nil)
 	documentParseService := service.NewDocumentParseService(fileService, ocrProvider, ocrTaskService)
+	fileParseQueueService := service.NewFileParseQueueService(fileParseJobRepository, fileService, documentParseService)
 	knowledgeService := service.NewKnowledgeService(knowledgeRepository, fileRepository, fileService, systemConfigService, documentParseService, embeddingClient)
 	fileService = service.NewFileService(fileRepository, fileStorage, knowledgeService)
 	documentParseService = service.NewDocumentParseService(fileService, ocrProvider, ocrTaskService)
+	fileParseQueueService = service.NewFileParseQueueService(fileParseJobRepository, fileService, documentParseService)
 	knowledgeService = service.NewKnowledgeService(knowledgeRepository, fileRepository, fileService, systemConfigService, documentParseService, embeddingClient)
 	templateRenderer := service.NewGonjaTemplateRenderer()
 	templateService := service.NewTemplateService(templateRepository, templateRenderer)
@@ -208,7 +213,7 @@ func NewApp() (*fiber.App, Config) {
 	regionHandler := handler.NewRegionHandler(regionService, apiRegistry)
 	adminDivisionHandler := handler.NewAdminDivisionHandler(adminDivisionService, apiRegistry)
 	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, workflowService, workflowExecutionRateLimiter, userConfigService, apiRegistry)
-	fileHandler := handler.NewFileHandler(fileService, documentParseService, ocrTaskService, apiRegistry)
+	fileHandler := handler.NewFileHandler(fileService, fileParseQueueService, ocrTaskService, apiRegistry)
 	templateHandler := handler.NewTemplateHandler(templateService, apiRegistry)
 	reportingHandler := handler.NewReportingHandler(reportingService, apiRegistry)
 	chatHandler := handler.NewChatHandler(chatService, apiRegistry)
@@ -217,7 +222,9 @@ func NewApp() (*fiber.App, Config) {
 	workflowNodeGenerateHandler := handler.NewWorkflowNodeGenerateHandler(workflowNodeGenerateService, apiRegistry)
 	workflowDSLGenerateHandler := handler.NewWorkflowDSLGenerateHandler(workflowDSLGenerateService, apiRegistry)
 	knowledgeHandler := handler.NewKnowledgeHandler(knowledgeService, apiRegistry)
+	ocrPreviewHandler := handler.NewOCRPreviewHandler(tableRepairPreviewService, apiRegistry)
 	knowledgeService.StartWorker(context.Background(), 3*time.Second)
+	fileParseQueueService.StartWorker(context.Background(), 2*time.Second)
 	reportingService.StartParseWorker(context.Background(), 2*time.Second)
 
 	traceStore := apimeta.NewTraceStore(300)
@@ -225,7 +232,7 @@ func NewApp() (*fiber.App, Config) {
 	app.Use(traceMiddleware.Handler())
 
 	apiMetaHandler := handler.NewAPIMetaHandler(apiRegistry, traceStore)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, reportingHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, knowledgeHandler, debugFeedbackHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, reportingHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, knowledgeHandler, debugFeedbackHandler, ocrPreviewHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

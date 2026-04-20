@@ -32,6 +32,14 @@ const (
 	UploadSessionStatusExpired   = "expired"
 )
 
+const (
+	FileParseJobStatusPending   = "pending"
+	FileParseJobStatusRunning   = "running"
+	FileParseJobStatusSucceeded = "succeeded"
+	FileParseJobStatusFailed    = "failed"
+	FileParseJobStatusCancelled = "cancelled"
+)
+
 func IsValidUploadSessionStatus(status string) bool {
 	switch status {
 	case UploadSessionStatusSelected,
@@ -189,6 +197,68 @@ type FileParseFigureRegionPreviewDTO struct {
 	Text      string          `json:"text"`
 	SourceRef string          `json:"sourceRef"`
 	BBox      json.RawMessage `json:"bbox"`
+}
+
+type FileParseJob struct {
+	ID            int64           `json:"id"`
+	FileID        int64           `json:"fileId"`
+	VersionNo     int             `json:"versionNo"`
+	Status        string          `json:"status"`
+	RetryCount    int             `json:"retryCount"`
+	ErrorMessage  string          `json:"errorMessage"`
+	FileType      string          `json:"fileType"`
+	SourceType    string          `json:"sourceType"`
+	ParseStrategy string          `json:"parseStrategy"`
+	OCRTaskStatus string          `json:"ocrTaskStatus"`
+	OCRPending    bool            `json:"ocrPending"`
+	OCRError      string          `json:"ocrError"`
+	ResultJSON    json.RawMessage `json:"resultJson"`
+	RequestedBy   int64           `json:"requestedBy"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
+	StartedAt     *time.Time      `json:"startedAt,omitempty"`
+	FinishedAt    *time.Time      `json:"finishedAt,omitempty"`
+}
+
+type FileParseJobDTO struct {
+	JobID          int64               `json:"jobId"`
+	FileID         int64               `json:"fileId"`
+	VersionNo      int                 `json:"versionNo"`
+	Status         string              `json:"status"`
+	RetryCount     int                 `json:"retryCount"`
+	ErrorMessage   string              `json:"errorMessage"`
+	FileType       string              `json:"fileType"`
+	SourceType     string              `json:"sourceType"`
+	ParseStrategy  string              `json:"parseStrategy"`
+	OCRTaskStatus  string              `json:"ocrTaskStatus"`
+	OCRPending     bool                `json:"ocrPending"`
+	OCRError       string              `json:"ocrError"`
+	UpdatedAt      time.Time           `json:"updatedAt"`
+	StartedAt      *time.Time          `json:"startedAt,omitempty"`
+	FinishedAt     *time.Time          `json:"finishedAt,omitempty"`
+	LatestResult   *FileParseResultDTO `json:"latestResult,omitempty"`
+	ResultReady    bool                `json:"resultReady"`
+	RequestIgnored bool                `json:"requestIgnored,omitempty"`
+}
+
+type FileParseQueueItemDTO struct {
+	JobID         int64      `json:"jobId"`
+	FileID        int64      `json:"fileId"`
+	VersionNo     int        `json:"versionNo"`
+	FileName      string     `json:"fileName"`
+	SourceScope   string     `json:"sourceScope"`
+	FileType      string     `json:"fileType"`
+	SourceType    string     `json:"sourceType"`
+	ParseStrategy string     `json:"parseStrategy"`
+	OCRTaskStatus string     `json:"ocrTaskStatus"`
+	OCRPending    bool       `json:"ocrPending"`
+	OCRError      string     `json:"ocrError"`
+	ParseStatus   string     `json:"parseStatus"`
+	CurrentStage  string     `json:"currentStage"`
+	ErrorMessage  string     `json:"errorMessage"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+	StartedAt     *time.Time `json:"startedAt,omitempty"`
+	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
 }
 
 func (file File) ToDTO(latest *FileVersion) FileDTO {

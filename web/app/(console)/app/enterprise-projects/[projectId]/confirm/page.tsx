@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Button, Card, Collapse, Descriptions, Input, Space, Tag, message } from 'antd'
+import { Button, Card, Collapse, Descriptions, Space, Tag, message } from 'antd'
 import { formatShanghaiDateTime } from '@/lib/time'
 import ProjectWorkflowSteps from '@/components/enterprise-projects/ProjectWorkflowSteps'
 import CaseFileBlockEditor from '@/components/enterprise-projects/CaseFileBlockEditor'
@@ -72,55 +72,6 @@ type DocumentSliceDTO = {
   createdAt: string
 }
 
-type DocumentTableDTO = {
-  id: number
-  caseFileId: number
-  fileId: number
-  versionNo: number
-  title: string
-  pageStart: number
-  pageEnd: number
-  headerRowCount: number
-  columnCount: number
-  sourceType: string
-  parseStatus: string
-  isCrossPage: boolean
-  bbox: unknown
-  createdAt: string
-}
-
-type DocumentTableFragmentDTO = {
-  id: number
-  caseFileId: number
-  fileId: number
-  versionNo: number
-  tableId: number
-  pageNo: number
-  partIndex: number
-  totalParts: number
-  summaryText: string
-  tableJson: unknown
-  createdAt: string
-}
-
-type DocumentTableCellDTO = {
-  id: number
-  caseFileId: number
-  fileId: number
-  versionNo: number
-  tableId: number
-  rowIndex: number
-  colIndex: number
-  rowSpan: number
-  colSpan: number
-  rawText: string
-  normalizedValue: string
-  dataType: string
-  confidence: number
-  bbox: unknown
-  createdAt: string
-}
-
 type ReportCaseDetailDTO = {
   case: { id: number }
   files: Array<{
@@ -131,9 +82,6 @@ type ReportCaseDetailDTO = {
     updatedAt: string
   }>
   slices: DocumentSliceDTO[]
-  tables: DocumentTableDTO[]
-  tableFragments: DocumentTableFragmentDTO[]
-  tableCells: DocumentTableCellDTO[]
 }
 
 type EnterpriseProjectVectorConfirmResultDTO = {
@@ -142,13 +90,6 @@ type EnterpriseProjectVectorConfirmResultDTO = {
   enqueued: number
   skipped: number
   failed: number
-}
-
-type EnterpriseProjectFileManualAdjustResultDTO = {
-  projectId: number
-  caseFileId: number
-  finalSubCategory: string
-  updatedAt: string
 }
 
 const getToken = () => {
@@ -188,10 +129,9 @@ export default function EnterpriseProjectConfirmPage() {
   const [msgApi, contextHolder] = message.useMessage()
   const [loading, setLoading] = useState(false)
   const [confirming, setConfirming] = useState(false)
-  const [savingCaseFileID, setSavingCaseFileID] = useState(0)
+  const [editingCaseFileID, setEditingCaseFileID] = useState(0)
   const [detail, setDetail] = useState<EnterpriseProjectDetailDTO | null>(null)
   const [caseDetail, setCaseDetail] = useState<ReportCaseDetailDTO | null>(null)
-  const [manualAdjustByCaseFileID, setManualAdjustByCaseFileID] = useState<Record<number, string>>({})
   const projectId = Number(params?.projectId || 0)
 
   const request = async <T,>(url: string, init?: RequestInit) => {
@@ -222,13 +162,8 @@ export default function EnterpriseProjectConfirmPage() {
       if (detailData?.project?.reportCaseId > 0) {
         const reportCaseData = await request<ReportCaseDetailDTO>(`/api/report-cases/${detailData.project.reportCaseId}`, { method: 'GET' })
         setCaseDetail(reportCaseData)
-        const nextManualValues: Record<number, string> = {}
-        for (const file of reportCaseData?.files || [])
-          nextManualValues[file.id] = String(file?.finalSubCategory || '')
-        setManualAdjustByCaseFileID(nextManualValues)
       } else {
         setCaseDetail(null)
-        setManualAdjustByCaseFileID({})
       }
     } catch (error) {
       msgApi.error(error instanceof Error ? error.message : '加载文件确认数据失败')
@@ -267,9 +202,6 @@ export default function EnterpriseProjectConfirmPage() {
       .map(([category, items]) => ({ category, items }))
   }, [detail?.categories, detail?.uploadedFilesByCategory])
 
-  const caseTables = caseDetail?.tables || []
-  const caseTableFragments = caseDetail?.tableFragments || []
-  const caseTableCells = caseDetail?.tableCells || []
   const caseFiles = caseDetail?.files || []
   const caseFileMetaMap = useMemo(() => {
     const map = new Map<number, { fileType: string, sourceType: string }>()
@@ -279,12 +211,6 @@ export default function EnterpriseProjectConfirmPage() {
         sourceType: String(file?.sourceType || ''),
       })
     }
-    return map
-  }, [caseFiles])
-  const caseFileFinalSubMap = useMemo(() => {
-    const map = new Map<number, string>()
-    for (const file of caseFiles)
-      map.set(file.id, String(file?.finalSubCategory || ''))
     return map
   }, [caseFiles])
   const isTextualCaseFile = (caseFileId: number) => {
@@ -297,43 +223,6 @@ export default function EnterpriseProjectConfirmPage() {
       return true
     return ['txt', 'md', 'markdown', 'doc', 'docx', 'pdf'].includes(fileType)
   }
-  const matchByCaseFileOrVersion = <T extends { caseFileId: number, fileId: number, versionNo: number }>(rows: T[], item: { caseFileId: number, fileId: number, versionNo: number }) => {
-    const byCaseFile = rows.filter(row => row.caseFileId === item.caseFileId)
-    if (byCaseFile.length > 0)
-      return byCaseFile
-    return rows.filter(row => row.fileId === item.fileId && row.versionNo === item.versionNo)
-  }
-  const buildTableDiagnosis = (item: { caseFileId: number, fileId: number, versionNo: number }) => {
-    const tables = matchByCaseFileOrVersion(caseTables, item)
-    const fragments = matchByCaseFileOrVersion(caseTableFragments, item)
-    const cells = matchByCaseFileOrVersion(caseTableCells, item)
-    const hasStructuredTable = tables.length > 0
-    const hasCells = cells.length > 0
-    const hasFragments = fragments.length > 0
-    if (hasStructuredTable && hasCells) {
-      return {
-        level: 'success' as const,
-        text: '解析产物完整（表格+单元格已产出），若页面仍异常更可能是渲染问题。',
-      }
-    }
-    if (hasStructuredTable && !hasCells) {
-      return {
-        level: 'warning' as const,
-        text: '表格已解析但缺少单元格明细，属于解析部分缺失（当前会降级展示）。',
-      }
-    }
-    if (!hasStructuredTable && hasFragments) {
-      return {
-        level: 'warning' as const,
-        text: '仅有表格分片，结构化表格未完整产出，优先排查解析流程。',
-      }
-    }
-    return {
-      level: 'error' as const,
-      text: '未识别到结构化表格产物，当前表现为解析问题（非前端渲染）。',
-    }
-  }
-
   const confirmableCount = useMemo(() => {
     let count = 0
     for (const group of groupedFiles) {
@@ -360,38 +249,6 @@ export default function EnterpriseProjectConfirmPage() {
       msgApi.error(error instanceof Error ? error.message : '向量确认失败')
     } finally {
       setConfirming(false)
-    }
-  }
-
-  const saveManualAdjust = async (caseFileId: number) => {
-    if (!projectId || caseFileId <= 0)
-      return
-    const finalSubCategory = String(manualAdjustByCaseFileID[caseFileId] || '').trim()
-    setSavingCaseFileID(caseFileId)
-    try {
-      const result = await request<EnterpriseProjectFileManualAdjustResultDTO>(
-        `/api/enterprise-projects/${projectId}/files/${caseFileId}/manual-adjust`,
-        {
-          method: 'PATCH',
-          body: JSON.stringify({ finalSubCategory }),
-        },
-      )
-      setManualAdjustByCaseFileID(prev => ({ ...prev, [caseFileId]: String(result?.finalSubCategory || '') }))
-      setCaseDetail((prev) => {
-        if (!prev)
-          return prev
-        return {
-          ...prev,
-          files: (prev.files || []).map(file => file.id === caseFileId
-            ? { ...file, finalSubCategory: String(result?.finalSubCategory || ''), updatedAt: result?.updatedAt || file.updatedAt }
-            : file),
-        }
-      })
-      msgApi.success('当前文件人工调整已保存')
-    } catch (error) {
-      msgApi.error(error instanceof Error ? error.message : '保存人工调整失败')
-    } finally {
-      setSavingCaseFileID(0)
     }
   }
 
@@ -441,18 +298,18 @@ export default function EnterpriseProjectConfirmPage() {
                       <Tag color={parseStatusColor(item.parseStatus)}>{item.parseStatus}</Tag>
                       {shouldShowVectorStatus(item.vectorStatus) ? <Tag color={parseStatusColor(item.vectorStatus)}>{item.vectorStatus}</Tag> : null}
                       <span className="text-xs text-gray-500">{normalizeStageText(item.currentStage || '-')}</span>
-                      <Button
-                        size="small"
-                        type="link"
-                        loading={savingCaseFileID === item.caseFileId}
-                        disabled={String(manualAdjustByCaseFileID[item.caseFileId] || '').trim() === String(caseFileFinalSubMap.get(item.caseFileId) || '').trim()}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          saveManualAdjust(item.caseFileId)
-                        }}
-                      >
-                        保存
-                      </Button>
+                      {item.parseStatus === 'succeeded' && isTextualCaseFile(item.caseFileId) && (
+                        <Button
+                          size="small"
+                          type="link"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setEditingCaseFileID(prev => prev === item.caseFileId ? 0 : item.caseFileId)
+                          }}
+                        >
+                          {editingCaseFileID === item.caseFileId ? '收起编辑' : '进入编辑'}
+                        </Button>
+                      )}
                     </div>
                   ),
                   children: (
@@ -466,52 +323,13 @@ export default function EnterpriseProjectConfirmPage() {
                         <Descriptions.Item label="错误信息">{item.lastError || '-'}</Descriptions.Item>
                       </Descriptions>
 
-                      <Card size="small" title="人工调整">
-                        <Space>
-                          <Input
-                            value={manualAdjustByCaseFileID[item.caseFileId] ?? ''}
-                            placeholder="请输入最终子分类（可留空）"
-                            style={{ width: 260 }}
-                            onChange={event => setManualAdjustByCaseFileID(prev => ({ ...prev, [item.caseFileId]: event.target.value }))}
-                          />
-                          <Button
-                            type="primary"
-                            loading={savingCaseFileID === item.caseFileId}
-                            disabled={String(manualAdjustByCaseFileID[item.caseFileId] || '').trim() === String(caseFileFinalSubMap.get(item.caseFileId) || '').trim()}
-                            onClick={() => saveManualAdjust(item.caseFileId)}
-                          >
-                            保存当前文件
-                          </Button>
-                        </Space>
-                      </Card>
-
-                      {item.parseStatus === 'succeeded' && isTextualCaseFile(item.caseFileId) && (
+                      {item.parseStatus === 'succeeded' && isTextualCaseFile(item.caseFileId) && editingCaseFileID === item.caseFileId && (
                         <CaseFileBlockEditor
                           projectId={projectId}
                           caseFileId={item.caseFileId}
                           enabled
                         />
                       )}
-
-                      <Card size="small" title="表格诊断">
-                        {(() => {
-                          const diagnosis = buildTableDiagnosis(item)
-                          const tableCount = matchByCaseFileOrVersion(caseTables, item).length
-                          const fragmentCount = matchByCaseFileOrVersion(caseTableFragments, item).length
-                          const cellCount = matchByCaseFileOrVersion(caseTableCells, item).length
-                          return (
-                            <Space direction="vertical" size={6}>
-                              <Space>
-                                <Tag>表格 {tableCount}</Tag>
-                                <Tag>分片 {fragmentCount}</Tag>
-                                <Tag>单元格 {cellCount}</Tag>
-                                <Tag color={diagnosis.level}>{diagnosis.level === 'success' ? '诊断：渲染侧' : diagnosis.level === 'warning' ? '诊断：解析部分缺失' : '诊断：解析侧'}</Tag>
-                              </Space>
-                              <div className="text-xs text-gray-600">{diagnosis.text}</div>
-                            </Space>
-                          )
-                        })()}
-                      </Card>
                     </div>
                   ),
                 }))}

@@ -44,6 +44,9 @@ const menuItems: MenuItem[] = [
   { key: 'report-templates', label: '报告模板', href: '/app/report-templates', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'report-cases', label: '报告组装', href: '/app/report-cases', roles: ['admin'] as ConsoleRole[] },
   { key: 'files', label: '文件管理', href: '/app/files', roles: ['admin'] as ConsoleRole[] },
+  { key: 'file-extract-progress', label: '文件提取进度', href: '/app/file-extract-progress', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'vector-progress', label: '向量进度', href: '/app/vector-progress', roles: ['admin', 'user'] as ConsoleRole[] },
+  { key: 'ocr-demo-v3', label: '文档解析演示', href: '/app/ocr-demo-v3', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'enterprises', label: '企业管理', href: '/app/enterprises', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'file-processing', label: '文件处理清单', href: '/app/file-processing', roles: ['admin', 'user'] as ConsoleRole[] },
   { key: 'admin-divisions', label: '行政区划', href: '/app/admin-divisions', roles: ['admin'] as ConsoleRole[] },
@@ -91,6 +94,12 @@ const getPageTitle = (pathname: string, search: string) => {
     return '报告组装'
   if (pathname.startsWith('/app/files'))
     return '文件管理'
+  if (pathname.startsWith('/app/file-extract-progress'))
+    return '文件提取进度'
+  if (pathname.startsWith('/app/vector-progress'))
+    return '向量进度'
+  if (pathname.startsWith('/app/ocr-demo-v3'))
+    return '文档解析演示'
   if (pathname.startsWith('/app/file-processing'))
     return '文件处理清单'
   if (pathname.startsWith('/app/enterprises') || pathname.startsWith('/app/enterprise-projects'))
@@ -191,6 +200,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['控制台', '报告组装']
     if (pathname.startsWith('/app/files'))
       return ['控制台', '文件管理']
+    if (pathname.startsWith('/app/file-extract-progress'))
+      return ['控制台', '文件提取进度']
+    if (pathname.startsWith('/app/vector-progress'))
+      return ['控制台', '向量进度']
+    if (pathname.startsWith('/app/ocr-demo-v3'))
+      return ['控制台', '文档解析演示']
     if (pathname.startsWith('/app/file-processing'))
       return ['控制台', '文件处理清单']
     if (pathname.startsWith('/app/enterprises') || pathname.startsWith('/app/enterprise-projects'))
@@ -327,11 +342,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     const menuTree = useMemo(() => {
       const items: MenuProps['items'] = []
+      const usedKeys = new Set<string>()
       const pushIfVisible = (key: string) => {
         const item = visibleMenuItems.find(entry => entry.key === key)
         if (!item)
           return
+        if (usedKeys.has(item.key))
+          return
         items.push({ key: item.key, label: item.label })
+        usedKeys.add(item.key)
       }
 
       pushIfVisible('home')
@@ -359,7 +378,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       const item = visibleMenuItems.find(entry => entry.key === key)
       if (!item)
         continue
+      if (usedKeys.has(item.key))
+        continue
       globalConfigChildren.push({ key: item.key, label: item.label })
+      usedKeys.add(item.key)
     }
     if (globalConfigChildren.length > 0) {
       items.push({
@@ -370,6 +392,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
 
     pushIfVisible('enterprises')
+    pushIfVisible('file-extract-progress')
+    pushIfVisible('vector-progress')
+    pushIfVisible('ocr-demo-v3')
     pushIfVisible('file-processing')
     pushIfVisible('user-config')
 
@@ -387,6 +412,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return ['report-cases']
     if (pathname.startsWith('/app/files'))
       return ['files']
+    if (pathname.startsWith('/app/file-extract-progress'))
+      return ['file-extract-progress']
+    if (pathname.startsWith('/app/vector-progress'))
+      return ['vector-progress']
+    if (pathname.startsWith('/app/ocr-demo-v3'))
+      return ['ocr-demo-v3']
     if (pathname.startsWith('/app/file-processing'))
       return ['file-processing']
     if (pathname.startsWith('/app/workflow-tasks'))
@@ -457,6 +488,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       router.push('/app/report-cases')
     else if (key === 'files')
       router.push('/app/files')
+    else if (key === 'file-extract-progress')
+      router.push('/app/file-extract-progress')
+    else if (key === 'vector-progress')
+      router.push('/app/vector-progress')
+    else if (key === 'ocr-demo-v3')
+      router.push('/app/ocr-demo-v3')
     else if (key === 'file-processing')
       router.push('/app/file-processing')
     else if (key === 'enterprises')

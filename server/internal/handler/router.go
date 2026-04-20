@@ -24,6 +24,7 @@ func RegisterRoutes(
 	chatHandler *ChatHandler,
 	knowledgeHandler *KnowledgeHandler,
 	debugFeedbackHandler *DebugFeedbackHandler,
+	ocrPreviewHandler *OCRPreviewHandler,
 	authMiddleware fiber.Handler,
 	adminMiddleware fiber.Handler,
 ) {
@@ -51,4 +52,5 @@ func RegisterRoutes(
 	adminDivisionHandler.Register(protectedGroup, adminMiddleware)
 	apiMetaHandler.Register(protectedGroup, adminMiddleware)
 	debugFeedbackHandler.Register(protectedGroup, adminMiddleware)
+	ocrPreviewHandler.Register(protectedGroup)
 }

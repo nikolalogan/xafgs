@@ -31,6 +31,10 @@ type knowledgeFileVersionRequest struct {
 	VersionNo int   `query:"versionNo"`
 }
 
+type knowledgeQueueListRequest struct {
+	Limit int `query:"limit" validate:"min=1,max=500"`
+}
+
 type KnowledgeHandler struct {
 	service  service.KnowledgeService
 	registry *apimeta.Registry
@@ -62,6 +66,13 @@ func (handler *KnowledgeHandler) Register(router fiber.Router) {
 		Auth:               "auth",
 		SuccessDataExample: apimeta.ExampleFromType[model.KnowledgeIndexStatusDTO](),
 	}, handler.Status)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[knowledgeQueueListRequest]{
+		Method:             fiber.MethodGet,
+		Path:               "/knowledge/jobs",
+		Summary:            "查询向量任务队列",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[[]model.KnowledgeIndexQueueItemDTO](),
+	}, handler.ListJobs)
 }
 
 func (handler *KnowledgeHandler) Search(c *fiber.Ctx, request *knowledgeSearchRequest) error {
@@ -98,4 +109,12 @@ func (handler *KnowledgeHandler) Status(c *fiber.Ctx, request *knowledgeFileVers
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, result, "获取索引状态成功")
+}
+
+func (handler *KnowledgeHandler) ListJobs(c *fiber.Ctx, request *knowledgeQueueListRequest) error {
+	result, apiError := handler.service.ListJobs(c.UserContext(), request.Limit)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, result, "获取向量队列成功")
 }

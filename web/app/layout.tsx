@@ -2,6 +2,9 @@ import type { Metadata } from 'next'
 import Script from 'next/script'
 import './globals.scss'
 import 'antd/dist/reset.css'
+import '@univerjs/design/lib/index.css'
+import '@univerjs/ui/lib/index.css'
+import '@univerjs/sheets-ui/lib/index.css'
 
 export const metadata: Metadata = {
   title: '西安分公司',

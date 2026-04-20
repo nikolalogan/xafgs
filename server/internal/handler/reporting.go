@@ -62,7 +62,7 @@ type enterpriseProjectFileBlockPathRequest struct {
 type enterpriseProjectFileBlockUpdatePathRequest struct {
 	ProjectID  int64 `path:"projectId" validate:"required,min=1"`
 	CaseFileID int64 `path:"caseFileId" validate:"required,min=1"`
-	BlockID    int64 `path:"blockId" validate:"required,min=1"`
+	BlockID    int64 `path:"blockId" validate:"required,ne=0"`
 }
 
 type enterpriseProjectFileBlockUpdateRequest struct {

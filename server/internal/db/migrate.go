@@ -365,6 +365,30 @@ CREATE INDEX IF NOT EXISTS idx_file_status ON file(status);
 CREATE INDEX IF NOT EXISTS idx_file_version_file_version ON file_version(file_id, version_no);
 CREATE INDEX IF NOT EXISTS idx_upload_session_status_expires_at ON upload_session(status, expires_at);
 
+CREATE TABLE IF NOT EXISTS file_parse_job (
+  id BIGSERIAL PRIMARY KEY,
+  file_id BIGINT NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+  version_no INT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')),
+  retry_count INT NOT NULL DEFAULT 0,
+  error_message TEXT NOT NULL DEFAULT '',
+  file_type VARCHAR(64) NOT NULL DEFAULT '',
+  source_type VARCHAR(64) NOT NULL DEFAULT '',
+  parse_strategy VARCHAR(64) NOT NULL DEFAULT '',
+  ocr_task_status VARCHAR(32) NOT NULL DEFAULT '',
+  ocr_pending BOOLEAN NOT NULL DEFAULT false,
+  ocr_error TEXT NOT NULL DEFAULT '',
+  result_json JSONB NOT NULL DEFAULT 'null'::jsonb,
+  requested_by BIGINT NOT NULL DEFAULT 0,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_parse_job_file_version ON file_parse_job(file_id, version_no, id DESC);
+CREATE INDEX IF NOT EXISTS idx_file_parse_job_status_updated ON file_parse_job(status, updated_at ASC, id ASC);
+
 CREATE TABLE IF NOT EXISTS ocr_task (
   id BIGSERIAL PRIMARY KEY,
   file_id BIGINT NOT NULL REFERENCES file(id) ON DELETE CASCADE,
@@ -416,6 +440,7 @@ CREATE TABLE IF NOT EXISTS knowledge_chunk (
   page_end INT NOT NULL DEFAULT 1,
   source_ref VARCHAR(128) NOT NULL DEFAULT '',
   bbox_json JSONB NOT NULL DEFAULT 'null'::jsonb,
+  anchor_json JSONB NOT NULL DEFAULT '[]'::jsonb,
   parse_strategy VARCHAR(64) NOT NULL DEFAULT '',
   content_hash VARCHAR(64) NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1047,6 +1072,14 @@ ALTER TABLE user_config
 ADD COLUMN IF NOT EXISTS search_ai_base_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_config
 ADD COLUMN IF NOT EXISTS search_ai_api_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE knowledge_chunk
+ADD COLUMN IF NOT EXISTS anchor_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE file_parse_job
+ADD COLUMN IF NOT EXISTS ocr_task_status VARCHAR(32) NOT NULL DEFAULT '';
+ALTER TABLE file_parse_job
+ADD COLUMN IF NOT EXISTS ocr_pending BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE file_parse_job
+ADD COLUMN IF NOT EXISTS ocr_error TEXT NOT NULL DEFAULT '';
 `); err != nil {
 		return fmt.Errorf("migrate user_config search ai config: %w", err)
 	}

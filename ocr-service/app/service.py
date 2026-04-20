@@ -1,507 +1,353 @@
-from __future__ import annotations
-
 import base64
-import logging
-import multiprocessing as mp
+import io
+import json
 import os
-import queue
-import threading
+import re
 import time
 import uuid
-from dataclasses import dataclass, field
-from typing import Dict, Optional
+from html import unescape
+from html.parser import HTMLParser
+from typing import Any
+from urllib.parse import urlparse
 
-from app.models import OCRResult, OCRTaskCreateRequest, OCRTaskView
-from app.providers.local_pp_structure import LocalPPStructureProvider
-from app.providers.remote_tencent import RemoteTencentOCRProvider
-
-logger = logging.getLogger("ocr-task-manager")
-
-
-@dataclass
-class OCRTaskState:
-    task_id: str
-    status: str = "pending"
-    provider: str = ""
-    progress: int = 0
-    page_count: int = 0
-    confidence: float = 0.0
-    error_code: str = ""
-    error_message: str = ""
-    result: Optional[OCRResult] = None
-    lock: threading.Lock = field(default_factory=threading.Lock)
+import aiohttp
+import fitz
+from fastapi import FastAPI, HTTPException
+from PIL import Image
+from pydantic import BaseModel
 
 
-class OCRTaskManager:
+class LayoutParsingRequest(BaseModel):
+    file: str
+    fileType: int | None = None
+    model: str | None = None
+    useTableRecognition: bool | None = True
+
+
+class TableCellHTMLParser(HTMLParser):
     def __init__(self) -> None:
-        self.tasks: Dict[str, OCRTaskState] = {}
-        self.local_provider = LocalPPStructureProvider()
-        self.remote_provider = RemoteTencentOCRProvider()
-        self.device = (os.getenv("OCR_PPSTRUCTURE_DEVICE", "cpu").strip() or "cpu").lower()
-        self.gpu_required = self.device.startswith("gpu")
-        self.gpu_ready = False
-        self._tasks_lock = threading.RLock()
-        self._pending_queue: queue.Queue[tuple[str, OCRTaskCreateRequest] | None] = queue.Queue()
-        self._stop_event = threading.Event()
-        self._worker_thread: Optional[threading.Thread] = None
-        self._mp_context = mp.get_context("spawn")
-        self._local_worker_request_queue: Optional[mp.Queue] = None
-        self._local_worker_result_queue: Optional[mp.Queue] = None
-        self._local_worker_process: Optional[mp.Process] = None
-        self._local_worker_lock = threading.RLock()
-        self._ensure_runtime_or_raise()
-        self.start()
+        super().__init__()
+        self.rows: list[list[dict[str, Any]]] = []
+        self._current_row: list[dict[str, Any]] | None = None
+        self._current_cell: dict[str, Any] | None = None
 
-    def start(self) -> None:
-        self._ensure_local_worker_or_raise()
-        with self._tasks_lock:
-            if self._worker_thread is not None and self._worker_thread.is_alive():
-                return
-            self._stop_event.clear()
-            self._worker_thread = threading.Thread(target=self._worker_loop, name="ocr-task-worker", daemon=True)
-            self._worker_thread.start()
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        lower_tag = tag.lower()
+        attr_map = {k.lower(): (v or "") for k, v in attrs}
+        if lower_tag == "tr":
+            self._current_row = []
+        elif lower_tag in ("td", "th"):
+            self._current_cell = {
+                "text": "",
+                "rowspan": max(1, int(attr_map.get("rowspan", "1") or "1")),
+                "colspan": max(1, int(attr_map.get("colspan", "1") or "1")),
+            }
 
-    def shutdown(self, timeout_sec: float = 5.0) -> None:
-        self._stop_event.set()
-        self._pending_queue.put(None)
-        worker = self._worker_thread
-        if worker is not None:
-            worker.join(timeout=timeout_sec)
-        self._stop_local_worker(timeout_sec=timeout_sec)
-
-    def create_task(self, request: OCRTaskCreateRequest) -> OCRTaskView:
-        task_id = str(uuid.uuid4())
-        state = OCRTaskState(task_id=task_id, status="pending", progress=0)
-        with self._tasks_lock:
-            self.tasks[task_id] = state
-        self._pending_queue.put((task_id, request))
-        return self._to_view(state)
-
-    def get_task(self, task_id: str) -> OCRTaskView:
-        with self._tasks_lock:
-            state = self.tasks[task_id]
-        return self._to_view(state)
-
-    def health_payload(self) -> dict:
-        local_configured = self.local_provider.is_configured()
-        remote_configured = self.remote_provider.is_configured()
-        local_worker_alive = self._is_local_worker_alive()
-        local_ready = local_configured and local_worker_alive and (not self.gpu_required or self.gpu_ready)
-        service_ready = local_ready or remote_configured
-        return {
-            "status": "ok" if service_ready else "degraded",
-            "device": self.device,
-            "gpuRequired": self.gpu_required,
-            "gpuReady": self.gpu_ready,
-            "localProviderConfigured": local_configured,
-            "remoteProviderConfigured": remote_configured,
-            "localWorkerAlive": local_worker_alive,
-            "localProviderReady": local_ready,
-            "serviceReady": service_ready,
-        }
-
-    def _ensure_runtime_or_raise(self) -> None:
-        if not self.gpu_required:
-            self.gpu_ready = False
-            logger.info("ocr_runtime_ready device=%s", self.device)
+    def handle_endtag(self, tag: str) -> None:
+        lower_tag = tag.lower()
+        if lower_tag in ("td", "th"):
+            if self._current_row is not None and self._current_cell is not None:
+                self._current_cell["text"] = normalize_text(self._current_cell.get("text", ""))
+                self._current_row.append(self._current_cell)
+            self._current_cell = None
             return
-        self._ensure_gpu_runtime_or_raise()
-        self.gpu_ready = True
-        logger.info("ocr_runtime_ready device=%s gpuReady=%s", self.device, self.gpu_ready)
+        if lower_tag == "tr":
+            if self._current_row is not None:
+                self.rows.append(self._current_row)
+            self._current_row = None
 
-    def _ensure_gpu_runtime_or_raise(self) -> None:
-        try:
-            import paddle  # type: ignore
-        except Exception as exc:
-            raise RuntimeError(f"ocr_gpu_unavailable: failed to import paddle runtime: {exc}") from exc
-
-        if not paddle.device.is_compiled_with_cuda():
-            raise RuntimeError("ocr_gpu_unavailable: paddle runtime is not compiled with CUDA support")
-
-        try:
-            device_count = int(paddle.device.cuda.device_count())
-        except Exception as exc:
-            raise RuntimeError(f"ocr_gpu_unavailable: failed to query CUDA devices: {exc}") from exc
-
-        if device_count <= 0:
-            raise RuntimeError("ocr_gpu_unavailable: no visible CUDA device in container")
-
-    def _ensure_local_worker_or_raise(self) -> None:
-        with self._local_worker_lock:
-            if self._is_local_worker_alive():
-                return
-            self._start_local_worker_or_raise()
-
-    def _start_local_worker_or_raise(self) -> None:
-        self._local_worker_request_queue = self._mp_context.Queue(maxsize=8)
-        self._local_worker_result_queue = self._mp_context.Queue(maxsize=8)
-        self._local_worker_process = self._mp_context.Process(
-            target=_local_pp_structure_worker_loop,
-            args=(self._local_worker_request_queue, self._local_worker_result_queue),
-            daemon=True,
-        )
-        self._local_worker_process.start()
-        boot_timeout = _env_int("OCR_LOCAL_WORKER_BOOT_TIMEOUT_SEC", 300, minimum=10)
-        if self._local_worker_result_queue is None:
-            raise RuntimeError("ocr_local_worker_boot_failed: missing result queue")
-        try:
-            worker_tag, payload = self._local_worker_result_queue.get(timeout=boot_timeout)
-        except queue.Empty as exc:
-            self._stop_local_worker(timeout_sec=2.0)
-            raise RuntimeError(f"ocr_local_worker_boot_failed: worker warmup timeout after {boot_timeout}s") from exc
-        if worker_tag != "__worker_ready__":
-            self._stop_local_worker(timeout_sec=2.0)
-            raise RuntimeError(f"ocr_local_worker_boot_failed: invalid worker ready tag {worker_tag}")
-        if not isinstance(payload, dict) or not payload.get("ok"):
-            self._stop_local_worker(timeout_sec=2.0)
-            error = ""
-            if isinstance(payload, dict):
-                error = str(payload.get("error") or "").strip()
-            raise RuntimeError(f"ocr_local_worker_boot_failed: {error or 'warmup failed'}")
-        logger.info("ocr_local_worker_ready pid=%s", self._local_worker_process.pid if self._local_worker_process else 0)
-
-    def _stop_local_worker(self, timeout_sec: float = 3.0) -> None:
-        with self._local_worker_lock:
-            request_queue = self._local_worker_request_queue
-            process = self._local_worker_process
-            if request_queue is not None:
-                try:
-                    request_queue.put_nowait(None)
-                except Exception:
-                    pass
-            if process is not None:
-                process.join(timeout=timeout_sec)
-                if process.is_alive():
-                    process.terminate()
-                    process.join(timeout=2.0)
-            self._local_worker_process = None
-            self._local_worker_request_queue = None
-            self._local_worker_result_queue = None
-
-    def _restart_local_worker_or_raise(self, reason: str) -> None:
-        logger.warning("ocr_local_worker_restart reason=%s", reason)
-        self._stop_local_worker(timeout_sec=2.0)
-        self._start_local_worker_or_raise()
-
-    def _is_local_worker_alive(self) -> bool:
-        process = self._local_worker_process
-        return process is not None and process.is_alive()
-
-    def _worker_loop(self) -> None:
-        while not self._stop_event.is_set():
-            item = self._pending_queue.get()
-            if item is None:
-                self._pending_queue.task_done()
-                break
-            task_id, request = item
-            with self._tasks_lock:
-                state = self.tasks.get(task_id)
-            if state is None:
-                self._pending_queue.task_done()
-                continue
-            self._run_task(state, request)
-            self._pending_queue.task_done()
-
-    def _run_task(self, state: OCRTaskState, request: OCRTaskCreateRequest) -> None:
-        started_at = time.perf_counter()
-        with state.lock:
-            state.status = "running"
-            state.progress = 10
-
-        try:
-            content = base64.b64decode(request.contentBase64.encode("utf-8"))
-        except Exception as exc:
-            with state.lock:
-                state.status = "failed"
-                state.progress = 100
-                state.error_code = "ocr_invalid_payload"
-                state.error_message = f"invalid base64 content: {exc}"
-            logger.warning("ocr_task_failed_invalid_payload taskId=%s fileId=%s versionNo=%s err=%s", state.task_id, request.fileId, request.versionNo, exc)
+    def handle_data(self, data: str) -> None:
+        if self._current_cell is None:
             return
-
-        size_bytes = len(content)
-        estimated_pages = _estimate_page_count(request.fileName, request.mimeType, content)
-        logger.info(
-            "ocr_task_started taskId=%s fileId=%s versionNo=%s providerMode=%s mimeType=%s sizeBytes=%s estimatedPages=%s enableTables=%s",
-            state.task_id,
-            request.fileId,
-            request.versionNo,
-            request.providerMode,
-            request.mimeType,
-            size_bytes,
-            estimated_pages,
-            request.enableTables,
-        )
-
-        providers = self._resolve_providers(request.providerMode)
-        if not providers:
-            with state.lock:
-                state.status = "failed"
-                state.progress = 100
-                state.error_code = "ocr_provider_unavailable"
-                state.error_message = "no OCR provider is configured; enable local PP-Structure model or configure remote Tencent OCR"
-            logger.warning("ocr_task_failed_no_provider taskId=%s fileId=%s versionNo=%s", state.task_id, request.fileId, request.versionNo)
-            return
-
-        errors: list[str] = []
-        allow_tables = os.getenv("OCR_PPSTRUCTURE_ENABLE_TABLES", "0").strip() in {"1", "true", "True", "yes", "on"}
-        effective_enable_tables = bool(request.enableTables and allow_tables)
-        for provider in providers:
-            try:
-                if provider.name == self.local_provider.name and _env_bool("OCR_LOCAL_PPSTRUCTURE_ISOLATE_PROCESS", True):
-                    result = self._extract_local_in_subprocess(
-                        task_id=state.task_id,
-                        file_id=request.fileId,
-                        version_no=request.versionNo,
-                        content=content,
-                        file_name=request.fileName,
-                        mime_type=request.mimeType,
-                        enable_tables=effective_enable_tables,
-                        size_bytes=size_bytes,
-                        estimated_pages=estimated_pages,
-                    )
-                else:
-                    result = provider.extract(content, request.fileName, request.mimeType, effective_enable_tables)
-                with state.lock:
-                    state.status = "succeeded"
-                    state.provider = result.provider
-                    state.progress = 100
-                    state.page_count = result.pageCount
-                    state.confidence = result.confidence
-                    state.result = result
-                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-                logger.info(
-                    "ocr_task_succeeded taskId=%s fileId=%s versionNo=%s provider=%s elapsedMs=%s pageCount=%s confidence=%.4f",
-                    state.task_id,
-                    request.fileId,
-                    request.versionNo,
-                    result.provider,
-                    elapsed_ms,
-                    result.pageCount,
-                    result.confidence,
-                )
-                return
-            except Exception as exc:
-                errors.append(f"{provider.name}: {exc}")
-                logger.warning(
-                    "ocr_task_provider_failed taskId=%s fileId=%s versionNo=%s provider=%s err=%s",
-                    state.task_id,
-                    request.fileId,
-                    request.versionNo,
-                    provider.name,
-                    exc,
-                )
-                classified_error_code, classified_error_message = _classify_provider_error(provider.name, exc)
-                if classified_error_code:
-                    with state.lock:
-                        state.error_code = classified_error_code
-                        state.error_message = classified_error_message
-
-        with state.lock:
-            state.status = "failed"
-            state.progress = 100
-            if not state.error_code:
-                state.error_code = "ocr_failed"
-            if not state.error_message:
-                state.error_message = "; ".join(errors) or "all OCR providers failed"
-        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        logger.warning(
-            "ocr_task_failed taskId=%s fileId=%s versionNo=%s elapsedMs=%s errorCode=%s errorMessage=%s",
-            state.task_id,
-            request.fileId,
-            request.versionNo,
-            elapsed_ms,
-            state.error_code,
-            state.error_message,
-        )
-
-    def _resolve_providers(self, mode: str):
-        mode = (mode or "auto").strip().lower()
-        if mode == "local_only":
-            return [self.local_provider]
-        if mode == "remote_only":
-            return [self.remote_provider]
-        providers = []
-        if self.local_provider.is_configured():
-            providers.append(self.local_provider)
-        if self.remote_provider.is_configured():
-            providers.append(self.remote_provider)
-        return providers
-
-    def _extract_local_in_subprocess(
-        self,
-        task_id: str,
-        file_id: int,
-        version_no: int,
-        content: bytes,
-        file_name: str,
-        mime_type: str,
-        enable_tables: bool,
-        size_bytes: int,
-        estimated_pages: int,
-    ) -> OCRResult:
-        timeout_sec = _resolve_local_timeout_sec(size_bytes=size_bytes, estimated_pages=estimated_pages)
-        logger.info(
-            "ocr_local_subprocess_started taskId=%s fileId=%s versionNo=%s timeoutSec=%s sizeBytes=%s estimatedPages=%s",
-            task_id,
-            file_id,
-            version_no,
-            timeout_sec,
-            size_bytes,
-            estimated_pages,
-        )
-        request_queue = self._local_worker_request_queue
-        result_queue = self._local_worker_result_queue
-        if request_queue is None or result_queue is None:
-            raise RuntimeError("local_pp_structure_v3 worker queue is not ready")
-
-        request_id = str(uuid.uuid4())
-        try:
-            request_queue.put((request_id, content, file_name, mime_type, enable_tables), timeout=5)
-        except Exception as exc:
-            raise RuntimeError(f"local_pp_structure_v3 enqueue failed: {exc}") from exc
-
-        deadline = time.time() + float(timeout_sec)
-        while True:
-            remaining = deadline - time.time()
-            if remaining <= 0:
-                self._restart_local_worker_or_raise("request_timeout")
-                raise RuntimeError(
-                    f"local_pp_structure_v3 timed out after {timeout_sec}s (sizeBytes={size_bytes}, estimatedPages={estimated_pages})"
-                )
-
-            if not self._is_local_worker_alive():
-                self._restart_local_worker_or_raise("worker_exited")
-                raise RuntimeError("local_pp_structure_v3 worker exited unexpectedly")
-
-            wait_seconds = min(1.0, remaining)
-            try:
-                result_id, payload = result_queue.get(timeout=wait_seconds)
-            except queue.Empty:
-                continue
-
-            if result_id != request_id:
-                logger.warning("ocr_local_worker_result_mismatch expect=%s got=%s", request_id, result_id)
-                continue
-
-            if not isinstance(payload, dict):
-                raise RuntimeError("local_pp_structure_v3 returned invalid payload")
-            if not payload.get("ok"):
-                raise RuntimeError(str(payload.get("error") or "local_pp_structure_v3 failed"))
-            return OCRResult(**payload["result"])
-
-    def _to_view(self, state: OCRTaskState) -> OCRTaskView:
-        return OCRTaskView(
-            taskId=state.task_id,
-            status=state.status,
-            provider=state.provider,
-            progress=state.progress,
-            pageCount=state.page_count,
-            confidence=state.confidence,
-            errorCode=state.error_code,
-            errorMessage=state.error_message,
-            result=state.result,
-        )
+        self._current_cell["text"] += data
 
 
-def _local_pp_structure_worker_loop(
-    request_queue: mp.Queue,
-    result_queue: mp.Queue,
-) -> None:
-    provider = LocalPPStructureProvider()
+def normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").replace("\u00A0", " ")).strip()
+
+
+def decode_base64_payload(raw: str) -> bytes:
+    content = (raw or "").strip()
+    if not content:
+        raise ValueError("file is empty")
+    if "," in content and content.lower().startswith("data:"):
+        content = content.split(",", 1)[1]
+    return base64.b64decode(content, validate=False)
+
+
+def render_pdf_pages(raw_bytes: bytes) -> list[bytes]:
+    document = fitz.open(stream=raw_bytes, filetype="pdf")
+    pages: list[bytes] = []
     try:
-        provider.warmup(enable_tables=False)
-        result_queue.put(("__worker_ready__", {"ok": True}))
-    except Exception as exc:
-        result_queue.put(("__worker_ready__", {"ok": False, "error": str(exc)}))
-        return
-
-    while True:
-        item = request_queue.get()
-        if item is None:
-            break
-        request_id, content, file_name, mime_type, enable_tables = item
-        try:
-            result = provider.extract(content, file_name, mime_type, enable_tables)
-            result_queue.put((request_id, {"ok": True, "result": result.model_dump()}))
-        except Exception as exc:
-            result_queue.put((request_id, {"ok": False, "error": str(exc)}))
+        for page_index in range(document.page_count):
+            page = document.load_page(page_index)
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            pages.append(pix.tobytes("jpeg"))
+    finally:
+        document.close()
+    return pages
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip() in {"1", "true", "True", "yes", "on"}
+def ensure_jpeg(raw_bytes: bytes) -> bytes:
+    image = Image.open(io.BytesIO(raw_bytes))
+    with io.BytesIO() as buffer:
+        image.convert("RGB").save(buffer, format="JPEG", quality=92)
+        return buffer.getvalue()
 
 
-def _classify_provider_error(provider_name: str, exc: Exception) -> tuple[str, str]:
-    message = str(exc).strip()
-    lowered = message.lower()
-    if provider_name == "local_pp_structure_v3":
-        if "sigsegv" in lowered or "segmentation fault" in lowered:
-            return ("ocr_local_runtime_crash", "local pp-structure runtime crashed (SIGSEGV); check cpu runtime flags and model/engine compatibility")
-        if "timed out" in lowered:
-            return ("ocr_local_timeout", message)
-    return ("", "")
+def extract_markdown_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content") or ""
+                if isinstance(text, str) and text.strip():
+                    chunks.append(text.strip())
+            elif isinstance(item, str) and item.strip():
+                chunks.append(item.strip())
+        return "\n".join(chunks).strip()
+    return ""
 
 
-def _resolve_local_timeout_sec(size_bytes: int, estimated_pages: int) -> int:
-    if not _has_dynamic_timeout_config():
-        return _env_int("OCR_LOCAL_PPSTRUCTURE_TIMEOUT_SEC", 180, minimum=30)
-
-    base = _env_int("OCR_LOCAL_TIMEOUT_BASE_SEC", 120, minimum=1)
-    per_page = _env_int("OCR_LOCAL_TIMEOUT_PER_PAGE_SEC", 18, minimum=0)
-    size_step_mb = _env_int("OCR_LOCAL_TIMEOUT_SIZE_STEP_MB", 50, minimum=1)
-    size_bonus = _env_int("OCR_LOCAL_TIMEOUT_SIZE_BONUS_SEC", 30, minimum=0)
-    min_sec = _env_int("OCR_LOCAL_TIMEOUT_MIN_SEC", 120, minimum=1)
-    max_sec = _env_int("OCR_LOCAL_TIMEOUT_MAX_SEC", 900, minimum=min_sec)
-
-    size_mb = max(0.0, float(size_bytes) / (1024.0 * 1024.0))
-    size_steps = int(size_mb // float(size_step_mb))
-    timeout = base + max(1, estimated_pages) * per_page + size_steps * size_bonus
-    if timeout < min_sec:
-        return min_sec
-    if timeout > max_sec:
-        return max_sec
-    return timeout
-
-
-def _has_dynamic_timeout_config() -> bool:
-    keys = (
-        "OCR_LOCAL_TIMEOUT_BASE_SEC",
-        "OCR_LOCAL_TIMEOUT_PER_PAGE_SEC",
-        "OCR_LOCAL_TIMEOUT_SIZE_STEP_MB",
-        "OCR_LOCAL_TIMEOUT_SIZE_BONUS_SEC",
-        "OCR_LOCAL_TIMEOUT_MIN_SEC",
-        "OCR_LOCAL_TIMEOUT_MAX_SEC",
+def build_prompt() -> str:
+    return (
+        "请对图片执行OCR与版面解析，输出尽量完整的Markdown文本。"
+        "如果存在表格，请优先用HTML <table>...</table> 表示，保留rowspan/colspan。"
+        "不要添加解释性前后缀。"
     )
-    return any(os.getenv(key) is not None for key in keys)
 
 
-def _env_int(name: str, default: int, minimum: int | None = None) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        value = default
-    else:
-        try:
-            value = int(raw.strip())
-        except Exception:
-            value = default
-    if minimum is not None and value < minimum:
-        return minimum
-    return value
+def resolve_auth_mode() -> str:
+    raw = (os.getenv("GLM_AUTH_MODE", "auto") or "").strip().lower()
+    if raw in ("auto", "none", "bearer"):
+        return raw
+    return "auto"
 
 
-def _estimate_page_count(file_name: str, mime_type: str, content: bytes) -> int:
-    mime = (mime_type or "").strip().lower()
-    name = (file_name or "").strip().lower()
-    if mime == "application/pdf" or name.endswith(".pdf"):
-        marker = b"/Type /Page"
-        count = content.count(marker)
-        if count <= 0:
-            return 1
-        if count >= 2:
-            return max(1, count - 1)
-        return count
-    return 1
+def is_official_endpoint(base_url: str) -> bool:
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+    return host.endswith("open.bigmodel.cn")
+
+
+def parse_error_message(raw: Any) -> str:
+    if isinstance(raw, dict):
+        err = raw.get("error")
+        if isinstance(err, dict):
+            code = str(err.get("code") or "").strip()
+            message = str(err.get("message") or "").strip()
+            if code and message:
+                return f"code={code} message={message}"
+            if message:
+                return message
+    return str(raw)
+
+
+async def call_glm_ocr(image_bytes: bytes, session: aiohttp.ClientSession) -> str:
+    base_url = (os.getenv("GLM_BASE_URL", "") or "").strip().rstrip("/")
+    if not base_url:
+        raise RuntimeError("GLM_BASE_URL 未配置，请设置本地 GLM 地址")
+    model = (os.getenv("GLM_MODEL", "glm-4.1v-thinking-flash") or "").strip()
+    api_key = (os.getenv("GLM_API_KEY", "") or "").strip()
+    auth_mode = resolve_auth_mode()
+    if auth_mode == "none" and is_official_endpoint(base_url):
+        raise RuntimeError("鉴权模式为 none，但 GLM_BASE_URL 指向官方 open.bigmodel.cn，请改为本地地址或启用 bearer")
+    endpoint = f"{base_url}/api/paas/v4/chat/completions"
+    image_b64 = base64.b64encode(image_bytes).decode("ascii")
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": build_prompt()},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                ],
+            }
+        ],
+    }
+    headers = {
+        "Content-Type": "application/json",
+    }
+    use_bearer = auth_mode == "bearer" or (auth_mode == "auto" and api_key)
+    if use_bearer:
+        if not api_key:
+            raise RuntimeError("GLM_AUTH_MODE=bearer 但未配置 GLM_API_KEY")
+        headers["Authorization"] = f"Bearer {api_key}"
+    timeout_ms = int((os.getenv("GLM_TIMEOUT_MS", "120000") or "120000").strip())
+    timeout = aiohttp.ClientTimeout(total=max(5, timeout_ms // 1000))
+    try:
+        async with session.post(endpoint, json=payload, headers=headers, timeout=timeout) as response:
+            text_body = await response.text()
+            try:
+                raw = json.loads(text_body) if text_body else {}
+            except Exception:
+                raw = {"raw": text_body}
+            if response.status >= 400:
+                message = parse_error_message(raw)
+                raise RuntimeError(f"GLM request failed status={response.status} {message}")
+            choices = raw.get("choices") or []
+            if not choices:
+                raise RuntimeError("GLM response missing choices")
+            message = (choices[0] or {}).get("message") or {}
+            content = message.get("content")
+            text = extract_markdown_text(content)
+            if not text:
+                raise RuntimeError("GLM response content is empty")
+            return text
+    except aiohttp.ClientConnectorError as exc:
+        raise RuntimeError(f"GLM 服务不可达，请检查 GLM_BASE_URL。detail={exc}") from exc
+    except aiohttp.ClientError as exc:
+        raise RuntimeError(f"GLM 请求失败。detail={exc}") from exc
+
+
+def parse_table_html(table_html: str, table_no: int) -> dict[str, Any]:
+    parser = TableCellHTMLParser()
+    parser.feed(table_html)
+    rows = parser.rows
+    table_cells: list[dict[str, Any]] = []
+    csv_rows: list[list[str]] = []
+    for row_index, row in enumerate(rows):
+        csv_row: list[str] = []
+        col_index = 0
+        for cell in row:
+            text = normalize_text(cell.get("text", ""))
+            rowspan = max(1, int(cell.get("rowspan", 1)))
+            colspan = max(1, int(cell.get("colspan", 1)))
+            table_cells.append(
+                {
+                    "rowIndex": row_index,
+                    "colIndex": col_index,
+                    "rowSpan": rowspan,
+                    "colSpan": colspan,
+                    "text": text,
+                    "bbox": [],
+                    "confidence": 0.9,
+                }
+            )
+            csv_row.append(text)
+            for _ in range(1, colspan):
+                csv_row.append("MERGED")
+            col_index += colspan
+        csv_rows.append(csv_row)
+    return {
+        "tableNo": table_no,
+        "bbox": [],
+        "headerRowCount": 0,
+        "rows": csv_rows,
+        "csvRows": csv_rows,
+        "cells": table_cells,
+    }
+
+
+def build_page_from_markdown(markdown_text: str, page_no: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    content = markdown_text.strip()
+    table_matches = list(re.finditer(r"<table[\s\S]*?</table>", content, flags=re.IGNORECASE))
+    blocks: list[dict[str, Any]] = []
+    tables: list[dict[str, Any]] = []
+    parsing_res_list: list[dict[str, Any]] = []
+    cursor = 0
+    block_no = 1
+    table_no = 1
+
+    for match in table_matches:
+        before_text = normalize_text(unescape(content[cursor:match.start()]))
+        if before_text:
+            blocks.append({"blockNo": block_no, "bbox": [], "text": before_text, "lines": []})
+            parsing_res_list.append({"block_label": "text", "block_content": before_text, "block_bbox": []})
+            block_no += 1
+        table_html = match.group(0).strip()
+        table = parse_table_html(table_html, table_no)
+        tables.append(table)
+        blocks.append({"blockNo": block_no, "bbox": [], "text": table_html, "lines": []})
+        parsing_res_list.append({"block_label": "table", "block_content": table_html, "block_bbox": []})
+        block_no += 1
+        table_no += 1
+        cursor = match.end()
+
+    tail_text = normalize_text(unescape(content[cursor:]))
+    if tail_text:
+        blocks.append({"blockNo": block_no, "bbox": [], "text": tail_text, "lines": []})
+        parsing_res_list.append({"block_label": "text", "block_content": tail_text, "block_bbox": []})
+
+    page = {
+        "pageNo": page_no,
+        "width": 0,
+        "height": 0,
+        "text": content,
+        "blocks": blocks,
+        "tables": tables,
+    }
+    official_item = {
+        "prunedResult": {"parsing_res_list": parsing_res_list},
+        "markdown": {"text": content},
+    }
+    return page, official_item
+
+
+app = FastAPI(title="GLM OCR Service", version="1.0.0")
+
+
+@app.get("/healthz")
+async def healthz() -> dict[str, Any]:
+    base_url = (os.getenv("GLM_BASE_URL", "") or "").strip().rstrip("/")
+    parsed = urlparse(base_url)
+    return {
+        "ok": True,
+        "provider": "glm-ocr",
+        "model": (os.getenv("GLM_MODEL", "glm-4.1v-thinking-flash") or "").strip(),
+        "baseHost": (parsed.hostname or ""),
+        "authMode": resolve_auth_mode(),
+        "isOfficialEndpoint": is_official_endpoint(base_url) if base_url else False,
+        "ts": int(time.time()),
+    }
+
+
+@app.post("/layout-parsing")
+async def layout_parsing(payload: LayoutParsingRequest) -> dict[str, Any]:
+    try:
+        raw_bytes = decode_base64_payload(payload.file)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid file payload: {exc}") from exc
+
+    file_type = payload.fileType
+    if file_type not in (0, 1):
+        file_type = 1 if raw_bytes[:4] == b"%PDF" else 0
+    try:
+        if file_type == 1:
+            images = render_pdf_pages(raw_bytes)
+        else:
+            images = [ensure_jpeg(raw_bytes)]
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"decode file failed: {exc}") from exc
+    if not images:
+        raise HTTPException(status_code=422, detail="no page images extracted")
+
+    pages: list[dict[str, Any]] = []
+    official_items: list[dict[str, Any]] = []
+    top_tables: list[dict[str, Any]] = []
+    async with aiohttp.ClientSession() as session:
+        for index, image in enumerate(images):
+            try:
+                markdown_text = await call_glm_ocr(image, session)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            page, official_item = build_page_from_markdown(markdown_text, index + 1)
+            pages.append(page)
+            official_items.append(official_item)
+            top_tables.extend(page.get("tables") or [])
+
+    return {
+        "logId": f"glm-{uuid.uuid4().hex}",
+        "errorCode": 0,
+        "errorMsg": "",
+        "provider": "glm-ocr",
+        "pages": pages,
+        "tables": top_tables,
+        "result": {
+            "layoutParsingResults": official_items,
+        },
+    }

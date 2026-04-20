@@ -4,5 +4,3 @@ aiohttp==3.12.15
 filetype==1.2.0
 Pillow==11.2.1
 PyMuPDF==1.26.0
-protobuf==4.25.8
-paddleocr[doc-parser]==3.4.0

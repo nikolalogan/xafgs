@@ -42,7 +42,7 @@ ocr-model-cache-init:
 	mkdir -p ocr-service/model_cache
 
 ocr-model-cache-warm: ocr-model-cache-init
-	docker compose -f docker-compose.dev.yml run --rm ocr-service python -m app.preload_models
+	docker compose -f docker-compose.dev.yml run --rm ocr-service python /app/scripts/preload_models.py
 
 ocr-build: ocr-model-cache-init ocr-wheels-sync ocr-wheels-verify
 	OCR_WHEELS_ONLY=1 docker compose -f docker-compose.dev.yml build ocr-service

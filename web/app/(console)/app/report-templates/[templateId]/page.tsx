@@ -18,6 +18,7 @@ type CategoryItem = {
   key: string
   name: string
   required?: boolean
+  isTable?: boolean
 }
 
 type ReportTemplateDetailDTO = {
@@ -319,6 +320,7 @@ export default function ReportTemplateEditorPage() {
       key: allocateCategoryKey(trimmed),
       name: trimmed,
       required: false,
+      isTable: false,
     }
     setCategories(prev => [...prev, next])
     setNewCategoryName('')
@@ -334,6 +336,12 @@ export default function ReportTemplateEditorPage() {
     if (!isAdmin)
       return
     setCategories(prev => prev.map(item => item.key === categoryKey ? { ...item, required } : item))
+  }
+
+  const updateCategoryIsTable = (categoryKey: string, isTable: boolean) => {
+    if (!isAdmin)
+      return
+    setCategories(prev => prev.map(item => item.key === categoryKey ? { ...item, isTable } : item))
   }
 
   const saveTemplate = async (withToast = true) => {
@@ -489,6 +497,7 @@ export default function ReportTemplateEditorPage() {
             {categories.map(item => (
               <div key={item.key} className="flex items-center gap-2 rounded border border-gray-200 px-2 py-1">
                 <Tag color={item.required ? 'blue' : 'default'}>{item.name}</Tag>
+                {item.isTable ? <Tag color="purple">表格</Tag> : null}
                 <Typography.Text type="secondary">{item.key}</Typography.Text>
                 {isAdmin && (
                   <>
@@ -497,6 +506,12 @@ export default function ReportTemplateEditorPage() {
                       size="small"
                       checked={Boolean(item.required)}
                       onChange={checked => updateCategoryRequired(item.key, checked)}
+                    />
+                    <span className="text-xs text-gray-500">表格</span>
+                    <Switch
+                      size="small"
+                      checked={Boolean(item.isTable)}
+                      onChange={checked => updateCategoryIsTable(item.key, checked)}
                     />
                     <Button size="small" danger type="link" onClick={() => removeCategory(item.key)}>删除</Button>
                   </>
@@ -666,6 +681,7 @@ function parseCategories(raw: unknown): CategoryItem[] {
       key,
       name,
       required: Boolean(record.required),
+      isTable: Boolean(record.isTable),
     })
   }
   return out
