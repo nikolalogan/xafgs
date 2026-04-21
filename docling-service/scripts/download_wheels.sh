@@ -6,6 +6,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SERVICE_DIR="$ROOT_DIR/docling-service"
 WHEELS_DIR="$SERVICE_DIR/wheels"
 
+if command -v cygpath >/dev/null 2>&1; then
+  SERVICE_DIR_DOCKER="$(cygpath -aw "$SERVICE_DIR" | tr '\\' '/')"
+else
+  SERVICE_DIR_DOCKER="$SERVICE_DIR"
+fi
+
 mkdir -p "$WHEELS_DIR"
 
 PIP_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
@@ -19,7 +25,7 @@ docker run --rm \
   -e PIP_TRUSTED_HOST="$PIP_TRUSTED_HOST" \
   -e PIP_DEFAULT_TIMEOUT="$PIP_DEFAULT_TIMEOUT" \
   -e PIP_RETRIES="$PIP_RETRIES" \
-  -v "$SERVICE_DIR:/workspace" \
+  -v "$SERVICE_DIR_DOCKER:/workspace" \
   "$PYTHON_BASE_IMAGE" \
   sh -lc "python -m pip install --upgrade pip >/dev/null \
     && pip download --dest /workspace/wheels \
