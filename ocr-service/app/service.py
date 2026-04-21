@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import logging
 import os
 import re
 import time
@@ -15,6 +16,8 @@ import fitz
 from fastapi import FastAPI, HTTPException
 from PIL import Image
 from pydantic import BaseModel
+
+logger = logging.getLogger("glm_ocr_service")
 
 
 class LayoutParsingRequest(BaseModel):
@@ -88,6 +91,22 @@ def render_pdf_pages(raw_bytes: bytes) -> list[bytes]:
     return pages
 
 
+def is_likely_image(raw_bytes: bytes) -> bool:
+    if len(raw_bytes) >= 3 and raw_bytes.startswith(b"\xFF\xD8\xFF"):
+        return True
+    if len(raw_bytes) >= 4 and raw_bytes.startswith(b"\x89PNG"):
+        return True
+    if len(raw_bytes) >= 4 and raw_bytes.startswith(b"GIF8"):
+        return True
+    if len(raw_bytes) >= 2 and raw_bytes.startswith(b"BM"):
+        return True
+    if len(raw_bytes) >= 4 and (raw_bytes.startswith(b"II*\x00") or raw_bytes.startswith(b"MM\x00*")):
+        return True
+    if len(raw_bytes) >= 12 and raw_bytes[0:4] == b"RIFF" and raw_bytes[8:12] == b"WEBP":
+        return True
+    return False
+
+
 def ensure_jpeg(raw_bytes: bytes) -> bytes:
     image = Image.open(io.BytesIO(raw_bytes))
     with io.BytesIO() as buffer:
@@ -132,6 +151,17 @@ def is_official_endpoint(base_url: str) -> bool:
     return host.endswith("open.bigmodel.cn")
 
 
+def normalize_base_url(value: str) -> str:
+    return (value or "").strip().rstrip("/")
+
+
+def resolve_glm_base_url() -> str:
+    base_url = normalize_base_url(os.getenv("GLM_BASE_URL", ""))
+    if base_url:
+        return base_url
+    return "http://vllm:8000"
+
+
 def parse_error_message(raw: Any) -> str:
     if isinstance(raw, dict):
         err = raw.get("error")
@@ -145,16 +175,26 @@ def parse_error_message(raw: Any) -> str:
     return str(raw)
 
 
+async def is_glm_endpoint_ready(base_url: str, session: aiohttp.ClientSession) -> bool:
+    timeout = aiohttp.ClientTimeout(total=3)
+    try:
+        async with session.get(f"{base_url}/v1/models", timeout=timeout) as response:
+            return response.status < 500
+    except Exception:
+        return False
+
+
 async def call_glm_ocr(image_bytes: bytes, session: aiohttp.ClientSession) -> str:
-    base_url = (os.getenv("GLM_BASE_URL", "") or "").strip().rstrip("/")
-    if not base_url:
-        raise RuntimeError("GLM_BASE_URL 未配置，请设置本地 GLM 地址")
+    base_url = resolve_glm_base_url()
+    ready = await is_glm_endpoint_ready(base_url, session)
+    if not ready:
+        raise RuntimeError(f"项目内 vLLM 服务不可达或未就绪，请检查 {base_url}/v1/models")
     model = (os.getenv("GLM_MODEL", "glm-4.1v-thinking-flash") or "").strip()
     api_key = (os.getenv("GLM_API_KEY", "") or "").strip()
     auth_mode = resolve_auth_mode()
     if auth_mode == "none" and is_official_endpoint(base_url):
         raise RuntimeError("鉴权模式为 none，但 GLM_BASE_URL 指向官方 open.bigmodel.cn，请改为本地地址或启用 bearer")
-    endpoint = f"{base_url}/api/paas/v4/chat/completions"
+    endpoint = f"{base_url}/v1/chat/completions"
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
     payload = {
         "model": model,
@@ -180,6 +220,13 @@ async def call_glm_ocr(image_bytes: bytes, session: aiohttp.ClientSession) -> st
     timeout_ms = int((os.getenv("GLM_TIMEOUT_MS", "120000") or "120000").strip())
     timeout = aiohttp.ClientTimeout(total=max(5, timeout_ms // 1000))
     try:
+        logger.info(
+            "glm_ocr_request endpoint=%s model=%s auth_mode=%s use_bearer=%s",
+            endpoint,
+            model,
+            auth_mode,
+            use_bearer,
+        )
         async with session.post(endpoint, json=payload, headers=headers, timeout=timeout) as response:
             text_body = await response.text()
             try:
@@ -188,20 +235,23 @@ async def call_glm_ocr(image_bytes: bytes, session: aiohttp.ClientSession) -> st
                 raw = {"raw": text_body}
             if response.status >= 400:
                 message = parse_error_message(raw)
-                raise RuntimeError(f"GLM request failed status={response.status} {message}")
+                snippet = (text_body or "")[:300]
+                raise RuntimeError(
+                    f"GLM request failed status={response.status} endpoint={endpoint} message={message} body={snippet}"
+                )
             choices = raw.get("choices") or []
             if not choices:
-                raise RuntimeError("GLM response missing choices")
+                raise RuntimeError(f"GLM response missing choices endpoint={endpoint}")
             message = (choices[0] or {}).get("message") or {}
             content = message.get("content")
             text = extract_markdown_text(content)
             if not text:
-                raise RuntimeError("GLM response content is empty")
+                raise RuntimeError(f"GLM response content is empty endpoint={endpoint}")
             return text
     except aiohttp.ClientConnectorError as exc:
-        raise RuntimeError(f"GLM 服务不可达，请检查 GLM_BASE_URL。detail={exc}") from exc
+        raise RuntimeError(f"GLM 服务不可达，请检查项目内 vLLM 容器映射。endpoint={endpoint}, detail={exc}") from exc
     except aiohttp.ClientError as exc:
-        raise RuntimeError(f"GLM 请求失败。detail={exc}") from exc
+        raise RuntimeError(f"GLM 请求失败。endpoint={endpoint}, detail={exc}") from exc
 
 
 def parse_table_html(table_html: str, table_no: int) -> dict[str, Any]:
@@ -293,13 +343,24 @@ app = FastAPI(title="GLM OCR Service", version="1.0.0")
 
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
-    base_url = (os.getenv("GLM_BASE_URL", "") or "").strip().rstrip("/")
+    base_url = resolve_glm_base_url()
     parsed = urlparse(base_url)
+    upstream_ready = False
+    upstream_status = ""
+    async with aiohttp.ClientSession() as session:
+        upstream_ready = await is_glm_endpoint_ready(base_url, session)
+        if upstream_ready:
+            upstream_status = "ready"
+        else:
+            upstream_status = "not_ready"
     return {
         "ok": True,
         "provider": "glm-ocr",
         "model": (os.getenv("GLM_MODEL", "glm-4.1v-thinking-flash") or "").strip(),
         "baseHost": (parsed.hostname or ""),
+        "upstreamEndpoint": base_url,
+        "upstreamReady": upstream_ready,
+        "upstreamStatus": upstream_status,
         "authMode": resolve_auth_mode(),
         "isOfficialEndpoint": is_official_endpoint(base_url) if base_url else False,
         "ts": int(time.time()),
@@ -315,13 +376,17 @@ async def layout_parsing(payload: LayoutParsingRequest) -> dict[str, Any]:
 
     file_type = payload.fileType
     if file_type not in (0, 1):
-        file_type = 1 if raw_bytes[:4] == b"%PDF" else 0
+        file_type = 0 if raw_bytes[:4] == b"%PDF" else 1
     try:
-        if file_type == 1:
+        if file_type == 0:
             images = render_pdf_pages(raw_bytes)
         else:
             images = [ensure_jpeg(raw_bytes)]
     except Exception as exc:
+        if file_type == 0 and raw_bytes[:4] != b"%PDF":
+            raise HTTPException(status_code=415, detail="unsupported media type: expected pdf when fileType=0") from exc
+        if file_type == 1 and not is_likely_image(raw_bytes):
+            raise HTTPException(status_code=415, detail="unsupported media type: expected image when fileType=1") from exc
         raise HTTPException(status_code=422, detail=f"decode file failed: {exc}") from exc
     if not images:
         raise HTTPException(status_code=422, detail="no page images extracted")
@@ -334,6 +399,7 @@ async def layout_parsing(payload: LayoutParsingRequest) -> dict[str, Any]:
             try:
                 markdown_text = await call_glm_ocr(image, session)
             except Exception as exc:
+                logger.exception("layout_parsing_failed page=%s error=%s", index + 1, exc)
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
             page, official_item = build_page_from_markdown(markdown_text, index + 1)
             pages.append(page)
