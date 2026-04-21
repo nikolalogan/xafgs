@@ -962,6 +962,24 @@ func (service *reportingService) UploadEnterpriseProjectFiles(ctx context.Contex
 	if manualCategory == "" {
 		return model.UploadEnterpriseProjectFileResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "manualCategory 不能为空")
 	}
+	template, ok := service.reportingRepository.FindReportTemplateByID(project.TemplateID)
+	if !ok {
+		return model.UploadEnterpriseProjectFileResultDTO{}, model.NewAPIError(404, response.CodeNotFound, "报告模板不存在")
+	}
+	templateCategories := parseTemplateCategories(template.CategoriesJSON)
+	allowedCategories := map[string]struct{}{}
+	for _, category := range templateCategories {
+		name := strings.TrimSpace(fmt.Sprintf("%v", category["name"]))
+		if name == "" {
+			continue
+		}
+		allowedCategories[name] = struct{}{}
+	}
+	if len(allowedCategories) > 0 {
+		if _, exists := allowedCategories[manualCategory]; !exists {
+			return model.UploadEnterpriseProjectFileResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "manualCategory 不在模板文件分类中")
+		}
+	}
 	if len(fileHeaders) == 0 {
 		return model.UploadEnterpriseProjectFileResultDTO{}, model.NewAPIError(400, response.CodeBadRequest, "请至少上传一个文件")
 	}
