@@ -70,7 +70,8 @@ docker compose up --build
 ## 开发模式（代码挂载 + 热更新）
 
 ```bash
-docker compose -f docker-compose.dev.yml up --build
+make macdev   # macOS
+make windev   # Windows
 ```
 
 开发模式特性：
@@ -82,19 +83,16 @@ docker compose -f docker-compose.dev.yml up --build
 - 前端 `npm` 默认使用国内源：`https://registry.npmmirror.com`
 - 后端 `Go` 默认使用国内代理：`https://goproxy.cn,direct`
 
-### 跨平台数据目录配置（必填）
+### 跨平台启动命令
 
-开发编排会将数据库和文件上传目录同时挂载到宿主机 `HOST_DATA_ROOT` 下：
+- `make macdev` 使用 `docker-compose.dev.mac.yml`，固定挂载：
+  - `/Users/logan/Documents/code/pgsql` -> PostgreSQL 数据目录
+  - `/Users/logan/Documents/code/pgfile` -> 后端文件上传目录
+- `make windev` 使用 `docker-compose.dev.win.yml`，固定挂载：
+  - `E:/code/xafgs-temp/pgsql` -> PostgreSQL 数据目录
+  - `E:/code/xafgs-temp/pgfile` -> 后端文件上传目录
 
-- `${HOST_DATA_ROOT}/pgsql` -> PostgreSQL 数据目录
-- `${HOST_DATA_ROOT}/pgfile` -> 后端文件上传目录
-
-建议配置：
-
-- macOS：`HOST_DATA_ROOT=/Users/logan/Documents/code`
-- Windows：`HOST_DATA_ROOT=E:/code/xafgs-temp`
-
-未设置 `HOST_DATA_ROOT` 时，`docker compose -f docker-compose.dev.yml up --build` 会直接报错并停止启动（fail-fast），避免因路径错误导致“像是重建库”的问题。
+不再依赖 `HOST_DATA_ROOT` 环境变量。
 
 ## Makefile 快捷命令
 
@@ -107,6 +105,8 @@ make down
 
 - `make dev`：开发模式启动（缓存重建 + 热更新）
 - `make dev-fresh`：开发模式启动（无缓存重建 + 热更新）
+- `make macdev`：macOS 开发模式启动（缓存重建 + 热更新）
+- `make windev`：Windows 开发模式启动（缓存重建 + 热更新）
 - `make dev-rebuild-backend`：缓存重建开发后端镜像
 - `make dev-rebuild-backend-fresh`：无缓存重建开发后端镜像
 - `make ocr-wheels-sync`：同步 OCR Python 依赖到本地 `ocr-service/wheels/`（增量缓存）

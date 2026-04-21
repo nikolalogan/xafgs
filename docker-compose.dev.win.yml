@@ -41,7 +41,7 @@ services:
     working_dir: /app
     volumes:
       - ./server:/app
-      - /Users/logan/Documents/code/pgfile:/data/uploads
+      - E:/code/xafgs-temp/pgfile:/data/uploads
       - go_pkg_mod:/go/pkg/mod
       - go_build_cache:/root/.cache/go-build
     environment:
@@ -178,7 +178,7 @@ services:
       POSTGRES_USER: sxfg
       POSTGRES_PASSWORD: sxfg_password
     volumes:
-      - /Users/logan/Documents/code/pgsql:/var/lib/postgresql/data
+      - E:/code/xafgs-temp/pgsql:/var/lib/postgresql/data
       - ./deploy/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     command: ["postgres", "-c", "listen_addresses=*", "-c", "hba_file=/etc/postgresql/pg_hba.conf", "-c", "timezone=Asia/Shanghai"]
     healthcheck:

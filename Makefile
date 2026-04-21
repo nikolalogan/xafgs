@@ -1,9 +1,11 @@
-.PHONY: help dev dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-model-cache-init ocr-model-cache-warm
+.PHONY: help dev dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-model-cache-init ocr-model-cache-warm
 
 help:
 	@echo "可用命令:"
-	@echo "  make dev       # 开发模式启动（缓存重建+热更新）"
-	@echo "  make dev-fresh # 开发模式启动（无缓存重建+热更新）"
+	@echo "  make macdev    # macOS 开发模式启动（缓存重建+热更新）"
+	@echo "  make windev    # Windows 开发模式启动（缓存重建+热更新）"
+	@echo "  make dev       # 兼容旧命令，等同 macdev"
+	@echo "  make dev-fresh # 兼容旧命令，等同 macdev-fresh"
 	@echo "  make dev-rebuild-backend # 缓存重建开发后端镜像"
 	@echo "  make dev-rebuild-backend-fresh # 无缓存重建开发后端镜像"
 	@echo "  make ocr-wheels-sync # 同步 OCR 依赖到本地 wheels 缓存目录"
@@ -20,17 +22,37 @@ help:
 	@echo "  make logs      # 查看开发模式日志"
 	@echo "  make ps        # 查看容器状态"
 
-dev: dev-rebuild-backend
-	docker compose -f docker-compose.dev.yml up --build
+dev: macdev
 
-dev-fresh: dev-rebuild-backend-fresh
-	docker compose -f docker-compose.dev.yml up --build
+dev-fresh: macdev-fresh
 
-dev-rebuild-backend:
-	docker compose -f docker-compose.dev.yml build backend
+dev-rebuild-backend: macdev-rebuild-backend
 
-dev-rebuild-backend-fresh:
-	docker compose -f docker-compose.dev.yml build --no-cache backend
+dev-rebuild-backend-fresh: macdev-rebuild-backend-fresh
+
+macdev: macdev-rebuild-backend
+	docker compose -f docker-compose.dev.mac.yml up --build
+
+macdev-fresh: macdev-rebuild-backend-fresh
+	docker compose -f docker-compose.dev.mac.yml up --build
+
+macdev-rebuild-backend:
+	docker compose -f docker-compose.dev.mac.yml build backend
+
+macdev-rebuild-backend-fresh:
+	docker compose -f docker-compose.dev.mac.yml build --no-cache backend
+
+windev: windev-rebuild-backend
+	docker compose -f docker-compose.dev.win.yml up --build
+
+windev-fresh: windev-rebuild-backend-fresh
+	docker compose -f docker-compose.dev.win.yml up --build
+
+windev-rebuild-backend:
+	docker compose -f docker-compose.dev.win.yml build backend
+
+windev-rebuild-backend-fresh:
+	docker compose -f docker-compose.dev.win.yml build --no-cache backend
 
 ocr-wheels-sync:
 	bash ocr-service/scripts/download_wheels.sh
