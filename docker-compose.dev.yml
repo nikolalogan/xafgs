@@ -41,7 +41,7 @@ services:
     working_dir: /app
     volumes:
       - ./server:/app
-      - /Users/logan/Documents/code/pgfile:/data/uploads
+      - ${HOST_DATA_ROOT:?HOST_DATA_ROOT is required, e.g. /Users/logan/Documents/code or E:/code/xafgs-temp}/pgfile:/data/uploads
       - go_pkg_mod:/go/pkg/mod
       - go_build_cache:/root/.cache/go-build
     environment:
@@ -90,8 +90,8 @@ services:
     gpus: all
     environment:
       TZ: "Asia/Shanghai"
-      GLM_BASE_URL: "${GLM_BASE_URL:-}"
-      GLM_MODEL: "${GLM_MODEL:-glm-4.1v-thinking-flash}"
+      GLM_BASE_URL: "${GLM_BASE_URL:-http://vllm:8000}"
+      GLM_MODEL: "${GLM_MODEL:-zai-org/GLM-OCR}"
       GLM_API_KEY: "${GLM_API_KEY:-}"
       GLM_AUTH_MODE: "${GLM_AUTH_MODE:-none}"
       GLM_TIMEOUT_MS: "${GLM_TIMEOUT_MS:-120000}"
@@ -106,6 +106,9 @@ services:
       CPU_NUM: "1"
     command: >
       sh -c "uvicorn app.service:app --host 0.0.0.0 --port 8090"
+    depends_on:
+      vllm:
+        condition: service_healthy
     expose:
       - "8090"
     ports:
@@ -115,6 +118,39 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+    restart: unless-stopped
+
+  vllm:
+    image: "${VLLM_IMAGE:-docker.m.daocloud.io/vllm/vllm-openai:latest}"
+    gpus: all
+    environment:
+      TZ: "Asia/Shanghai"
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+    command:
+      - "/models/glm-ocr"
+      - "--allowed-local-media-path"
+      - "/"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--served-model-name"
+      - "zai-org/GLM-OCR"
+      - "--trust-remote-code"
+    volumes:
+      - ./ocr-service/model_cache/glm:/models/glm-ocr:ro
+      - ./ocr-service/model_cache/hf:/root/.cache/huggingface
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=2); sys.exit(0)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 120
+      start_period: 20m
     restart: unless-stopped
 
   gateway:
@@ -128,6 +164,7 @@ services:
       - ./deploy/nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - frontend
+      - backend
     restart: unless-stopped
 
   postgres:
@@ -141,7 +178,7 @@ services:
       POSTGRES_USER: sxfg
       POSTGRES_PASSWORD: sxfg_password
     volumes:
-      - /Users/logan/Documents/code/pgsql:/var/lib/postgresql/data
+      - ${HOST_DATA_ROOT:?HOST_DATA_ROOT is required, e.g. /Users/logan/Documents/code or E:/code/xafgs-temp}/pgsql:/var/lib/postgresql/data
       - ./deploy/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     command: ["postgres", "-c", "listen_addresses=*", "-c", "hba_file=/etc/postgresql/pg_hba.conf", "-c", "timezone=Asia/Shanghai"]
     healthcheck:

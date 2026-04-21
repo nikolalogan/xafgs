@@ -82,6 +82,20 @@ docker compose -f docker-compose.dev.yml up --build
 - 前端 `npm` 默认使用国内源：`https://registry.npmmirror.com`
 - 后端 `Go` 默认使用国内代理：`https://goproxy.cn,direct`
 
+### 跨平台数据目录配置（必填）
+
+开发编排会将数据库和文件上传目录同时挂载到宿主机 `HOST_DATA_ROOT` 下：
+
+- `${HOST_DATA_ROOT}/pgsql` -> PostgreSQL 数据目录
+- `${HOST_DATA_ROOT}/pgfile` -> 后端文件上传目录
+
+建议配置：
+
+- macOS：`HOST_DATA_ROOT=/Users/logan/Documents/code`
+- Windows：`HOST_DATA_ROOT=E:/code/xafgs-temp`
+
+未设置 `HOST_DATA_ROOT` 时，`docker compose -f docker-compose.dev.yml up --build` 会直接报错并停止启动（fail-fast），避免因路径错误导致“像是重建库”的问题。
+
 ## Makefile 快捷命令
 
 ```bash
@@ -127,7 +141,7 @@ make ocr-model-cache-warm
 - `make ocr-model-cache-warm` 会将 PaddleX 模型下载到本地 `ocr-service/model_cache/`；
 - `make ocr-build` 会先自动同步本地 wheels，再做离线校验与构建，保证可复现；如需临时回源，使用 `make ocr-build-online-fallback`。
 - `docker-compose` 中 `OCR_WHEELS_ONLY` 默认已设为 `1`（本地 wheel 优先且不回源）；仅 `make ocr-build-online-fallback` 会显式传入 `OCR_WHEELS_ONLY=0` 允许回源。
-- `ocr-service` 已切换为 GLM OCR 适配服务（调用 `GLM_BASE_URL` + `GLM_API_KEY`），入口保持 `POST /layout-parsing`。
+- `ocr-service` 已切换为 GLM OCR 适配服务，默认走项目内 `vllm`（`GLM_BASE_URL` 默认 `http://vllm:8000`），入口保持 `POST /layout-parsing`。
 - CPU 稳定性参数默认启用：`FLAGS_use_mkldnn=0`、`FLAGS_enable_pir_api=0`、`FLAGS_enable_pir_in_executor=0`、`OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`。
 
 ## OCR 模型调用（GLM）
@@ -139,6 +153,16 @@ make ocr-model-cache-warm
 
 首次构建/运行会下载模型，后续重建会直接复用本地缓存目录。
 当前 `docker-compose` 默认设置 `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=False`，会执行模型源连通性探测。
+
+### 项目内 vLLM（默认）
+
+- `docker-compose.dev.yml` 内置 `vllm` 服务，`ocr-service` 仅调用项目内地址，不再探测 `host.docker.internal` 等外部候选；
+- 默认模型目录：`./ocr-service/model_cache/glm`（无模型则由 vLLM 首次拉取，有模型则复用缓存）；
+- 可通过环境变量覆盖：
+  - `GLM_BASE_URL`（默认 `http://vllm:8000`）
+  - `GLM_MODEL`
+  - `GLM_MODEL_PATH`（默认 `/models/glm-ocr`）
+  - `VLLM_IMAGE`
 
 ## OCR 服务调用
 
