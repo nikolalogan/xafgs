@@ -11,7 +11,7 @@ export default function EnterpriseProjectReportPlaceholderPage() {
 
   return (
     <div className="space-y-4">
-      <ProjectWorkflowSteps projectId={projectId} currentStep={3} />
+      <ProjectWorkflowSteps projectId={projectId} currentStep={4} />
       <Card
         title="报告生成（预留）"
         extra={(

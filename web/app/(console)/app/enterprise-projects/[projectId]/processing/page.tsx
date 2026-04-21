@@ -11,13 +11,13 @@ export default function EnterpriseProjectProcessingPlaceholderPage() {
 
   return (
     <div className="space-y-4">
-      <ProjectWorkflowSteps projectId={projectId} currentStep={2} />
+      <ProjectWorkflowSteps projectId={projectId} currentStep={3} />
       <Card
         title="文件处理（预留）"
         extra={(
           <Space>
             <Button onClick={() => router.push('/app/file-processing')}>查看全局处理清单</Button>
-            <Button onClick={() => router.push(`/app/enterprise-projects/${projectId}/confirm`)}>返回文件确认</Button>
+            <Button onClick={() => router.push(`/app/enterprise-projects/${projectId}/finance`)}>返回财务数据确认</Button>
           </Space>
         )}
       >

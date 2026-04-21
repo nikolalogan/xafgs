@@ -11,6 +11,7 @@ type ProjectWorkflowStepsProps = {
 const STEP_ROUTES = [
   (projectId: number) => `/app/enterprise-projects/${projectId}`,
   (projectId: number) => `/app/enterprise-projects/${projectId}/confirm`,
+  (projectId: number) => `/app/enterprise-projects/${projectId}/finance`,
   (projectId: number) => `/app/enterprise-projects/${projectId}/processing`,
   (projectId: number) => `/app/enterprise-projects/${projectId}/report`,
   (projectId: number) => `/app/enterprise-projects/${projectId}/edit`,
@@ -19,6 +20,7 @@ const STEP_ROUTES = [
 const STEP_ITEMS = [
   { title: '文件录入' },
   { title: '文件确认' },
+  { title: '财务数据确认' },
   { title: '文件处理' },
   { title: '报告生成' },
   { title: '内容修改' },

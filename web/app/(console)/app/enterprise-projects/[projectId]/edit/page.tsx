@@ -11,7 +11,7 @@ export default function EnterpriseProjectEditPlaceholderPage() {
 
   return (
     <div className="space-y-4">
-      <ProjectWorkflowSteps projectId={projectId} currentStep={4} />
+      <ProjectWorkflowSteps projectId={projectId} currentStep={5} />
       <Card
         title="内容修改（预留）"
         extra={(

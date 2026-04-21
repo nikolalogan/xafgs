@@ -244,7 +244,7 @@ export default function EnterpriseProjectConfirmPage() {
     try {
       const result = await request<EnterpriseProjectVectorConfirmResultDTO>(`/api/enterprise-projects/${projectId}/confirm-vectorization`, { method: 'POST' })
       msgApi.success(`已处理 ${result.total} 个文件：入队 ${result.enqueued}，跳过 ${result.skipped}，失败 ${result.failed}`)
-      router.push(`/app/enterprise-projects/${projectId}/processing`)
+      router.push(`/app/enterprise-projects/${projectId}/finance`)
     } catch (error) {
       msgApi.error(error instanceof Error ? error.message : '向量确认失败')
     } finally {
