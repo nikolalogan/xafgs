@@ -25,6 +25,13 @@ type ocrTaskService struct {
 	keyLocks       sync.Map
 }
 
+const (
+	ocrProviderLocalAsync     = "local-async"
+	ocrAsyncRetryMaxAttempts  = 2
+	ocrAsyncRetryBackoff      = 2 * time.Second
+	ocrAsyncAttemptTimeout    = 6 * time.Minute
+)
+
 func NewOCRTaskService(fileRepository repository.FileRepository, ocrClient OCRClient) OCRTaskService {
 	return &ocrTaskService{
 		fileRepository: fileRepository,
@@ -32,20 +39,10 @@ func NewOCRTaskService(fileRepository repository.FileRepository, ocrClient OCRCl
 	}
 }
 
-func (service *ocrTaskService) EnsureTask(ctx context.Context, version model.FileVersionDTO, raw []byte, _ DocumentProfile) (model.OCRTask, *model.APIError) {
+func (service *ocrTaskService) EnsureTask(_ context.Context, version model.FileVersionDTO, raw []byte, _ DocumentProfile) (model.OCRTask, *model.APIError) {
 	unlock := service.lockFor(version.FileID, version.VersionNo)
 	defer unlock()
 	if existing, ok := service.fileRepository.FindLatestOCRTask(version.FileID, version.VersionNo); ok {
-		if existing.Status == model.OCRTaskStatusPending || existing.Status == model.OCRTaskStatusRunning {
-			synced, apiError := service.syncTask(ctx, existing)
-			if apiError == nil && (synced.Status == model.OCRTaskStatusPending || synced.Status == model.OCRTaskStatusRunning || synced.Status == model.OCRTaskStatusSucceeded) {
-				return synced, nil
-			}
-			if apiError != nil {
-				return existing, nil
-			}
-			existing = synced
-		}
 		if existing.Status == model.OCRTaskStatusSucceeded || existing.Status == model.OCRTaskStatusPending || existing.Status == model.OCRTaskStatusRunning {
 			return existing, nil
 		}
@@ -67,42 +64,15 @@ func (service *ocrTaskService) EnsureTask(ctx context.Context, version model.Fil
 		VersionNo:          version.VersionNo,
 		Status:             model.OCRTaskStatusPending,
 		ProviderMode:       "auto",
+		ProviderUsed:       ocrProviderLocalAsync,
 		RequestPayloadJSON: requestJSON,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	})
-
-	resp, err := service.ocrClient.SubmitTask(ctx, requestPayload)
-	if err != nil {
-		task.Status = model.OCRTaskStatusFailed
-		task.ErrorCode = response.CodeInternal
-		task.ErrorMessage = err.Error()
-		finishedAt := time.Now().UTC()
-		task.FinishedAt = &finishedAt
-		task.UpdatedAt = finishedAt
-		updated, _ := service.fileRepository.UpdateOCRTask(task)
-		return updated, nil
-	}
-
-	startedAt := time.Now().UTC()
-	task.ProviderTaskID = strings.TrimSpace(resp.TaskID)
-	task.ProviderUsed = strings.TrimSpace(resp.Provider)
-	task.Status = normalizeOCRTaskStatus(resp.Status)
-	task.PageCount = resp.PageCount
-	task.Confidence = resp.Confidence
-	task.ErrorCode = strings.TrimSpace(resp.ErrorCode)
-	task.ErrorMessage = strings.TrimSpace(resp.ErrorMessage)
-	task.StartedAt = &startedAt
-	task.UpdatedAt = startedAt
-	if resp.Result != nil {
-		raw, _ := json.Marshal(resp.Result)
-		task.ResultPayloadJSON = raw
-	}
-	if task.Status == model.OCRTaskStatusSucceeded || task.Status == model.OCRTaskStatusFailed || task.Status == model.OCRTaskStatusCancelled {
-		finishedAt := startedAt
-		task.FinishedAt = &finishedAt
-	}
+	task.ProviderTaskID = fmt.Sprintf("local-%d", task.ID)
+	task.UpdatedAt = time.Now().UTC()
 	updated, _ := service.fileRepository.UpdateOCRTask(task)
+	go service.runAsyncOCRTask(updated.ID, requestPayload)
 	return updated, nil
 }
 
@@ -136,6 +106,9 @@ func (service *ocrTaskService) GetTaskStatus(ctx context.Context, fileID int64, 
 }
 
 func (service *ocrTaskService) syncTask(ctx context.Context, task model.OCRTask) (model.OCRTask, *model.APIError) {
+	if isLocalAsyncOCRTask(task) {
+		return task, nil
+	}
 	if strings.TrimSpace(task.ProviderTaskID) == "" {
 		return task, nil
 	}
@@ -176,6 +149,85 @@ func (service *ocrTaskService) syncTask(ctx context.Context, task model.OCRTask)
 		return task, model.NewAPIError(500, response.CodeInternal, "更新 OCR 任务失败")
 	}
 	return updated, nil
+}
+
+func (service *ocrTaskService) runAsyncOCRTask(taskID int64, requestPayload OCRTaskSubmitRequest) {
+	for attempt := 1; attempt <= ocrAsyncRetryMaxAttempts; attempt++ {
+		task, ok := service.fileRepository.FindOCRTaskByID(taskID)
+		if !ok {
+			return
+		}
+		now := time.Now().UTC()
+		if task.StartedAt == nil {
+			task.StartedAt = &now
+		}
+		task.Status = model.OCRTaskStatusRunning
+		task.ProviderUsed = ocrProviderLocalAsync
+		if strings.TrimSpace(task.ProviderTaskID) == "" {
+			task.ProviderTaskID = fmt.Sprintf("local-%d", task.ID)
+		}
+		task.RetryCount = attempt - 1
+		task.UpdatedAt = now
+		task.ErrorCode = ""
+		task.ErrorMessage = ""
+		if updated, ok := service.fileRepository.UpdateOCRTask(task); ok {
+			task = updated
+		}
+
+		attemptCtx, cancel := context.WithTimeout(context.Background(), ocrAsyncAttemptTimeout)
+		resp, err := service.ocrClient.SubmitTask(attemptCtx, requestPayload)
+		cancel()
+		if err != nil {
+			if attempt < ocrAsyncRetryMaxAttempts {
+				time.Sleep(ocrAsyncRetryBackoff)
+				continue
+			}
+			failedAt := time.Now().UTC()
+			task.Status = model.OCRTaskStatusFailed
+			task.ErrorCode = response.CodeInternal
+			task.ErrorMessage = err.Error()
+			task.RetryCount = attempt - 1
+			task.FinishedAt = &failedAt
+			task.UpdatedAt = failedAt
+			_, _ = service.fileRepository.UpdateOCRTask(task)
+			return
+		}
+
+		completedAt := time.Now().UTC()
+		task.Status = normalizeOCRTaskStatus(resp.Status)
+		if provider := strings.TrimSpace(resp.Provider); provider != "" {
+			task.ProviderUsed = provider
+		}
+		if providerTaskID := strings.TrimSpace(resp.TaskID); providerTaskID != "" {
+			task.ProviderTaskID = providerTaskID
+		}
+		task.PageCount = resp.PageCount
+		task.Confidence = resp.Confidence
+		task.ErrorCode = strings.TrimSpace(resp.ErrorCode)
+		task.ErrorMessage = strings.TrimSpace(resp.ErrorMessage)
+		task.RetryCount = attempt - 1
+		task.UpdatedAt = completedAt
+		if resp.Result != nil {
+			raw, _ := json.Marshal(resp.Result)
+			task.ResultPayloadJSON = raw
+		}
+		if task.Status == model.OCRTaskStatusSucceeded || task.Status == model.OCRTaskStatusFailed || task.Status == model.OCRTaskStatusCancelled {
+			task.FinishedAt = &completedAt
+		} else {
+			task.Status = model.OCRTaskStatusSucceeded
+			task.FinishedAt = &completedAt
+		}
+		_, _ = service.fileRepository.UpdateOCRTask(task)
+		return
+	}
+}
+
+func isLocalAsyncOCRTask(task model.OCRTask) bool {
+	providerUsed := strings.TrimSpace(strings.ToLower(task.ProviderUsed))
+	if providerUsed == ocrProviderLocalAsync {
+		return true
+	}
+	return strings.HasPrefix(strings.TrimSpace(strings.ToLower(task.ProviderTaskID)), "local-")
 }
 
 func normalizeOCRTaskStatus(status string) string {
