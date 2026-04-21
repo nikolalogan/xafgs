@@ -108,6 +108,7 @@ export default function EnterpriseProjectPage() {
   const [removingCaseFileIDs, setRemovingCaseFileIDs] = useState<Record<number, boolean>>({})
   const [detail, setDetail] = useState<EnterpriseProjectDetailDTO | null>(null)
   const [uploadFilesByCategory, setUploadFilesByCategory] = useState<Record<string, UploadFile[]>>({})
+  const [showUploaderByCategory, setShowUploaderByCategory] = useState<Record<string, boolean>>({})
   const projectId = Number(params?.projectId || 0)
 
   const request = async <T,>(url: string, init?: RequestInit) => {
@@ -214,7 +215,7 @@ export default function EnterpriseProjectPage() {
 
     if (readyCategories.length === 0) {
       if (hasUploadedHistory) {
-        router.push(`/app/enterprise-projects/${projectId}/confirm`)
+        msgApi.info('当前没有待上传文件，可继续添加附件或进入文件确认')
         return
       }
       msgApi.warning('请先添加附件，再点击保存')
@@ -235,8 +236,10 @@ export default function EnterpriseProjectPage() {
         })
         uploadedCount += item.files.length
       }
-      msgApi.success(`已提交 ${uploadedCount} 个文件，正在排队解析`)
-      router.push(`/app/enterprise-projects/${projectId}/confirm`)
+      setUploadFilesByCategory({})
+      setShowUploaderByCategory({})
+      await loadDetail()
+      msgApi.success(`已上传 ${uploadedCount} 个文件，可继续添加或移除附件`)
     }
     catch (error) {
       msgApi.error(error instanceof Error ? error.message : '提交上传失败')
@@ -302,6 +305,7 @@ export default function EnterpriseProjectPage() {
             const fileList = uploadFilesByCategory[categoryKey] || []
             const uploadedItems = getUploadedItemsForCategory(category)
             const totalCount = fileList.length + uploadedItems.length
+            const showUploader = Boolean(showUploaderByCategory[categoryKey]) || uploadedItems.length === 0 || fileList.length > 0
             return (
               <div key={categoryKey} className="rounded-lg border border-gray-200 p-3">
                 <div className="mb-2 flex items-center justify-between">
@@ -317,7 +321,29 @@ export default function EnterpriseProjectPage() {
                 </div>
                 {uploadedItems.length > 0 && (
                   <div className="mb-2 rounded-md border border-gray-100 bg-gray-50 p-2">
-                    <div className="mb-1 text-xs font-medium text-gray-600">已上传附件</div>
+                    <div className="mb-1 flex items-center justify-between">
+                      <div className="text-xs font-medium text-gray-600">已上传附件</div>
+                      <Space size={4}>
+                        {!showUploader && (
+                          <Button
+                            size="small"
+                            type="link"
+                            onClick={() => setShowUploaderByCategory(prev => ({ ...prev, [categoryKey]: true }))}
+                          >
+                            继续添加
+                          </Button>
+                        )}
+                        {showUploader && (
+                          <Button
+                            size="small"
+                            type="link"
+                            onClick={() => setShowUploaderByCategory(prev => ({ ...prev, [categoryKey]: false }))}
+                          >
+                            收起添加
+                          </Button>
+                        )}
+                      </Space>
+                    </div>
                     <div className="space-y-1">
                       {uploadedItems.map(item => (
                         <div key={`${item.caseFileId}-${item.fileId}-${item.versionNo}`} className="flex flex-wrap items-center gap-2 text-xs">
@@ -347,33 +373,40 @@ export default function EnterpriseProjectPage() {
                     </div>
                   </div>
                 )}
-                <Dragger
-                  multiple
-                  beforeUpload={(file) => {
-                    if (isSingleUploadOversized(file as File)) {
-                      msgApi.warning(`单文件大小不能超过 ${MAX_SINGLE_UPLOAD_TEXT}`)
-                      return Upload.LIST_IGNORE
-                    }
-                    return false
-                  }}
-                  fileList={fileList}
-                  onChange={({ fileList: nextFileList }) => {
-                    const filtered = nextFileList
-                      .filter(item => !isSingleUploadOversized(item.originFileObj as File | undefined))
-                    const ignoredCount = nextFileList.length - filtered.length
-                    if (ignoredCount > 0)
-                      msgApi.warning(`已忽略 ${ignoredCount} 个超限文件，单文件上限 ${MAX_SINGLE_UPLOAD_TEXT}`)
-                    const normalized = filtered.slice(-50)
-                    setUploadFilesByCategory(prev => ({ ...prev, [categoryKey]: normalized }))
-                  }}
-                  showUploadList={{ showRemoveIcon: true }}
-                  style={{ background: '#fafafa' }}
-                >
-                  <div className="py-2">
-                    <div className="mb-1 text-sm text-gray-700">拖拽文件到此处，或点击此区域添加文件</div>
-                    <div className="text-xs text-gray-500">当前分类：{category.name}</div>
+                {showUploader && (
+                  <Dragger
+                    multiple
+                    beforeUpload={(file) => {
+                      if (isSingleUploadOversized(file as File)) {
+                        msgApi.warning(`单文件大小不能超过 ${MAX_SINGLE_UPLOAD_TEXT}`)
+                        return Upload.LIST_IGNORE
+                      }
+                      return false
+                    }}
+                    fileList={fileList}
+                    onChange={({ fileList: nextFileList }) => {
+                      const filtered = nextFileList
+                        .filter(item => !isSingleUploadOversized(item.originFileObj as File | undefined))
+                      const ignoredCount = nextFileList.length - filtered.length
+                      if (ignoredCount > 0)
+                        msgApi.warning(`已忽略 ${ignoredCount} 个超限文件，单文件上限 ${MAX_SINGLE_UPLOAD_TEXT}`)
+                      const normalized = filtered.slice(-50)
+                      setUploadFilesByCategory(prev => ({ ...prev, [categoryKey]: normalized }))
+                    }}
+                    showUploadList={{ showRemoveIcon: true }}
+                    style={{ background: '#fafafa' }}
+                  >
+                    <div className="py-2">
+                      <div className="mb-1 text-sm text-gray-700">拖拽文件到此处，或点击此区域添加文件</div>
+                      <div className="text-xs text-gray-500">当前分类：{category.name}</div>
+                    </div>
+                  </Dragger>
+                )}
+                {!showUploader && uploadedItems.length > 0 && (
+                  <div className="rounded border border-dashed border-gray-200 p-2 text-xs text-gray-500">
+                    当前分类已上传 {uploadedItems.length} 个附件，可点击“继续添加”追加上传。
                   </div>
-                </Dragger>
+                )}
               </div>
             )
           })}
