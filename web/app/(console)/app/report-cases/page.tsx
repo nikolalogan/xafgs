@@ -174,7 +174,7 @@ type SubjectAssetDTO = {
   status: string
 }
 
-const categoryOptions = ['主体', '区域', '财务', '项目', '反担保']
+const categoryOptions = ['主体', '区域', '财务', '项目', '反担保', '反担保财报']
 
 const getToken = () => {
   if (typeof window === 'undefined')

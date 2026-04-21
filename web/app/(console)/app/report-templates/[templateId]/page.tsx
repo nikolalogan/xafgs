@@ -47,6 +47,8 @@ type OutlineItem = {
   order: number
 }
 
+const FIXED_CATEGORY_NAMES = ['主体', '区域', '财务', '项目', '反担保', '反担保财报'] as const
+
 const turndown = new TurndownService({ codeBlockStyle: 'fenced' })
 
 const getToken = () => {
@@ -329,6 +331,11 @@ export default function ReportTemplateEditorPage() {
   const removeCategory = (categoryKey: string) => {
     if (!isAdmin)
       return
+    const target = categories.find(item => item.key === categoryKey)
+    if (target && FIXED_CATEGORY_NAMES.includes(target.name as (typeof FIXED_CATEGORY_NAMES)[number])) {
+      msgApi.warning('固定分类不可删除')
+      return
+    }
     setCategories(prev => prev.filter(item => item.key !== categoryKey))
   }
 
@@ -497,6 +504,7 @@ export default function ReportTemplateEditorPage() {
             {categories.map(item => (
               <div key={item.key} className="flex items-center gap-2 rounded border border-gray-200 px-2 py-1">
                 <Tag color={item.required ? 'blue' : 'default'}>{item.name}</Tag>
+                {FIXED_CATEGORY_NAMES.includes(item.name as (typeof FIXED_CATEGORY_NAMES)[number]) ? <Tag color="gold">固定</Tag> : null}
                 {item.isTable ? <Tag color="purple">表格</Tag> : null}
                 <Typography.Text type="secondary">{item.key}</Typography.Text>
                 {isAdmin && (
@@ -513,7 +521,9 @@ export default function ReportTemplateEditorPage() {
                       checked={Boolean(item.isTable)}
                       onChange={checked => updateCategoryIsTable(item.key, checked)}
                     />
-                    <Button size="small" danger type="link" onClick={() => removeCategory(item.key)}>删除</Button>
+                    {!FIXED_CATEGORY_NAMES.includes(item.name as (typeof FIXED_CATEGORY_NAMES)[number]) && (
+                      <Button size="small" danger type="link" onClick={() => removeCategory(item.key)}>删除</Button>
+                    )}
                   </>
                 )}
               </div>
@@ -662,27 +672,76 @@ export default function ReportTemplateEditorPage() {
 }
 
 function parseCategories(raw: unknown): CategoryItem[] {
-  if (!raw) {
-    return []
-  }
   const parsed = Array.isArray(raw) ? raw : []
-  const out: CategoryItem[] = []
+  const parsedItems: CategoryItem[] = []
+  const byName = new Map<string, CategoryItem>()
+  const usedKeys = new Set<string>()
+
+  const normalizeName = (value: string) => value.trim()
+  const normalizeKey = (value: string) => {
+    const candidate = value.trim()
+    if (candidate)
+      return candidate
+    return 'category'
+  }
+
+  const allocateKey = (preferred: string) => {
+    const base = normalizeKey(preferred)
+    if (!usedKeys.has(base)) {
+      usedKeys.add(base)
+      return base
+    }
+    let suffix = 2
+    while (usedKeys.has(`${base}_${suffix}`))
+      suffix++
+    const next = `${base}_${suffix}`
+    usedKeys.add(next)
+    return next
+  }
+
   for (const item of parsed) {
     if (!item || typeof item !== 'object') {
       continue
     }
     const record = item as Record<string, unknown>
-    const name = String(record.name || '').trim()
+    const name = normalizeName(String(record.name || ''))
     if (!name) {
       continue
     }
-    const key = String(record.key || '').trim() || name
-    out.push({
+    const normalizedName = name.toLowerCase()
+    if (byName.has(normalizedName))
+      continue
+    const key = allocateKey(String(record.key || '').trim() || name)
+    const category: CategoryItem = {
       key,
       name,
       required: Boolean(record.required),
       isTable: Boolean(record.isTable),
+    }
+    byName.set(normalizedName, category)
+    parsedItems.push(category)
+  }
+
+  const out: CategoryItem[] = []
+  for (const fixedName of FIXED_CATEGORY_NAMES) {
+    const matched = byName.get(fixedName.toLowerCase())
+    if (matched) {
+      out.push(matched)
+      continue
+    }
+    out.push({
+      key: allocateKey(fixedName),
+      name: fixedName,
+      required: false,
+      isTable: false,
     })
   }
+
+  for (const item of parsedItems) {
+    if (FIXED_CATEGORY_NAMES.includes(item.name as (typeof FIXED_CATEGORY_NAMES)[number]))
+      continue
+    out.push(item)
+  }
+
   return out
 }

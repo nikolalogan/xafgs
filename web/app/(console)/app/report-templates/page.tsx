@@ -33,6 +33,16 @@ type ReportTemplateSharedUserDTO = {
   role: 'admin' | 'user'
 }
 
+const DEFAULT_TEMPLATE_CATEGORIES = [
+  { key: 'subject', name: '主体', required: true, isTable: false },
+  { key: 'region', name: '区域', required: true, isTable: false },
+  { key: 'finance', name: '财务', required: true, isTable: false },
+  { key: 'project', name: '项目', required: false, isTable: false },
+  { key: 'counter_guarantee', name: '反担保', required: false, isTable: false },
+  { key: 'counter_guarantee_finance', name: '反担保财报', required: false, isTable: false },
+  { key: 'other', name: '其他', required: false, isTable: false },
+]
+
 const getToken = () => {
   if (typeof window === 'undefined')
     return ''
@@ -127,7 +137,7 @@ export default function ReportTemplatesPage() {
         name: values.name,
         description: values.description || '',
         status: values.status,
-        categoriesJson: [],
+        categoriesJson: DEFAULT_TEMPLATE_CATEGORIES,
         processingConfigJson: {},
         contentMarkdown: values.contentMarkdown || '## 新章节\n\n请编辑内容。',
         editorConfigJson: {},
