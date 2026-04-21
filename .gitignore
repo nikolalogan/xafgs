@@ -15,3 +15,4 @@ server/tmp
 /ocr-service/wheels
 /ocr-service/model_cache
 *.pyc
+/ocr-service/app/__pycache__

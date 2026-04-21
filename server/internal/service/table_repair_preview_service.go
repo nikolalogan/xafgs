@@ -140,7 +140,7 @@ func (service *tableRepairPreviewService) buildReadableError(err error) string {
 	case strings.Contains(lower, "status=403"):
 		return "调用 OCR 服务失败: 上游拒绝访问" + envHint + "；原始错误: " + raw
 	case strings.Contains(lower, "不可达"), strings.Contains(lower, "connection refused"), strings.Contains(lower, "no such host"), strings.Contains(lower, "timeout"):
-		return "调用 OCR 服务失败: 上游不可达，请检查 GLM_BASE_URL" + envHint + "；原始错误: " + raw
+		return "调用 OCR 服务失败: 项目内 vLLM 上游不可达，请检查 GLM_BASE_URL（默认 http://vllm:8000）" + envHint + "；原始错误: " + raw
 	default:
 		return "调用 OCR 服务失败: " + raw + envHint
 	}
