@@ -3,6 +3,9 @@
 set -euo pipefail
 
 DEV_COMPOSE_FILE="${1:-${DEV_COMPOSE_FILE:-docker-compose.dev.yml}}"
+SERVICE_KEYS=("1" "2" "3" "4" "5" "6" "7" "8" "9")
+SERVICE_NAMES=("全部服务" "frontend" "backend" "ocr-service" "docling-service" "vllm" "gateway" "postgres" "redis")
+SERVICE_VALUES=("" "frontend" "backend" "ocr-service" "docling-service" "vllm" "gateway" "postgres" "redis")
 
 run_compose() {
   docker compose -f "$DEV_COMPOSE_FILE" "$@"
@@ -17,7 +20,7 @@ show_header() {
 
 show_menu() {
   echo "请选择操作:"
-  echo "  1) 开发启动"
+  echo "  1) 启动菜单"
   echo "  2) 打包菜单"
   echo "  3) 停止开发环境"
   echo "  4) 查看开发日志"
@@ -25,6 +28,16 @@ show_menu() {
   echo "  6) 同步 OCR wheels"
   echo "  7) 同步 Docling wheels"
   echo "  0) 退出"
+  echo
+}
+
+show_start_menu() {
+  echo "请选择启动操作:"
+  local index
+  for index in "${!SERVICE_KEYS[@]}"; do
+    echo "  ${SERVICE_KEYS[$index]}) 启动 ${SERVICE_NAMES[$index]}"
+  done
+  echo "  0) 返回上级"
   echo
 }
 
@@ -41,6 +54,18 @@ show_build_menu() {
 pause_menu() {
   echo
   read -r -p "按回车键返回菜单..." _
+}
+
+restart_all_services() {
+  run_compose down
+  run_compose up
+}
+
+restart_single_service() {
+  local service="$1"
+  run_compose stop "$service"
+  run_compose rm -f "$service"
+  run_compose up "$service"
 }
 
 build_all() {
@@ -92,6 +117,36 @@ show_build_submenu() {
   done
 }
 
+show_start_submenu() {
+  while true; do
+    show_header
+    show_start_menu
+    read -r -p "输入启动选项编号: " start_choice
+    start_choice="${start_choice%$'\r'}"
+
+    case "$start_choice" in
+      0)
+        return
+        ;;
+    esac
+
+    local index
+    for index in "${!SERVICE_KEYS[@]}"; do
+      if [[ "${SERVICE_KEYS[$index]}" == "$start_choice" ]]; then
+        if [[ -z "${SERVICE_VALUES[$index]}" ]]; then
+          restart_all_services
+        else
+          restart_single_service "${SERVICE_VALUES[$index]}"
+        fi
+        continue 2
+      fi
+    done
+
+    echo "无效选项: $start_choice"
+    pause_menu
+  done
+}
+
 while true; do
   show_header
   show_menu
@@ -100,7 +155,7 @@ while true; do
 
   case "$choice" in
     1)
-      run_compose up
+      show_start_submenu
       ;;
     2)
       show_build_submenu

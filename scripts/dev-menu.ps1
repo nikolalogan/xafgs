@@ -4,6 +4,18 @@
 
 $ErrorActionPreference = "Stop"
 
+$ServiceItems = @(
+    @{ Key = "1"; Name = "全部服务"; Service = "" }
+    @{ Key = "2"; Name = "frontend"; Service = "frontend" }
+    @{ Key = "3"; Name = "backend"; Service = "backend" }
+    @{ Key = "4"; Name = "ocr-service"; Service = "ocr-service" }
+    @{ Key = "5"; Name = "docling-service"; Service = "docling-service" }
+    @{ Key = "6"; Name = "vllm"; Service = "vllm" }
+    @{ Key = "7"; Name = "gateway"; Service = "gateway" }
+    @{ Key = "8"; Name = "postgres"; Service = "postgres" }
+    @{ Key = "9"; Name = "redis"; Service = "redis" }
+)
+
 function Invoke-Compose {
     param(
         [Parameter(ValueFromRemainingArguments = $true)]
@@ -22,7 +34,7 @@ function Show-Header {
 
 function Show-Menu {
     Write-Host "请选择操作:"
-    Write-Host "  1) 开发启动"
+    Write-Host "  1) 启动菜单"
     Write-Host "  2) 打包菜单"
     Write-Host "  3) 停止开发环境"
     Write-Host "  4) 查看开发日志"
@@ -30,6 +42,15 @@ function Show-Menu {
     Write-Host "  6) 同步 OCR wheels"
     Write-Host "  7) 同步 Docling wheels"
     Write-Host "  0) 退出"
+    Write-Host ""
+}
+
+function Show-Start-Menu {
+    Write-Host "请选择启动操作:"
+    foreach ($item in $ServiceItems) {
+        Write-Host ("  {0}) 启动 {1}" -f $item.Key, $item.Name)
+    }
+    Write-Host "  0) 返回上级"
     Write-Host ""
 }
 
@@ -46,6 +67,22 @@ function Show-Build-Menu {
 function Pause-Menu {
     Write-Host ""
     Read-Host "按回车键返回菜单" | Out-Null
+}
+
+function Restart-All-Services {
+    Invoke-Compose down
+    Invoke-Compose up
+}
+
+function Restart-Single-Service {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Service
+    )
+
+    Invoke-Compose stop $Service
+    Invoke-Compose rm -f $Service
+    Invoke-Compose up $Service
 }
 
 function Invoke-Build-All {
@@ -126,6 +163,32 @@ function Show-Build-Submenu {
     }
 }
 
+function Show-Start-Submenu {
+    while ($true) {
+        Show-Header
+        Show-Start-Menu
+        $startChoice = (Read-Host "输入启动选项编号").Trim()
+
+        if ($startChoice -eq "0") {
+            return
+        }
+
+        $selectedItem = $ServiceItems | Where-Object { $_.Key -eq $startChoice } | Select-Object -First 1
+        if ($null -eq $selectedItem) {
+            Write-Host "无效选项: $startChoice"
+            Pause-Menu
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($selectedItem.Service)) {
+            Restart-All-Services
+        }
+        else {
+            Restart-Single-Service -Service $selectedItem.Service
+        }
+    }
+}
+
 while ($true) {
     Show-Header
     Show-Menu
@@ -133,7 +196,7 @@ while ($true) {
 
     switch ($choice) {
         "1" {
-            Invoke-Compose up
+            Show-Start-Submenu
         }
         "2" {
             Show-Build-Submenu

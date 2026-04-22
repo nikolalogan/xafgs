@@ -14,7 +14,7 @@ endif
 
 help:
 	@echo "可用命令:"
-	@echo "  make menu     # 菜单式启动/构建/缓存管理入口（推荐）"
+	@echo "  make menu     # 菜单式启动/构建/缓存管理入口（支持全部/单服务先停后启，推荐）"
 	@echo "  make macdev    # macOS 开发模式快速启动（不默认构建）"
 	@echo "  make macdev-build # macOS 开发模式启动并构建镜像"
 	@echo "  make macdev-fresh # macOS 无缓存重建 backend 后启动"
