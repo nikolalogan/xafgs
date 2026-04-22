@@ -54,14 +54,17 @@ class ConvertResponse(BaseModel):
 class DebugPictureCandidatesRequest(BaseModel):
     file: str = Field(min_length=1, description="base64 编码文件内容")
     filename: str = Field(min_length=1, description="原始文件名，需包含扩展名")
+    mode: str = Field(default="page_crop", description="候选图模式：page_crop、docling_picture_image、both")
     exportImages: bool = Field(default=True, description="是否导出候选图到调试目录")
     runOcr: bool = Field(default=False, description="是否调用 markdown-ocr")
     maxPictures: int | None = Field(default=None, ge=1, le=64, description="最多处理多少张图片")
+    imageScale: float | None = Field(default=None, ge=1.0, le=6.0, description="Docling 官方图片导出的 images_scale")
 
 
 class DebugPictureCandidateItem(BaseModel):
     pictureRef: str
     pageNo: int
+    candidateSource: str
     imageSource: str
     imageSize: tuple[int, int]
     cropBox: tuple[int, int, int, int]
@@ -70,6 +73,7 @@ class DebugPictureCandidateItem(BaseModel):
     debugImagePath: str = ""
     ocrMarkdown: str = ""
     ocrError: str = ""
+    error: str = ""
 
 
 class DebugPictureCandidatesResponse(BaseModel):
@@ -80,6 +84,7 @@ class DebugPictureCandidatesResponse(BaseModel):
     skippedCount: int
     debugDir: str = ""
     candidates: list[DebugPictureCandidateItem]
+    errors: list[str] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -342,6 +347,40 @@ def get_converter() -> DocumentConverter:
     )
 
 
+def build_debug_picture_converter(image_scale: float) -> DocumentConverter:
+    table_structure_enabled = env_bool("DOCLING_TABLE_STRUCTURE_ENABLED", True)
+    serve_artifacts_path = get_serve_artifacts_path()
+    pdf_options = PdfPipelineOptions()
+    pdf_options.do_ocr = False
+    pdf_options.do_table_structure = table_structure_enabled
+    pdf_options.force_backend_text = True
+    pdf_options.generate_page_images = True
+    pdf_options.generate_picture_images = True
+    pdf_options.images_scale = image_scale
+    ensure_serve_artifacts()
+    missing_serve_paths = get_missing_serve_artifact_paths()
+    if missing_serve_paths:
+        raise RuntimeError(
+            "Docling serve artifacts not found. Missing: "
+            + ", ".join(str(path) for path in missing_serve_paths)
+        )
+    pdf_options.artifacts_path = str(serve_artifacts_path)
+    logger.info(
+        "debug_docling_picture_image_converter_start artifacts_path=%s images_scale=%s table_structure=%s",
+        serve_artifacts_path,
+        image_scale,
+        table_structure_enabled,
+    )
+    return DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_options=pdf_options,
+                backend=PyPdfiumDocumentBackend,
+            ),
+        }
+    )
+
+
 def apply_image_ocr_supplement(
     file_path: str,
     document: Any,
@@ -526,6 +565,76 @@ def collect_image_ocr_candidates(
         pdf.close()
 
     return candidates, skipped_count, len(pictures)
+
+
+def collect_docling_picture_image_candidates(
+    document: Any,
+    pictures: list[Any],
+    max_images: int,
+) -> tuple[list[ImageOCRCandidate], int, int, list[str]]:
+    candidates: list[ImageOCRCandidate] = []
+    skipped_count = 0
+    errors: list[str] = []
+    for index, picture in enumerate(pictures):
+        picture_ref = str(getattr(picture, "self_ref", "") or f"picture:{index}")
+        if len(candidates) >= max_images:
+            logger.info("debug_docling_picture_image_skip picture_ref=%s reason=max_images_reached", picture_ref)
+            skipped_count += 1
+            continue
+        prov = first_picture_provenance(picture)
+        if prov is None or getattr(prov, "bbox", None) is None:
+            message = f"pictureRef={picture_ref} missing bbox"
+            logger.info("debug_docling_picture_image_failed %s", message)
+            errors.append(message)
+            skipped_count += 1
+            continue
+        page_no = max(1, int(getattr(prov, "page_no", 1) or 1))
+        get_image = getattr(picture, "get_image", None)
+        if not callable(get_image):
+            message = f"pictureRef={picture_ref} get_image unavailable"
+            logger.info("debug_docling_picture_image_failed %s", message)
+            errors.append(message)
+            skipped_count += 1
+            continue
+        try:
+            image_obj = get_image(document)
+            extracted = image_object_to_bytes(image_obj, "docling_picture_image")
+        except Exception as exc:
+            message = f"pictureRef={picture_ref} pageNo={page_no} get_image failed: {exc}"
+            logger.exception("debug_docling_picture_image_failed picture_ref=%s page_no=%s", picture_ref, page_no)
+            errors.append(message)
+            skipped_count += 1
+            continue
+        if extracted is None:
+            message = f"pictureRef={picture_ref} pageNo={page_no} get_image returned no image"
+            logger.info("debug_docling_picture_image_failed %s", message)
+            errors.append(message)
+            skipped_count += 1
+            continue
+        image_bytes = extracted["bytes"]
+        image_size = extracted["image_size"]
+        candidates.append(
+            ImageOCRCandidate(
+                index=index,
+                picture_ref=picture_ref,
+                page_no=page_no,
+                bbox=prov.bbox,
+                crop_box=(0, 0, image_size[0], image_size[1]),
+                crop_size=image_size,
+                image_source=str(extracted["source"]),
+                image_size=image_size,
+                payload_bytes=len(image_bytes),
+                image_payload=base64.b64encode(image_bytes).decode("ascii"),
+            )
+        )
+        logger.info(
+            "debug_docling_picture_image_candidate picture_ref=%s page_no=%s image_size=%s payload_bytes=%s",
+            picture_ref,
+            page_no,
+            image_size,
+            len(image_bytes),
+        )
+    return candidates, skipped_count, len(pictures), errors
 
 
 def first_picture_provenance(picture: Any) -> Any | None:
@@ -812,7 +921,8 @@ def sanitize_debug_stem(filename: str) -> str:
 
 def export_debug_candidate_image(candidate: ImageOCRCandidate, target_dir: Path) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = target_dir / f"p{candidate.page_no:03d}_{candidate.index:03d}_{candidate.image_source}.jpg"
+    extension = "png" if candidate.image_source == "docling_picture_image" else "jpg"
+    target_path = target_dir / f"p{candidate.page_no:03d}_{candidate.index:03d}_{candidate.image_source}.{extension}"
     target_path.write_bytes(base64.b64decode(candidate.image_payload))
     return target_path
 
@@ -843,6 +953,9 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
     suffix = Path(request.filename).suffix.strip()
     if not suffix:
         raise HTTPException(status_code=400, detail="filename 必须包含扩展名")
+    mode = request.mode.strip().lower()
+    if mode not in {"page_crop", "docling_picture_image", "both"}:
+        raise HTTPException(status_code=400, detail="mode 仅支持 page_crop、docling_picture_image、both")
 
     try:
         content = base64.b64decode(request.file, validate=True)
@@ -856,49 +969,92 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
             temp_file.write(content)
             temp_path = temp_file.name
 
-        result = get_converter().convert(temp_path)
-        document = result.document
-        pictures = list(getattr(document, "pictures", []) or [])
         max_images = request.maxPictures or max(1, env_int("DOCLING_IMAGE_OCR_MAX_IMAGES", 8))
-        render_scale = max(1.0, env_float("DOCLING_IMAGE_OCR_RENDER_SCALE", 2.0))
-        min_edge = max(1, env_int("DOCLING_IMAGE_OCR_MIN_EDGE_PX", 32))
-        min_area = max(1, env_int("DOCLING_IMAGE_OCR_MIN_AREA_PX", 4096))
-        candidates, skipped_count, detected_count = collect_image_ocr_candidates(
-            file_path=temp_path,
-            document=document,
-            pictures=pictures,
-            max_images=max_images,
-            render_scale=render_scale,
-            min_edge=min_edge,
-            min_area=min_area,
-        )
+        detected_count = 0
+        skipped_count = 0
+        errors: list[str] = []
+        candidates_by_source: list[tuple[str, ImageOCRCandidate]] = []
+
+        if mode in {"page_crop", "both"}:
+            result = get_converter().convert(temp_path)
+            document = result.document
+            pictures = list(getattr(document, "pictures", []) or [])
+            render_scale = max(1.0, env_float("DOCLING_IMAGE_OCR_RENDER_SCALE", 2.0))
+            min_edge = max(1, env_int("DOCLING_IMAGE_OCR_MIN_EDGE_PX", 32))
+            min_area = max(1, env_int("DOCLING_IMAGE_OCR_MIN_AREA_PX", 4096))
+            page_crop_candidates, page_crop_skipped_count, page_crop_detected_count = collect_image_ocr_candidates(
+                file_path=temp_path,
+                document=document,
+                pictures=pictures,
+                max_images=max_images,
+                render_scale=render_scale,
+                min_edge=min_edge,
+                min_area=min_area,
+            )
+            detected_count = max(detected_count, page_crop_detected_count)
+            skipped_count += page_crop_skipped_count
+            candidates_by_source.extend(("page_crop", candidate) for candidate in page_crop_candidates)
+
+        if mode in {"docling_picture_image", "both"}:
+            try:
+                image_scale = request.imageScale or max(1.0, env_float("DOCLING_DEBUG_IMAGES_SCALE", 2.0))
+                debug_result = build_debug_picture_converter(image_scale).convert(temp_path)
+                debug_document = debug_result.document
+                debug_pictures = list(getattr(debug_document, "pictures", []) or [])
+                (
+                    docling_candidates,
+                    docling_skipped_count,
+                    docling_detected_count,
+                    docling_errors,
+                ) = collect_docling_picture_image_candidates(
+                    document=debug_document,
+                    pictures=debug_pictures,
+                    max_images=max_images,
+                )
+                detected_count = max(detected_count, docling_detected_count)
+                skipped_count += docling_skipped_count
+                errors.extend(docling_errors)
+                candidates_by_source.extend(("docling_picture_image", candidate) for candidate in docling_candidates)
+            except Exception as exc:
+                message = f"docling_picture_image convert failed: {exc}"
+                logger.exception("debug_docling_picture_image_failed filename=%s", request.filename)
+                errors.append(message)
 
         debug_dir: Path | None = None
-        if request.exportImages and candidates:
+        if request.exportImages and candidates_by_source:
             debug_dir = get_debug_image_dir() / f"{sanitize_debug_stem(request.filename)}-{int(time.time() * 1000)}"
             debug_dir.mkdir(parents=True, exist_ok=True)
             logger.info(
                 "debug_picture_candidates_export_dir filename=%s dir=%s candidate_count=%s",
                 request.filename,
                 debug_dir,
-                len(candidates),
+                len(candidates_by_source),
             )
 
         response_items: list[DebugPictureCandidateItem] = []
         exported_count = 0
-        for candidate in candidates:
+        for candidate_source, candidate in candidates_by_source:
             debug_image_path = ""
             if debug_dir is not None:
                 exported_path = export_debug_candidate_image(candidate, debug_dir)
                 debug_image_path = str(exported_path)
                 exported_count += 1
                 logger.info(
-                    "debug_picture_candidate_exported picture_ref=%s page_no=%s image_source=%s path=%s",
+                    "debug_picture_candidate_exported picture_ref=%s page_no=%s candidate_source=%s image_source=%s path=%s",
                     candidate.picture_ref,
                     candidate.page_no,
+                    candidate_source,
                     candidate.image_source,
                     debug_image_path,
                 )
+                if candidate_source == "docling_picture_image":
+                    logger.info(
+                        "debug_docling_picture_image_exported picture_ref=%s page_no=%s image_size=%s path=%s",
+                        candidate.picture_ref,
+                        candidate.page_no,
+                        candidate.image_size,
+                        debug_image_path,
+                    )
 
             ocr_markdown = ""
             ocr_error = ""
@@ -918,6 +1074,7 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
                 DebugPictureCandidateItem(
                     pictureRef=candidate.picture_ref,
                     pageNo=candidate.page_no,
+                    candidateSource=candidate_source,
                     imageSource=candidate.image_source,
                     imageSize=candidate.image_size,
                     cropBox=candidate.crop_box,
@@ -937,6 +1094,7 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
             skippedCount=skipped_count,
             debugDir=str(debug_dir) if debug_dir is not None else "",
             candidates=response_items,
+            errors=errors,
         )
     except HTTPException:
         raise
