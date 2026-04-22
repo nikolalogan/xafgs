@@ -61,7 +61,7 @@ def main() -> None:
     env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     print(f"Using Hugging Face mirror endpoint: {env['HF_ENDPOINT']}")
     subprocess.run(
-        ["docling-tools", "models", "download"],
+        ["docling-tools", "models", "download", "--output-dir", str(target)],
         env=env,
         check=True,
     )
