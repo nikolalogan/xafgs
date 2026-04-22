@@ -63,6 +63,8 @@ class ImageOCRSummary:
     document: dict[str, Any]
     applied_count: int
     skipped_count: int
+    detected_count: int
+    ocr_success_count: int
 
 
 app = FastAPI(title="docling-service", version="0.1.0")
@@ -160,19 +162,19 @@ def apply_image_ocr_supplement(
     document_dict: dict[str, Any],
 ) -> ImageOCRSummary:
     if not env_bool("DOCLING_IMAGE_OCR_ENABLED", True):
-        return ImageOCRSummary(markdown, text, document_dict, 0, 0)
+        return ImageOCRSummary(markdown, text, document_dict, 0, 0, 0, 0)
     if not str(file_path).lower().endswith(".pdf"):
-        return ImageOCRSummary(markdown, text, document_dict, 0, 0)
+        return ImageOCRSummary(markdown, text, document_dict, 0, 0, 0, 0)
 
     pictures = list(getattr(document, "pictures", []) or [])
     if not pictures:
         add_image_ocr_meta(document_dict, [], 0)
-        return ImageOCRSummary(markdown, text, document_dict, 0, 0)
+        return ImageOCRSummary(markdown, text, document_dict, 0, 0, 0, 0)
 
     max_images = max(0, env_int("DOCLING_IMAGE_OCR_MAX_IMAGES", 8))
     if max_images <= 0:
         add_image_ocr_meta(document_dict, [], len(pictures))
-        return ImageOCRSummary(markdown, text, document_dict, 0, len(pictures))
+        return ImageOCRSummary(markdown, text, document_dict, 0, len(pictures), len(pictures), 0)
 
     render_scale = max(1.0, env_float("DOCLING_IMAGE_OCR_RENDER_SCALE", 2.0))
     min_edge = max(1, env_int("DOCLING_IMAGE_OCR_MIN_EDGE_PX", 32))
@@ -225,31 +227,33 @@ def apply_image_ocr_supplement(
 
     if not candidates:
         add_image_ocr_meta(document_dict, [], skipped_count)
-        return ImageOCRSummary(markdown, text, document_dict, 0, skipped_count)
+        return ImageOCRSummary(markdown, text, document_dict, 0, skipped_count, len(pictures), 0)
 
     results = run_image_ocr(candidates)
-    existing_texts = collect_existing_texts(markdown, text)
+    ocr_success_count = len([result for result in results if result.text])
     applied_results = [
         result
         for result in results
-        if result.text and normalize_for_dedup(result.text) not in existing_texts
+        if normalize_for_dedup(result.text)
     ]
-    skipped_count += len(results) - len(applied_results)
-    if not applied_results:
-        add_image_ocr_meta(document_dict, results, skipped_count)
-        return ImageOCRSummary(markdown, text, document_dict, 0, skipped_count)
-
-    supplement_markdown = build_image_ocr_markdown(applied_results)
-    merged_markdown = append_supplement_section(markdown, supplement_markdown)
-    merged_text = append_supplement_section(text, supplement_markdown)
     add_image_ocr_meta(document_dict, results, skipped_count)
     attach_picture_ocr(document_dict, results)
+    merged_markdown, markdown_inserted = replace_image_placeholders(markdown, applied_results)
+    merged_text, _ = replace_image_placeholders(text, applied_results, plain_text=True)
+    applied_count = markdown_inserted
+    skipped_count = max(0, len(pictures) - applied_count)
+    document_dict["imageOcr"]["detectedCount"] = len(pictures)
+    document_dict["imageOcr"]["ocrSuccessCount"] = ocr_success_count
+    document_dict["imageOcr"]["insertedCount"] = applied_count
+    document_dict["imageOcr"]["skippedCount"] = skipped_count
     return ImageOCRSummary(
         markdown=merged_markdown,
         text=merged_text,
         document=document_dict,
-        applied_count=len(applied_results),
+        applied_count=applied_count,
         skipped_count=skipped_count,
+        detected_count=len(pictures),
+        ocr_success_count=ocr_success_count,
     )
 
 
@@ -342,39 +346,59 @@ def extract_ocr_markdown(payload: dict[str, Any]) -> str:
     return "\n\n".join(parts).strip()
 
 
-def collect_existing_texts(*values: str) -> set[str]:
-    out: set[str] = set()
-    for value in values:
-        for line in str(value or "").replace("\r\n", "\n").split("\n"):
-            normalized = normalize_for_dedup(line)
-            if normalized:
-                out.add(normalized)
-        normalized = normalize_for_dedup(value)
-        if normalized:
-            out.add(normalized)
-    return out
-
-
 def normalize_for_dedup(value: str) -> str:
     return " ".join(str(value or "").split()).strip()
 
 
-def build_image_ocr_markdown(results: list[ImageOCRResult]) -> str:
-    sections: list[str] = ["## 图片 OCR 补充"]
+def replace_image_placeholders(
+    value: str,
+    results: list[ImageOCRResult],
+    plain_text: bool = False,
+) -> tuple[str, int]:
+    content = str(value or "")
+    if not content or not results:
+        return content, 0
+
+    placeholder = "<!-- image -->"
+    if placeholder not in content:
+        fallback = build_fallback_image_ocr_block(results, plain_text=plain_text)
+        if not fallback:
+            return content, 0
+        base = content.strip()
+        if not base:
+            return fallback, len(results)
+        return base + "\n\n" + fallback, len(results)
+
+    replaced_count = 0
+    merged = content
     for result in results:
-        title = f"### 第 {result.candidate.page_no} 页图片 {result.candidate.index + 1}"
-        sections.append(title)
-        sections.append(result.text.strip())
+        replacement = render_image_ocr_content(result, plain_text=plain_text)
+        if not replacement:
+            continue
+        if placeholder not in merged:
+            break
+        merged = merged.replace(placeholder, replacement, 1)
+        replaced_count += 1
+    return merged, replaced_count
+
+
+def build_fallback_image_ocr_block(results: list[ImageOCRResult], plain_text: bool = False) -> str:
+    sections: list[str] = []
+    for result in results:
+        replacement = render_image_ocr_content(result, plain_text=plain_text)
+        if replacement:
+            sections.append(replacement)
     return "\n\n".join(sections).strip()
 
 
-def append_supplement_section(value: str, supplement: str) -> str:
-    base = str(value or "").strip()
-    if not supplement:
-        return base
-    if not base:
-        return supplement
-    return base + "\n\n" + supplement
+def render_image_ocr_content(result: ImageOCRResult, plain_text: bool = False) -> str:
+    content = str(result.text or "").strip()
+    if not content:
+        return ""
+    if plain_text:
+        lines = [line.strip() for line in content.replace("\r\n", "\n").split("\n")]
+        return "\n".join([line for line in lines if line])
+    return content
 
 
 def add_image_ocr_meta(document_dict: dict[str, Any], results: list[ImageOCRResult], skipped_count: int) -> None:
@@ -384,6 +408,9 @@ def add_image_ocr_meta(document_dict: dict[str, Any], results: list[ImageOCRResu
         "appliedCount": len([item for item in results if item.text]),
         "failedCount": len([item for item in results if item.error]),
         "skippedCount": skipped_count,
+        "detectedCount": 0,
+        "ocrSuccessCount": len([item for item in results if item.text]),
+        "insertedCount": 0,
         "items": [image_ocr_result_to_dict(item) for item in results],
     }
 

@@ -190,7 +190,7 @@ make ocr-model-cache-warm
 - 服务端口：`8091`
 - 网关入口：`POST /docling/convert`
 - 示例页面：`http://localhost:325/app/docling-demo`
-- Docling 默认按离线文本层转换运行，并对文档内图片区域补充 GLM OCR；图片文件或扫描 PDF 在示例页切换为 GLM OCR。
+- Docling 默认按离线文本层转换运行，并将文档内图片区域的 GLM OCR 结果原位写回正文；图片文件或扫描 PDF 在示例页切换为 GLM OCR。
 
 ## Docling 依赖缓存
 

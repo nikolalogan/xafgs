@@ -229,7 +229,7 @@ export default function DoclingDemoPage() {
         type="info"
         showIcon
         message="Docling 文档转换示例"
-        description="Docling 默认使用离线文本层转换，并对文档内图片区域补充 GLM OCR；纯图片文件或扫描 PDF 仍建议切换 GLM OCR。"
+        description="Docling 默认使用离线文本层转换，并将文档内图片区域的 GLM OCR 结果原位写回正文；纯图片文件或扫描 PDF 仍建议切换 GLM OCR。"
       />
 
       <Row gutter={16} align="top">
