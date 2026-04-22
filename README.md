@@ -184,6 +184,7 @@ make ocr-model-cache-warm
   - `GLM_MODEL`
   - `GLM_MODEL_PATH`（默认 `/models/glm-ocr`）
   - `VLLM_IMAGE`
+  - `GLM_READY_TIMEOUT_MS`（默认 `300000`，OCR 调用前等待 vLLM `/v1/models` 就绪的最长时间）
 
 ## OCR 服务调用
 
@@ -199,6 +200,8 @@ make ocr-model-cache-warm
 - 示例页面：`http://localhost:325/app/docling-demo`
 - Docling 默认按离线文本层转换运行，并将文档内图片区域的 GLM Markdown OCR 结果原位写回正文；图片文件或扫描 PDF 在示例页切换为 GLM OCR。
 - 可设置 `DOCLING_OCR_PROVIDER=glm_kserve` 试验 Docling 官方远程 OCR 流程，请求项目内 `ocr-service` 的 KServe v2 兼容 GLM OCR；默认值为 `none`，避免意外启用远程服务。
+- 图片 OCR 失败会中断 `/docling/convert` 并返回错误，避免转换成功但图片仍残留 `<!-- image -->`；可通过 `DOCLING_IMAGE_OCR_TIMEOUT_SECONDS` 调整 Docling 等待 OCR 服务的时间。
+- 可通过 `DOCLING_IMAGE_EXPORT_SCALE` 调整 Docling 导出图片倍率，默认 `6.0`；用于尽量放大 `PictureItem.get_image(document)` 返回的图片，便于 GLM OCR 识别。
 
 ## Docling 依赖缓存
 

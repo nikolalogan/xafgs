@@ -281,7 +281,8 @@ def get_converter() -> DocumentConverter:
     ocr_provider = get_docling_ocr_provider()
     serve_artifacts_path = get_serve_artifacts_path()
     pdf_options = PdfPipelineOptions()
-    pdf_options.images_scale = env_float("DOCLING_IMAGE_EXPORT_SCALE", 2.0)
+    picture_image_scale = env_float("DOCLING_IMAGE_EXPORT_SCALE", 6.0)
+    pdf_options.images_scale = picture_image_scale
     pdf_options.generate_picture_images = True
     pdf_options.do_ocr = ocr_provider == "glm_kserve"
     if ocr_provider == "glm_kserve":
@@ -298,6 +299,7 @@ def get_converter() -> DocumentConverter:
         )
     pdf_options.artifacts_path = str(serve_artifacts_path)
     print(f"Using Docling serve artifacts from {serve_artifacts_path}")
+    logger.info("docling_picture_export_config images_scale=%s generate_picture_images=%s", picture_image_scale, True)
     if ocr_provider == "glm_kserve":
         print(f"Using Docling remote OCR provider glm_kserve via {get_ocr_service_base_url()}")
     if table_structure_enabled and has_table_artifacts():
@@ -518,7 +520,8 @@ def extract_docling_picture_image(document: Any, picture: Any) -> dict[str, Any]
     if not callable(get_image):
         return None
     try:
-        extracted = image_object_to_bytes(get_image(document), "docling_picture_image")
+        image_obj = get_image(document)
+        extracted = image_object_to_bytes(image_obj, "docling_picture_image")
     except Exception as exc:
         logger.info(
             "image_ocr_picture_image_unavailable picture_ref=%s error=%s",
@@ -526,6 +529,13 @@ def extract_docling_picture_image(document: Any, picture: Any) -> dict[str, Any]
             exc,
         )
         return None
+    if extracted is not None:
+        logger.info(
+            "image_ocr_picture_image_export picture_ref=%s image_size=%s source=%s",
+            str(getattr(picture, "self_ref", "") or "-"),
+            extracted["image_size"],
+            extracted["source"],
+        )
     return extracted
 
 
