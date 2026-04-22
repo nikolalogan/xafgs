@@ -20,3 +20,4 @@ server/tmp
 /ocr-service/app/__pycache__
 /docling-service/app/__pycache__
 /docling-service/tests
+/ocr-service/tests
