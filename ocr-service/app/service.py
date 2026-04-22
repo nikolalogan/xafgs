@@ -20,7 +20,9 @@ from pydantic import BaseModel
 from app.glm_readiness import env_int, is_glm_endpoint_ready, wait_for_glm_endpoint_ready
 from app.markdown_utils import clean_markdown_ocr_output
 
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger("glm_ocr_service")
+logger.setLevel(logging.INFO)
 
 
 def build_request_id() -> str:

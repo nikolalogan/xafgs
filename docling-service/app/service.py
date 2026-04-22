@@ -30,7 +30,9 @@ from pydantic import BaseModel, Field
 
 from app.markdown_normalizer import markdown_to_plain_text, normalize_docling_like_markdown
 
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger("docling_service")
+logger.setLevel(logging.INFO)
 
 
 class ConvertRequest(BaseModel):
