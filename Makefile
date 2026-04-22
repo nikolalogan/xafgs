@@ -1,4 +1,4 @@
-.PHONY: help dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-model-cache-init ocr-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback
+.PHONY: help menu dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-model-cache-init ocr-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback
 
 UNAME_S := $(shell uname -s 2>/dev/null || echo Unknown)
 
@@ -12,6 +12,7 @@ endif
 
 help:
 	@echo "可用命令:"
+	@echo "  make menu     # 菜单式启动/构建/缓存管理入口（推荐）"
 	@echo "  make macdev    # macOS 开发模式快速启动（不默认构建）"
 	@echo "  make macdev-build # macOS 开发模式启动并构建镜像"
 	@echo "  make macdev-fresh # macOS 无缓存重建 backend 后启动"
@@ -43,6 +44,9 @@ help:
 	@echo "  make prod-down # 仅停止生产模式容器"
 	@echo "  make logs      # 查看开发模式日志"
 	@echo "  make ps        # 查看容器状态"
+
+menu:
+	DEV_COMPOSE_FILE="$(DEV_COMPOSE_FILE)" bash scripts/dev-menu.sh
 
 dev: macdev
 

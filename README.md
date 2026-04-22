@@ -70,6 +70,7 @@ docker compose up --build
 ## 开发模式（代码挂载 + 热更新）
 
 ```bash
+make menu    # 推荐：菜单式启动/构建/缓存管理
 make macdev   # macOS
 make windev   # Windows
 ```
@@ -104,12 +105,14 @@ Windows 使用前请先确认：
 ## Makefile 快捷命令
 
 ```bash
+make menu
 make dev
 make down
 ```
 
 常用命令：
 
+- `make menu`：菜单式启动/构建/缓存管理入口（推荐）
 - `make dev`：开发模式启动（缓存重建 + 热更新）
 - `make dev-fresh`：开发模式启动（无缓存重建 + 热更新）
 - `make macdev`：macOS 开发模式启动（缓存重建 + 热更新）
