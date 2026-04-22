@@ -1,4 +1,4 @@
-.PHONY: help dev dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-model-cache-init ocr-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback
+.PHONY: help dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-model-cache-init ocr-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback
 
 UNAME_S := $(shell uname -s 2>/dev/null || echo Unknown)
 
@@ -12,10 +12,15 @@ endif
 
 help:
 	@echo "可用命令:"
-	@echo "  make macdev    # macOS 开发模式启动（缓存重建+热更新）"
-	@echo "  make windev    # Windows 开发模式启动（缓存重建+热更新）"
+	@echo "  make macdev    # macOS 开发模式快速启动（不默认构建）"
+	@echo "  make macdev-build # macOS 开发模式启动并构建镜像"
+	@echo "  make macdev-fresh # macOS 无缓存重建 backend 后启动"
+	@echo "  make windev    # Windows 开发模式快速启动（不默认构建）"
+	@echo "  make windev-build # Windows 开发模式启动并构建镜像"
+	@echo "  make windev-fresh # Windows 无缓存重建 backend 后启动"
 	@echo "  当前开发编排文件: $(DEV_COMPOSE_FILE)"
 	@echo "  make dev       # 兼容旧命令，等同 macdev"
+	@echo "  make dev-build # 兼容旧命令，等同 macdev-build"
 	@echo "  make dev-fresh # 兼容旧命令，等同 macdev-fresh"
 	@echo "  make dev-rebuild-backend # 缓存重建开发后端镜像"
 	@echo "  make dev-rebuild-backend-fresh # 无缓存重建开发后端镜像"
@@ -41,13 +46,18 @@ help:
 
 dev: macdev
 
+dev-build: macdev-build
+
 dev-fresh: macdev-fresh
 
 dev-rebuild-backend: macdev-rebuild-backend
 
 dev-rebuild-backend-fresh: macdev-rebuild-backend-fresh
 
-macdev: macdev-rebuild-backend
+macdev:
+	docker compose -f docker-compose.dev.mac.yml up
+
+macdev-build:
 	docker compose -f docker-compose.dev.mac.yml up --build
 
 macdev-fresh: macdev-rebuild-backend-fresh
@@ -59,7 +69,10 @@ macdev-rebuild-backend:
 macdev-rebuild-backend-fresh:
 	docker compose -f docker-compose.dev.mac.yml build --no-cache backend
 
-windev: windev-rebuild-backend
+windev:
+	docker compose -f docker-compose.dev.win.yml up
+
+windev-build:
 	docker compose -f docker-compose.dev.win.yml up --build
 
 windev-fresh: windev-rebuild-backend-fresh
