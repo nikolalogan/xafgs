@@ -1,4 +1,4 @@
-ARG BASE_REGISTRY=docker.io
+ARG BASE_REGISTRY=registry.cn-hangzhou.aliyuncs.com
 FROM ${BASE_REGISTRY}/library/golang:1.24-bookworm AS builder
 WORKDIR /app
 ARG TARGETOS=linux
