@@ -24,6 +24,10 @@ except Exception:
 from docling.document_converter import DocumentConverter
 from docling.document_converter import PdfFormatOption
 from docling_core.types.doc.document import BoundingBox
+try:
+    from docling_core.types.doc.document import PictureItem
+except Exception:
+    PictureItem = None
 from fastapi import FastAPI, HTTPException
 from PIL import Image
 from pydantic import BaseModel, Field
@@ -277,6 +281,8 @@ def get_converter() -> DocumentConverter:
     ocr_provider = get_docling_ocr_provider()
     serve_artifacts_path = get_serve_artifacts_path()
     pdf_options = PdfPipelineOptions()
+    pdf_options.images_scale = env_float("DOCLING_IMAGE_EXPORT_SCALE", 2.0)
+    pdf_options.generate_picture_images = True
     pdf_options.do_ocr = ocr_provider == "glm_kserve"
     if ocr_provider == "glm_kserve":
         pdf_options.enable_remote_services = True
@@ -349,7 +355,9 @@ def apply_image_ocr_supplement(
                 skipped_count += 1
                 continue
             page_no = max(1, int(getattr(prov, "page_no", 1) or 1))
-            embedded_image = extract_embedded_picture_image(picture)
+            embedded_image = extract_docling_picture_image(document, picture)
+            if embedded_image is None:
+                embedded_image = extract_embedded_picture_image(picture)
             if embedded_image is not None:
                 payload_bytes = len(embedded_image["bytes"])
                 image_size = embedded_image["image_size"]
@@ -501,6 +509,24 @@ def extract_embedded_picture_image(picture: Any) -> dict[str, Any] | None:
             if extracted is not None:
                 return extracted
     return None
+
+
+def extract_docling_picture_image(document: Any, picture: Any) -> dict[str, Any] | None:
+    if PictureItem is not None and not isinstance(picture, PictureItem):
+        return None
+    get_image = getattr(picture, "get_image", None)
+    if not callable(get_image):
+        return None
+    try:
+        extracted = image_object_to_bytes(get_image(document), "docling_picture_image")
+    except Exception as exc:
+        logger.info(
+            "image_ocr_picture_image_unavailable picture_ref=%s error=%s",
+            str(getattr(picture, "self_ref", "") or "-"),
+            exc,
+        )
+        return None
+    return extracted
 
 
 def image_object_to_bytes(image_obj: Any, source: str) -> dict[str, Any] | None:
