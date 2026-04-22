@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$DevComposeFile = "docker-compose.dev.yml"
 )
 
@@ -15,35 +15,35 @@ function Invoke-Compose {
 
 function Show-Header {
     Write-Host ""
-    Write-Host "Project dev menu"
-    Write-Host "Current compose file: $DevComposeFile"
+    Write-Host "项目开发菜单"
+    Write-Host "当前开发编排文件: $DevComposeFile"
     Write-Host ""
 }
 
 function Show-Menu {
-    Write-Host "Select an action:"
-    Write-Host "  1) Start dev stack"
-    Write-Host "  2) Build and start (offline first)"
-    Write-Host "  3) Stop dev stack"
-    Write-Host "  4) View dev logs"
-    Write-Host "  5) View container status"
-    Write-Host "  6) Sync OCR wheels"
-    Write-Host "  7) Sync Docling wheels"
-    Write-Host "  8) Offline build OCR"
-    Write-Host "  9) Offline build Docling"
-    Write-Host "  0) Exit"
+    Write-Host "请选择操作:"
+    Write-Host "  1) 开发启动"
+    Write-Host "  2) 构建并启动（默认离线，缺 wheels 直接失败）"
+    Write-Host "  3) 停止开发环境"
+    Write-Host "  4) 查看开发日志"
+    Write-Host "  5) 查看容器状态"
+    Write-Host "  6) 同步 OCR wheels"
+    Write-Host "  7) 同步 Docling wheels"
+    Write-Host "  8) 离线构建 OCR"
+    Write-Host "  9) 离线构建 Docling"
+    Write-Host "  0) 退出"
     Write-Host ""
 }
 
 function Pause-Menu {
     Write-Host ""
-    Read-Host "Press Enter to continue" | Out-Null
+    Read-Host "按回车键返回菜单" | Out-Null
 }
 
 while ($true) {
     Show-Header
     Show-Menu
-    $choice = (Read-Host "Enter choice").Trim()
+    $choice = (Read-Host "输入选项编号").Trim()
 
     switch ($choice) {
         "1" {
@@ -99,7 +99,7 @@ while ($true) {
             exit 0
         }
         default {
-            Write-Host "Invalid choice: $choice"
+            Write-Host "无效选项: $choice"
             Pause-Menu
         }
     }
