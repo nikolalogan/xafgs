@@ -6,7 +6,7 @@ services:
       context: ./web
       dockerfile: Dockerfile
       args:
-        BASE_REGISTRY: "${BASE_REGISTRY:-docker.m.daocloud.io}"
+        BASE_REGISTRY: "${BASE_REGISTRY:-docker.io}"
         NPM_REGISTRY: "${NPM_REGISTRY:-https://registry.npmmirror.com}"
     image: sxfgssever-frontend-prod:latest
     environment:
@@ -21,7 +21,7 @@ services:
       context: ./server
       dockerfile: Dockerfile
       args:
-        BASE_REGISTRY: "${BASE_REGISTRY:-docker.m.daocloud.io}"
+        BASE_REGISTRY: "${BASE_REGISTRY:-docker.io}"
         APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
         APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
         PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
@@ -56,7 +56,7 @@ services:
       context: ./ocr-service
       dockerfile: Dockerfile
       args:
-        BASE_REGISTRY: "${BASE_REGISTRY:-docker.m.daocloud.io}"
+        BASE_REGISTRY: "${BASE_REGISTRY:-docker.io}"
         APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
         APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
         PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
@@ -103,7 +103,7 @@ services:
       context: ./docling-service
       dockerfile: Dockerfile
       args:
-        BASE_REGISTRY: "${BASE_REGISTRY:-docker.m.daocloud.io}"
+        BASE_REGISTRY: "${BASE_REGISTRY:-docker.io}"
         APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
         APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
         PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
@@ -133,7 +133,7 @@ services:
     restart: unless-stopped
 
   gateway:
-    image: ${BASE_REGISTRY:-docker.m.daocloud.io}/library/nginx:1.27-alpine
+    image: ${BASE_REGISTRY:-docker.io}/library/nginx:1.27-alpine
     container_name: sxfgssever-prod-gateway
     environment:
       TZ: "Asia/Shanghai"
@@ -148,7 +148,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: ${BASE_REGISTRY:-docker.m.daocloud.io}/library/redis:8-alpine
+    image: ${BASE_REGISTRY:-docker.io}/library/redis:8-alpine
     environment:
       TZ: "Asia/Shanghai"
     command: ["redis-server", "--appendonly", "yes"]

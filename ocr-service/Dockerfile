@@ -1,4 +1,4 @@
-ARG BASE_REGISTRY=docker.m.daocloud.io
+ARG BASE_REGISTRY=docker.io
 FROM ${BASE_REGISTRY}/library/python:3.11-slim
 
 WORKDIR /app

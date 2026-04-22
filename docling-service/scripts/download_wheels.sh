@@ -18,7 +18,7 @@ PIP_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
 PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
 PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT:-600}"
 PIP_RETRIES="${PIP_RETRIES:-10}"
-PYTHON_BASE_IMAGE="${PYTHON_BASE_IMAGE:-docker.m.daocloud.io/library/python:3.11-slim}"
+PYTHON_BASE_IMAGE="${PYTHON_BASE_IMAGE:-docker.io/library/python:3.11-slim}"
 
 docker run --rm \
   -e PIP_INDEX_URL="$PIP_INDEX_URL" \
