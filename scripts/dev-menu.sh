@@ -58,14 +58,14 @@ pause_menu() {
 
 restart_all_services() {
   run_compose down
-  run_compose up
+  run_compose up -d
 }
 
 restart_single_service() {
   local service="$1"
   run_compose stop "$service"
   run_compose rm -f "$service"
-  run_compose up "$service"
+  run_compose up -d "$service"
 }
 
 build_all() {
@@ -77,7 +77,7 @@ build_all() {
 build_up() {
   mkdir -p ocr-service/model_cache docling-service/model_cache
   bash ocr-service/scripts/verify_wheels.sh
-  OCR_WHEELS_ONLY=1 DOCLING_WHEELS_ONLY=1 run_compose up --build
+  OCR_WHEELS_ONLY=1 DOCLING_WHEELS_ONLY=1 run_compose up --build -d
 }
 
 show_build_submenu() {

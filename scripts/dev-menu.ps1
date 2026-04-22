@@ -71,7 +71,7 @@ function Pause-Menu {
 
 function Restart-All-Services {
     Invoke-Compose down
-    Invoke-Compose up
+    Invoke-Compose up -d
 }
 
 function Restart-Single-Service {
@@ -82,7 +82,7 @@ function Restart-Single-Service {
 
     Invoke-Compose stop $Service
     Invoke-Compose rm -f $Service
-    Invoke-Compose up $Service
+    Invoke-Compose up -d $Service
 }
 
 function Invoke-Build-All {
@@ -107,7 +107,7 @@ function Invoke-Build-Up {
     $env:OCR_WHEELS_ONLY = "1"
     $env:DOCLING_WHEELS_ONLY = "1"
     try {
-        Invoke-Compose up --build
+        Invoke-Compose up --build -d
     }
     finally {
         Remove-Item Env:OCR_WHEELS_ONLY -ErrorAction SilentlyContinue
