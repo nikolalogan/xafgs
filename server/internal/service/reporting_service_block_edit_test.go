@@ -85,6 +85,51 @@ func TestBuildCaseFileBlocks_ApplyEditedHTMLForTableBlock(t *testing.T) {
 	}
 }
 
+func TestBuildCaseFileBlocks_SkipDocumentAggregateSection(t *testing.T) {
+	now := time.Now().UTC()
+	slices := []model.DocumentSlice{
+		{
+			ID:         1,
+			SliceType:  model.DocumentStructureSection,
+			SourceType: model.DocumentSourceTypeNativeText,
+			Title:      "测试文件.docx",
+			TitleLevel: 1,
+			PageStart:  1,
+			PageEnd:    1,
+			CleanText:  "第一段内容\n\n第二段内容",
+			CreatedAt:  now,
+		},
+		{
+			ID:         2,
+			SliceType:  model.DocumentStructureParagraph,
+			SourceType: model.DocumentSourceTypeNativeText,
+			PageStart:  1,
+			PageEnd:    1,
+			CleanText:  "第一段内容",
+			CreatedAt:  now,
+		},
+		{
+			ID:         3,
+			SliceType:  model.DocumentStructureParagraph,
+			SourceType: model.DocumentSourceTypeNativeText,
+			PageStart:  1,
+			PageEnd:    1,
+			CleanText:  "第二段内容",
+			CreatedAt:  now,
+		},
+	}
+
+	_, blocks := buildCaseFileBlocks(slices, nil, nil, nil)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 content blocks, got %d", len(blocks))
+	}
+	for _, block := range blocks {
+		if block.BlockID == 1 {
+			t.Fatalf("expected aggregate root section to be skipped")
+		}
+	}
+}
+
 func TestNormalizeTableBlockHTMLForEditor_DecodeEscapedHTML(t *testing.T) {
 	fallback := `<div class="table-wrapper"><table><tbody><tr><td>fallback</td></tr></tbody></table></div>`
 	input := `<p>&lt;table&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td&gt;A&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;</p>`

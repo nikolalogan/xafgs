@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Card, Select, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Divider, Typography, message } from 'antd'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { StarterKit } from '@tiptap/starter-kit'
 import { Table } from '@tiptap/extension-table'
@@ -56,7 +56,15 @@ type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
 type CaseFileBlockEditorProps = {
   projectId: number
   caseFileId: number
+  fileName: string
   enabled: boolean
+}
+
+type TextBlockEditorProps = {
+  blockId: number
+  valueHtml: string
+  editable: boolean
+  onChange: (blockId: number, currentHtml: string) => void
 }
 
 const SAVE_DEBOUNCE_MS = 800
@@ -72,20 +80,65 @@ const getToken = () => {
 
 const normalizeHTML = (value: string) => String(value || '<p></p>').trim()
 
-export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: CaseFileBlockEditorProps) {
+function TextBlockEditor({ blockId, valueHtml, editable, onChange }: TextBlockEditorProps) {
+  const isHydratingRef = useRef(false)
+  const onChangeRef = useRef(onChange)
+  const editor = useEditor({
+    immediatelyRender: false,
+    editable,
+    extensions: [
+      StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
+    ],
+    content: normalizeHTML(valueHtml),
+    onUpdate: ({ editor }) => {
+      if (isHydratingRef.current)
+        return
+      onChangeRef.current(blockId, editor.getHTML() || '<p></p>')
+    },
+  }, [blockId])
+
+  useEffect(() => {
+    onChangeRef.current = onChange
+  }, [onChange])
+
+  useEffect(() => {
+    editor?.setEditable(editable)
+  }, [editor, editable])
+
+  useEffect(() => {
+    if (!editor)
+      return
+    if (normalizeHTML(editor.getHTML() || '<p></p>') === normalizeHTML(valueHtml))
+      return
+    isHydratingRef.current = true
+    editor.commands.setContent(normalizeHTML(valueHtml))
+    window.setTimeout(() => { isHydratingRef.current = false }, 0)
+  }, [editor, valueHtml])
+
+  return (
+    <div className="case-file-focus-editor">
+      {editor
+        ? <EditorContent editor={editor} />
+        : <Typography.Text type="secondary">编辑器初始化中…</Typography.Text>}
+    </div>
+  )
+}
+
+export default function CaseFileBlockEditor({ projectId, caseFileId, fileName, enabled }: CaseFileBlockEditorProps) {
   const [msgApi, contextHolder] = message.useMessage()
   const [loading, setLoading] = useState(false)
   const [sections, setSections] = useState<FileBlockSectionDTO[]>([])
   const [blocks, setBlocks] = useState<FileBlockItemDTO[]>([])
   const [saveStateByBlockID, setSaveStateByBlockID] = useState<Record<number, SaveState>>({})
   const [tableRenderErrorByBlockID, setTableRenderErrorByBlockID] = useState<Record<number, string>>({})
-  const [activeBlockID, setActiveBlockID] = useState(0)
+  const [editing, setEditing] = useState(false)
   const baselineByBlockIDRef = useRef<Record<number, string>>({})
   const pendingHTMLByBlockIDRef = useRef<Record<number, string>>({})
   const saveTimerByBlockIDRef = useRef<Record<number, number>>({})
-  const blockSliceTypeByIDRef = useRef<Record<number, string>>({})
-  const isHydratingRef = useRef(false)
-  const activeBlockIDRef = useRef(0)
 
   const request = async <T,>(url: string, init?: RequestInit) => {
     const token = getToken()
@@ -133,8 +186,6 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
     return out
   }, [sections, blocks, blockByID])
 
-  const activeBlock = useMemo(() => blockByID.get(activeBlockID), [blockByID, activeBlockID])
-  const activeSection = useMemo(() => activeBlock ? sectionByID.get(activeBlock.sectionId) : undefined, [activeBlock, sectionByID])
   const isTableBlock = (block?: FileBlockItemDTO) => block?.sliceType === 'table'
 
   const persistBlock = async (blockId: number, currentHtml: string) => {
@@ -194,29 +245,6 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
     }, SAVE_DEBOUNCE_MS)
   }
 
-  const editor = useEditor({
-    immediatelyRender: false,
-    editable: enabled,
-    extensions: [
-      StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
-      Table.configure({ resizable: false }),
-      TableRow,
-      TableHeader,
-      TableCell,
-    ],
-    content: '<p></p>',
-    onUpdate: ({ editor }) => {
-      if (isHydratingRef.current)
-        return
-      const blockId = activeBlockIDRef.current
-      if (blockId === 0)
-        return
-      if (blockSliceTypeByIDRef.current[blockId] === 'table')
-        return
-      scheduleSave(blockId, editor.getHTML() || '<p></p>')
-    },
-  }, [enabled, projectId, caseFileId])
-
   const flushBlockIfDirty = async (blockId: number) => {
     if (blockId === 0)
       return
@@ -225,23 +253,15 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
       window.clearTimeout(timer)
       delete saveTimerByBlockIDRef.current[blockId]
     }
-    const isActiveTable = blockSliceTypeByIDRef.current[blockId] === 'table'
-    const latestHTML = blockId === activeBlockIDRef.current && editor && !isActiveTable
-      ? normalizeHTML(editor.getHTML() || '<p></p>')
-      : normalizeHTML(pendingHTMLByBlockIDRef.current[blockId] || '<p></p>')
+    const latestHTML = normalizeHTML(pendingHTMLByBlockIDRef.current[blockId] || '<p></p>')
     const baseline = normalizeHTML(baselineByBlockIDRef.current[blockId] || '<p></p>')
     if (latestHTML !== baseline)
       await persistBlock(blockId, latestHTML)
   }
 
-  const switchActiveBlock = async (nextBlockId: number) => {
-    if (nextBlockId === 0 || nextBlockId === activeBlockIDRef.current)
-      return
-    const current = activeBlockIDRef.current
-    if (current > 0)
-      await flushBlockIfDirty(current)
-    setActiveBlockID(nextBlockId)
-    activeBlockIDRef.current = nextBlockId
+  const flushAllDirtyBlocks = async () => {
+    for (const block of blocks)
+      await flushBlockIfDirty(block.blockId)
   }
 
   const loadBlocks = async () => {
@@ -261,18 +281,11 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
       }
       baselineByBlockIDRef.current = nextBaseline
       pendingHTMLByBlockIDRef.current = { ...nextBaseline }
-      const nextBlockTypeMap: Record<number, string> = {}
-      for (const block of blockRows) {
-        nextBlockTypeMap[block.blockId] = String(block.sliceType || '')
-      }
-      blockSliceTypeByIDRef.current = nextBlockTypeMap
       setSections(sectionRows)
       setBlocks(blockRows)
       setSaveStateByBlockID(nextStates)
       setTableRenderErrorByBlockID({})
-      const firstBlockId = sectionRows[0]?.blockIds?.[0] || blockRows[0]?.blockId || 0
-      setActiveBlockID(firstBlockId)
-      activeBlockIDRef.current = firstBlockId
+      setEditing(false)
     } catch (error) {
       msgApi.error(error instanceof Error ? error.message : '加载分块失败')
     } finally {
@@ -285,10 +298,6 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
   }, [enabled, projectId, caseFileId])
 
   useEffect(() => {
-    activeBlockIDRef.current = activeBlockID
-  }, [activeBlockID])
-
-  useEffect(() => {
     return () => {
       Object.values(saveTimerByBlockIDRef.current).forEach((timer) => {
         window.clearTimeout(timer)
@@ -297,142 +306,104 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, enabled }: 
     }
   }, [])
 
-  useEffect(() => {
-    if (orderedBlocks.length === 0) {
-      setActiveBlockID(0)
-      activeBlockIDRef.current = 0
-      return
-    }
-    if (!orderedBlocks.some(block => block.blockId === activeBlockID)) {
-      const fallback = orderedBlocks[0].blockId
-      setActiveBlockID(fallback)
-      activeBlockIDRef.current = fallback
-    }
-  }, [orderedBlocks, activeBlockID])
-
-  useEffect(() => {
-    if (!editor) {
-      return
-    }
-    if (!activeBlock) {
-      isHydratingRef.current = true
-      editor.commands.setContent('<p></p>')
-      window.setTimeout(() => { isHydratingRef.current = false }, 0)
-      return
-    }
-    if (isTableBlock(activeBlock)) {
-      isHydratingRef.current = true
-      editor.commands.setContent('<p></p>')
-      window.setTimeout(() => { isHydratingRef.current = false }, 0)
-      return
-    }
-    const content = normalizeHTML(pendingHTMLByBlockIDRef.current[activeBlock.blockId] || activeBlock.currentHtml || activeBlock.initialHtml)
-    isHydratingRef.current = true
-    editor.commands.setContent(content)
-    window.setTimeout(() => { isHydratingRef.current = false }, 0)
-  }, [editor, activeBlock])
-
-  const stateTagColor = (state: SaveState) => {
-    if (state === 'saving')
-      return 'processing'
-    if (state === 'saved')
-      return 'success'
-    if (state === 'error')
-      return 'error'
-    if (state === 'dirty')
-      return 'warning'
-    return 'default'
+  const renderBlockMeta = (block: FileBlockItemDTO) => {
+    const section = sectionByID.get(block.sectionId)
+    const state = saveStateByBlockID[block.blockId] || 'idle'
+    const parts = [
+      section?.title || block.sectionId,
+      block.sliceType || '',
+      `页码 ${block.pageStart}-${block.pageEnd}`,
+      state,
+    ].filter(Boolean)
+    return parts.join(' · ')
   }
 
-  const pendingCount = blocks.filter((block) => {
-    const state = saveStateByBlockID[block.blockId] || 'idle'
-    return state === 'dirty' || state === 'saving'
-  }).length
-  const failedCount = blocks.filter(block => saveStateByBlockID[block.blockId] === 'error').length
-  const activeTableError = tableRenderErrorByBlockID[activeBlockID]
-
   return (
-    <Card size="small" title="文本分块编辑" loading={loading}>
+    <Card
+      size="small"
+      title={(
+        <div className="flex items-center gap-2">
+          <span>{fileName}</span>
+          <Button
+            size="small"
+            type={editing ? 'default' : 'primary'}
+            onClick={() => {
+              void (async () => {
+                if (editing)
+                  await flushAllDirtyBlocks()
+                setEditing(prev => !prev)
+              })()
+            }}
+          >
+            {editing ? '完成编辑' : '编辑'}
+          </Button>
+        </div>
+      )}
+      loading={loading}
+    >
       {contextHolder}
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-        <Tag>总分段 {blocks.length}</Tag>
-        <Tag color="warning">待保存 {pendingCount}</Tag>
-        <Tag color="error">失败 {failedCount}</Tag>
-      </div>
-      <div className="mb-3">
-        <Select
-          value={activeBlockID || undefined}
-          className="w-full"
-          placeholder="请选择分块"
-          options={orderedBlocks.map((block) => {
-            const section = sectionByID.get(block.sectionId)
-            const state = saveStateByBlockID[block.blockId] || 'idle'
-            const title = block.title || section?.title || `分块 #${block.blockId}`
-            return {
-              value: block.blockId,
-              label: `${title}（${block.sliceType || '-'}，P${block.pageStart}-${block.pageEnd}，${state}）`,
-            }
-          })}
-          onChange={(value) => { void switchActiveBlock(Number(value)) }}
-        />
-      </div>
-      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-        <Tag color="blue">{activeSection?.title || '未分组章节'}</Tag>
-        <Tag>{activeBlock?.sliceType || '-'}</Tag>
-        <Tag>页码 {activeBlock?.pageStart || 0}-{activeBlock?.pageEnd || 0}</Tag>
-        <Tag color={stateTagColor(saveStateByBlockID[activeBlockID] || 'idle')}>
-          {saveStateByBlockID[activeBlockID] || 'idle'}
-        </Tag>
-      </div>
-      {activeTableError
-        ? (
-            <Alert
-              type="error"
-              showIcon
-              message="表格渲染失败，当前分块已阻断编辑"
-              description={`分块ID=${activeBlockID}，原因：${activeTableError}`}
-            />
-          )
-        : null}
-      {isTableBlock(activeBlock)
-        ? (
-            <UniverTableEditor
-              key={`table-${activeBlock?.blockId || 0}-${activeBlock?.lastSavedAt || ''}`}
-              valueHtml={normalizeHTML(pendingHTMLByBlockIDRef.current[activeBlock?.blockId || 0] || activeBlock?.currentHtml || activeBlock?.initialHtml || '')}
-              disabled={!enabled}
-              onChange={(nextHtml) => {
-                const blockId = activeBlockIDRef.current
-                if (blockId === 0)
-                  return
-                if (tableRenderErrorByBlockID[blockId])
-                  return
-                scheduleSave(blockId, nextHtml)
-              }}
-              onError={(messageText) => {
-                const blockId = activeBlockIDRef.current
-                if (blockId === 0)
-                  return
-                setTableRenderErrorByBlockID(prev => ({ ...prev, [blockId]: messageText || 'Univer 表格渲染失败' }))
-                setSaveStateByBlockID(prev => ({ ...prev, [blockId]: 'error' }))
-                msgApi.error(`表格分块渲染失败（#${blockId}）：${messageText || 'Univer 表格渲染失败'}`)
-              }}
-            />
-          )
-        : (
-            <div className="case-file-focus-editor rounded border border-gray-200 bg-white p-3">
-              {editor
-                ? <EditorContent editor={editor} />
-                : <Typography.Text type="secondary">编辑器初始化中…</Typography.Text>}
+      <div className="case-file-block-stream rounded border border-gray-200 bg-white p-3">
+        {orderedBlocks.map((block, index) => {
+          const blockError = tableRenderErrorByBlockID[block.blockId]
+          return (
+            <div key={block.blockId} className="space-y-3">
+              {index > 0 && (
+                <Divider plain titlePlacement="right" className="text-xs text-gray-400">
+                  {renderBlockMeta(block)}
+                </Divider>
+              )}
+              {index === 0 && (
+                <div className="text-right text-xs text-gray-400">{renderBlockMeta(block)}</div>
+              )}
+              {blockError
+                ? (
+                    <Alert
+                      type="error"
+                      showIcon
+                      message="表格渲染失败，当前分块已阻断编辑"
+                      description={`分块ID=${block.blockId}，原因：${blockError}`}
+                    />
+                  )
+                : null}
+              {isTableBlock(block)
+                ? (
+                    <UniverTableEditor
+                      key={`table-${block.blockId}-${block.lastSavedAt || ''}-${editing ? 'edit' : 'read'}`}
+                      valueHtml={normalizeHTML(pendingHTMLByBlockIDRef.current[block.blockId] || block.currentHtml || block.initialHtml || '')}
+                      disabled={!enabled || !editing}
+                      onChange={(nextHtml) => {
+                        if (tableRenderErrorByBlockID[block.blockId])
+                          return
+                        scheduleSave(block.blockId, nextHtml)
+                      }}
+                      onError={(messageText) => {
+                        setTableRenderErrorByBlockID(prev => ({ ...prev, [block.blockId]: messageText || 'Univer 表格渲染失败' }))
+                        setSaveStateByBlockID(prev => ({ ...prev, [block.blockId]: 'error' }))
+                        msgApi.error(`表格分块渲染失败（#${block.blockId}）：${messageText || 'Univer 表格渲染失败'}`)
+                      }}
+                    />
+                  )
+                : (
+                    <TextBlockEditor
+                      blockId={block.blockId}
+                      valueHtml={normalizeHTML(pendingHTMLByBlockIDRef.current[block.blockId] || block.currentHtml || block.initialHtml)}
+                      editable={enabled && editing}
+                      onChange={scheduleSave}
+                    />
+                  )}
             </div>
-          )}
+          )
+        })}
+      </div>
       <style jsx global>{`
         .case-file-focus-editor .ProseMirror {
-          min-height: 560px;
-          max-height: 640px;
-          overflow: auto;
+          min-height: 120px;
           outline: none;
           line-height: 1.7;
-          padding-right: 6px;
+        }
+        .case-file-block-stream {
+          max-height: 680px;
+          overflow: auto;
         }
         .case-file-focus-editor .ProseMirror table {
           width: 100%;

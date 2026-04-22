@@ -294,22 +294,19 @@ export default function EnterpriseProjectConfirmPage() {
                   key: `${item.caseFileId}-${item.fileId}-${item.versionNo}`,
                   label: (
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{item.fileName}</span>
+                      <span
+                        className={item.parseStatus === 'succeeded' && isTextualCaseFile(item.caseFileId) ? 'cursor-pointer font-medium text-blue-600' : 'font-medium'}
+                        onClick={() => {
+                          if (item.parseStatus !== 'succeeded' || !isTextualCaseFile(item.caseFileId))
+                            return
+                          setEditingCaseFileID(prev => prev === item.caseFileId ? 0 : item.caseFileId)
+                        }}
+                      >
+                        {item.fileName}
+                      </span>
                       <Tag color={parseStatusColor(item.parseStatus)}>{item.parseStatus}</Tag>
                       {shouldShowVectorStatus(item.vectorStatus) ? <Tag color={parseStatusColor(item.vectorStatus)}>{item.vectorStatus}</Tag> : null}
                       <span className="text-xs text-gray-500">{normalizeStageText(item.currentStage || '-')}</span>
-                      {item.parseStatus === 'succeeded' && isTextualCaseFile(item.caseFileId) && (
-                        <Button
-                          size="small"
-                          type="link"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            setEditingCaseFileID(prev => prev === item.caseFileId ? 0 : item.caseFileId)
-                          }}
-                        >
-                          {editingCaseFileID === item.caseFileId ? '收起编辑' : '进入编辑'}
-                        </Button>
-                      )}
                     </div>
                   ),
                   children: (
@@ -327,6 +324,7 @@ export default function EnterpriseProjectConfirmPage() {
                         <CaseFileBlockEditor
                           projectId={projectId}
                           caseFileId={item.caseFileId}
+                          fileName={item.fileName}
                           enabled
                         />
                       )}

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-DEV_COMPOSE_FILE="${DEV_COMPOSE_FILE:-docker-compose.dev.yml}"
+DEV_COMPOSE_FILE="${1:-${DEV_COMPOSE_FILE:-docker-compose.dev.yml}}"
 
 run_compose() {
   docker compose -f "$DEV_COMPOSE_FILE" "$@"

@@ -1883,6 +1883,9 @@ func buildCaseFileBlocks(slices []model.DocumentSlice, tables []model.DocumentTa
 		if !isRenderableSliceType(slice.SliceType) {
 			continue
 		}
+		if isDocumentAggregateSlice(slice, slices) {
+			continue
+		}
 		sources = append(sources, blockSource{slice: slice})
 	}
 	for _, table := range tables {
@@ -2026,6 +2029,38 @@ func defaultSliceHTML(slice model.DocumentSlice) string {
 		return "<p></p>"
 	}
 	return fmt.Sprintf("<p>%s</p>", escaped)
+}
+
+func isDocumentAggregateSlice(slice model.DocumentSlice, allSlices []model.DocumentSlice) bool {
+	if slice.SliceType != model.DocumentStructureSection || slice.TitleLevel != 1 {
+		return false
+	}
+	text := strings.TrimSpace(slice.CleanText)
+	if text == "" {
+		text = strings.TrimSpace(slice.RawText)
+	}
+	if text == "" {
+		return false
+	}
+	for _, other := range allSlices {
+		if other.ID == slice.ID {
+			continue
+		}
+		if !isEditableSliceType(other.SliceType) {
+			continue
+		}
+		otherText := strings.TrimSpace(other.CleanText)
+		if otherText == "" {
+			otherText = strings.TrimSpace(other.RawText)
+		}
+		if otherText == "" {
+			continue
+		}
+		if strings.Contains(text, otherText) {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultTableHTML(table model.DocumentTableDTO, allCells []model.DocumentTableCellDTO) string {

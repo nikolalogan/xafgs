@@ -211,18 +211,18 @@ export default function OCRDemoV3Page() {
   }
 
   return (
-    <Space direction="vertical" size={16} className="w-full">
+    <Space orientation="vertical" size={16} className="w-full">
       {contextHolder}
       <Alert
         type="info"
         showIcon
-        message="GLM 文档解析官方在线演示（后端代理）"
+        title="GLM 文档解析官方在线演示（后端代理）"
         description="页面按官方 demo 流程重做：上传文件 -> 发起解析 -> 查看 Markdown/结构化结果/原始JSON。"
       />
       <Row gutter={16} align="top">
         <Col span={8}>
           <Card title="输入参数" extra={<Button icon={<ReloadOutlined />} onClick={() => setOptions(DEFAULT_OPTIONS)}>重置</Button>}>
-            <Space direction="vertical" size={12} className="w-full">
+            <Space orientation="vertical" size={12} className="w-full">
               <Upload
                 beforeUpload={() => false}
                 maxCount={1}
@@ -290,7 +290,7 @@ export default function OCRDemoV3Page() {
                         key: 'structured',
                         label: '结构化结果',
                         children: (
-                          <Space direction="vertical" size={12} className="w-full">
+                          <Space orientation="vertical" size={12} className="w-full">
                             <Typography.Text>logId: {result.logId || '-'}</Typography.Text>
                             <Typography.Text>errorCode: {String(result.errorCode ?? '-')}</Typography.Text>
                             <Typography.Text>errorMsg: {result.errorMsg || '-'}</Typography.Text>
