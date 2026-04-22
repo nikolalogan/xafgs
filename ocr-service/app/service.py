@@ -17,7 +17,14 @@ from fastapi import FastAPI, HTTPException
 from PIL import Image
 from pydantic import BaseModel
 
+from app.glm_readiness import env_int, is_glm_endpoint_ready, wait_for_glm_endpoint_ready
+from app.markdown_utils import clean_markdown_ocr_output
+
 logger = logging.getLogger("glm_ocr_service")
+
+
+def build_request_id() -> str:
+    return f"glmreq-{uuid.uuid4().hex[:12]}"
 
 
 class LayoutParsingRequest(BaseModel):
@@ -191,20 +198,19 @@ def parse_error_message(raw: Any) -> str:
     return str(raw)
 
 
-async def is_glm_endpoint_ready(base_url: str, session: aiohttp.ClientSession) -> bool:
-    timeout = aiohttp.ClientTimeout(total=3)
-    try:
-        async with session.get(f"{base_url}/v1/models", timeout=timeout) as response:
-            return response.status < 500
-    except Exception:
-        return False
-
-
-async def call_glm_ocr(image_bytes: bytes, session: aiohttp.ClientSession, markdown_only: bool = False) -> str:
+async def call_glm_ocr(
+    image_bytes: bytes,
+    session: aiohttp.ClientSession,
+    markdown_only: bool = False,
+    request_id: str = "",
+) -> str:
     base_url = resolve_glm_base_url()
-    ready = await is_glm_endpoint_ready(base_url, session)
+    ready = await wait_for_glm_endpoint_ready(base_url, session)
     if not ready:
-        raise RuntimeError(f"项目内 vLLM 服务不可达或未就绪，请检查 {base_url}/v1/models")
+        raise RuntimeError(
+            "项目内 vLLM 服务在等待超时后仍不可达或未就绪，"
+            f"请检查 {base_url}/v1/models；GLM_READY_TIMEOUT_MS={env_int('GLM_READY_TIMEOUT_MS', 300000)}"
+        )
     model = (os.getenv("GLM_MODEL", "glm-4.1v-thinking-flash") or "").strip()
     api_key = (os.getenv("GLM_API_KEY", "") or "").strip()
     auth_mode = resolve_auth_mode()
@@ -237,11 +243,14 @@ async def call_glm_ocr(image_bytes: bytes, session: aiohttp.ClientSession, markd
     timeout = aiohttp.ClientTimeout(total=max(5, timeout_ms // 1000))
     try:
         logger.info(
-            "glm_ocr_request endpoint=%s model=%s auth_mode=%s use_bearer=%s",
+            "glm_ocr_request request_id=%s endpoint=%s model=%s auth_mode=%s use_bearer=%s image_bytes=%s markdown_only=%s",
+            request_id or "-",
             endpoint,
             model,
             auth_mode,
             use_bearer,
+            len(image_bytes),
+            markdown_only,
         )
         async with session.post(endpoint, json=payload, headers=headers, timeout=timeout) as response:
             text_body = await response.text()
@@ -260,9 +269,24 @@ async def call_glm_ocr(image_bytes: bytes, session: aiohttp.ClientSession, markd
                 raise RuntimeError(f"GLM response missing choices endpoint={endpoint}")
             message = (choices[0] or {}).get("message") or {}
             content = message.get("content")
-            text = extract_markdown_text(content)
+            raw_text = extract_markdown_text(content)
+            text = clean_markdown_ocr_output(raw_text)
             if not text:
                 raise RuntimeError(f"GLM response content is empty endpoint={endpoint}")
+            logger.info(
+                "glm_ocr_response request_id=%s raw_preview=%s cleaned_preview=%s cleaned_len=%s",
+                request_id or "-",
+                raw_text[:200].replace("\n", "\\n"),
+                text[:200].replace("\n", "\\n"),
+                len(text),
+            )
+            if len(re.sub(r"\s+", "", text)) <= 2:
+                logger.warning(
+                    "glm_ocr_short_result request_id=%s cleaned_preview=%s cleaned_len=%s",
+                    request_id or "-",
+                    text[:100].replace("\n", "\\n"),
+                    len(text),
+                )
             return text
     except aiohttp.ClientConnectorError as exc:
         raise RuntimeError(f"GLM 服务不可达，请检查项目内 vLLM 容器映射。endpoint={endpoint}, detail={exc}") from exc
@@ -503,6 +527,7 @@ async def layout_parsing(payload: LayoutParsingRequest) -> dict[str, Any]:
 @app.post("/markdown-ocr", response_model=MarkdownOCRResponse)
 async def markdown_ocr(payload: LayoutParsingRequest) -> MarkdownOCRResponse:
     started_at = time.perf_counter()
+    request_id = build_request_id()
     try:
         raw_bytes = decode_base64_payload(payload.file)
     except Exception as exc:
@@ -517,14 +542,28 @@ async def markdown_ocr(payload: LayoutParsingRequest) -> MarkdownOCRResponse:
         raise HTTPException(status_code=422, detail=f"decode file failed: {exc}") from exc
     if not images:
         raise HTTPException(status_code=422, detail="no page images extracted")
+    logger.info(
+        "markdown_ocr_request request_id=%s file_type=%s raw_bytes=%s image_count=%s use_table=%s",
+        request_id,
+        file_type,
+        len(raw_bytes),
+        len(images),
+        bool(payload.useTableRecognition if payload.useTableRecognition is not None else True),
+    )
 
     pages: list[dict[str, Any]] = []
     async with aiohttp.ClientSession() as session:
         for index, image in enumerate(images):
             try:
-                markdown_text = await call_glm_ocr(image, session, markdown_only=True)
+                logger.info(
+                    "markdown_ocr_page request_id=%s page=%s image_bytes=%s",
+                    request_id,
+                    index + 1,
+                    len(image),
+                )
+                markdown_text = await call_glm_ocr(image, session, markdown_only=True, request_id=request_id)
             except Exception as exc:
-                logger.exception("markdown_ocr_failed page=%s error=%s", index + 1, exc)
+                logger.exception("markdown_ocr_failed request_id=%s page=%s error=%s", request_id, index + 1, exc)
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
             pages.append(
                 {
@@ -535,6 +574,13 @@ async def markdown_ocr(payload: LayoutParsingRequest) -> MarkdownOCRResponse:
             )
 
     merged_markdown = "\n\n".join(str(page["markdown"]).strip() for page in pages if str(page["markdown"]).strip())
+    logger.info(
+        "markdown_ocr_success request_id=%s duration_ms=%s merged_len=%s merged_preview=%s",
+        request_id,
+        int((time.perf_counter() - started_at) * 1000),
+        len(merged_markdown),
+        merged_markdown[:200].replace("\n", "\\n"),
+    )
     return MarkdownOCRResponse(
         markdown=merged_markdown,
         text=markdown_to_plain_text(merged_markdown),

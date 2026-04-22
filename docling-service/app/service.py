@@ -1,5 +1,6 @@
 import base64
 import binascii
+import logging
 import os
 import shutil
 import tempfile
@@ -24,9 +25,12 @@ from docling.document_converter import DocumentConverter
 from docling.document_converter import PdfFormatOption
 from docling_core.types.doc.document import BoundingBox
 from fastapi import FastAPI, HTTPException
+from PIL import Image
 from pydantic import BaseModel, Field
 
 from app.markdown_normalizer import markdown_to_plain_text, normalize_docling_like_markdown
+
+logger = logging.getLogger("docling_service")
 
 
 class ConvertRequest(BaseModel):
@@ -53,6 +57,9 @@ class ImageOCRCandidate:
     bbox: BoundingBox
     crop_box: tuple[int, int, int, int]
     crop_size: tuple[int, int]
+    image_source: str
+    image_size: tuple[int, int]
+    payload_bytes: int
     image_payload: str
 
 
@@ -329,41 +336,102 @@ def apply_image_ocr_supplement(
     try:
         rendered_pages: dict[int, Any] = {}
         for index, picture in enumerate(pictures):
+            picture_ref = str(getattr(picture, "self_ref", "") or f"picture:{index}")
             if len(candidates) >= max_images:
+                logger.info("image_ocr_skip picture_ref=%s reason=max_images_reached", picture_ref)
                 skipped_count += 1
                 continue
             prov = first_picture_provenance(picture)
             if prov is None or getattr(prov, "bbox", None) is None:
+                logger.info("image_ocr_skip picture_ref=%s reason=missing_bbox", picture_ref)
                 skipped_count += 1
                 continue
             page_no = max(1, int(getattr(prov, "page_no", 1) or 1))
+            embedded_image = extract_embedded_picture_image(picture)
+            if embedded_image is not None:
+                payload_bytes = len(embedded_image["bytes"])
+                image_size = embedded_image["image_size"]
+                if image_size[0] < min_edge or image_size[1] < min_edge or image_size[0] * image_size[1] < min_area:
+                    logger.info(
+                        "image_ocr_skip picture_ref=%s page_no=%s reason=embedded_too_small image_size=%s payload_bytes=%s",
+                        picture_ref,
+                        page_no,
+                        image_size,
+                        payload_bytes,
+                    )
+                    skipped_count += 1
+                    continue
+                candidates.append(
+                    ImageOCRCandidate(
+                        index=index,
+                        picture_ref=picture_ref,
+                        page_no=page_no,
+                        bbox=prov.bbox,
+                        crop_box=(0, 0, image_size[0], image_size[1]),
+                        crop_size=image_size,
+                        image_source=str(embedded_image["source"]),
+                        image_size=image_size,
+                        payload_bytes=payload_bytes,
+                        image_payload=base64.b64encode(embedded_image["bytes"]).decode("ascii"),
+                    )
+                )
+                logger.info(
+                    "image_ocr_candidate picture_ref=%s page_no=%s image_source=%s image_size=%s payload_bytes=%s crop_box=%s",
+                    picture_ref,
+                    page_no,
+                    embedded_image["source"],
+                    image_size,
+                    payload_bytes,
+                    (0, 0, image_size[0], image_size[1]),
+                )
+                continue
             page_image = rendered_pages.get(page_no)
             if page_image is None:
                 page_image = render_pdf_page(pdf, page_no, render_scale)
                 rendered_pages[page_no] = page_image
             crop_box = build_crop_box(document, page_no, prov.bbox, page_image.size)
             if crop_box is None:
+                logger.info("image_ocr_skip picture_ref=%s page_no=%s reason=invalid_crop_box", picture_ref, page_no)
                 skipped_count += 1
                 continue
             left, top, right, bottom = crop_box
             crop_width = right - left
             crop_height = bottom - top
             if crop_width < min_edge or crop_height < min_edge or crop_width * crop_height < min_area:
+                logger.info(
+                    "image_ocr_skip picture_ref=%s page_no=%s reason=crop_too_small crop_size=%s crop_box=%s",
+                    picture_ref,
+                    page_no,
+                    (crop_width, crop_height),
+                    crop_box,
+                )
                 skipped_count += 1
                 continue
             crop = page_image.crop(crop_box)
             buffer = BytesIO()
             crop.save(buffer, format="JPEG", quality=90)
+            crop_bytes = buffer.getvalue()
             candidates.append(
                 ImageOCRCandidate(
                     index=index,
-                    picture_ref=str(getattr(picture, "self_ref", "") or f"picture:{index}"),
+                    picture_ref=picture_ref,
                     page_no=page_no,
                     bbox=prov.bbox,
                     crop_box=crop_box,
                     crop_size=(crop_width, crop_height),
-                    image_payload=base64.b64encode(buffer.getvalue()).decode("ascii"),
+                    image_source="page_crop",
+                    image_size=(crop_width, crop_height),
+                    payload_bytes=len(crop_bytes),
+                    image_payload=base64.b64encode(crop_bytes).decode("ascii"),
                 )
+            )
+            logger.info(
+                "image_ocr_candidate picture_ref=%s page_no=%s image_source=page_crop image_size=%s payload_bytes=%s crop_box=%s",
+                picture_ref,
+                page_no,
+                (crop_width, crop_height),
+                len(crop_bytes),
+                crop_box,
             )
     finally:
         pdf.close()
@@ -405,6 +473,72 @@ def first_picture_provenance(picture: Any) -> Any | None:
     if not prov:
         return None
     return prov[0]
+
+
+def extract_embedded_picture_image(picture: Any) -> dict[str, Any] | None:
+    for attribute, source in (
+        ("pil_image", "embedded_pil_image"),
+        ("image", "embedded_image"),
+        ("_image", "embedded__image"),
+    ):
+        image_obj = getattr(picture, attribute, None)
+        extracted = image_object_to_bytes(image_obj, source)
+        if extracted is not None:
+            return extracted
+    for method_name, source in (
+        ("get_image", "embedded_get_image"),
+        ("get_image_data", "embedded_get_image_data"),
+        ("load_image", "embedded_load_image"),
+    ):
+        method = getattr(picture, method_name, None)
+        if callable(method):
+            try:
+                extracted = image_object_to_bytes(method(), source)
+            except Exception:
+                extracted = None
+            if extracted is not None:
+                return extracted
+    return None
+
+
+def image_object_to_bytes(image_obj: Any, source: str) -> dict[str, Any] | None:
+    if image_obj is None:
+        return None
+    if isinstance(image_obj, (bytes, bytearray)):
+        width = 0
+        height = 0
+        try:
+            with Image.open(BytesIO(bytes(image_obj))) as opened:
+                width, height = opened.size
+        except Exception:
+            pass
+        return {
+            "bytes": bytes(image_obj),
+            "image_size": (width, height),
+            "source": source,
+        }
+    if hasattr(image_obj, "size") and hasattr(image_obj, "save"):
+        buffer = BytesIO()
+        image_obj.save(buffer, format="PNG")
+        width, height = image_obj.size
+        return {
+            "bytes": buffer.getvalue(),
+            "image_size": (int(width), int(height)),
+            "source": source,
+        }
+    nested = getattr(image_obj, "pil_image", None)
+    if nested is not None:
+        return image_object_to_bytes(nested, source)
+    nested_bytes = getattr(image_obj, "data", None)
+    if isinstance(nested_bytes, (bytes, bytearray)):
+        width = int(getattr(image_obj, "width", 0) or 0)
+        height = int(getattr(image_obj, "height", 0) or 0)
+        return {
+            "bytes": bytes(nested_bytes),
+            "image_size": (width, height),
+            "source": source,
+        }
+    return None
 
 
 def render_pdf_page(pdf: Any, page_no: int, scale: float) -> Any:
@@ -457,26 +591,56 @@ def run_image_ocr(candidates: list[ImageOCRCandidate]) -> list[ImageOCRResult]:
 
 
 def run_single_image_ocr(candidate: ImageOCRCandidate) -> ImageOCRResult:
+    payload = {
+        "file": candidate.image_payload,
+        "fileType": 1,
+        "useTableRecognition": True,
+    }
     try:
-        payload = {
-            "file": candidate.image_payload,
-            "fileType": 1,
-            "useTableRecognition": True,
-        }
+        logger.info(
+            "image_ocr_request picture_ref=%s page_no=%s image_source=%s image_size=%s payload_bytes=%s crop_box=%s",
+            candidate.picture_ref,
+            candidate.page_no,
+            candidate.image_source,
+            candidate.image_size,
+            candidate.payload_bytes,
+            candidate.crop_box,
+        )
         response = requests.post(
             get_ocr_service_base_url() + "/markdown-ocr",
             json=payload,
-            timeout=max(1, env_int("DOCLING_IMAGE_OCR_TIMEOUT_SECONDS", 90)),
+            timeout=max(1, env_int("DOCLING_IMAGE_OCR_TIMEOUT_SECONDS", 450)),
         )
         response.raise_for_status()
         raw_text = extract_markdown_ocr_text(response.json())
-        return ImageOCRResult(
-            candidate=candidate,
-            text=normalize_docling_like_markdown(raw_text),
-            raw_text=raw_text,
-        )
     except Exception as exc:
-        return ImageOCRResult(candidate=candidate, text="", error=str(exc))
+        raise RuntimeError(
+            "图片 GLM Markdown OCR 失败: "
+            f"pageNo={candidate.page_no}, pictureRef={candidate.picture_ref}, error={build_ocr_error_summary(exc)}"
+        ) from exc
+    cleaned_text = normalize_docling_like_markdown(raw_text)
+    logger.info(
+        "image_ocr_response picture_ref=%s page_no=%s image_source=%s raw_preview=%s cleaned_preview=%s",
+        candidate.picture_ref,
+        candidate.page_no,
+        candidate.image_source,
+        raw_text[:200].replace("\n", "\\n"),
+        cleaned_text[:200].replace("\n", "\\n"),
+    )
+    return ImageOCRResult(
+        candidate=candidate,
+        text=cleaned_text,
+        raw_text=raw_text,
+    )
+
+
+def build_ocr_error_summary(exc: Exception) -> str:
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        body = exc.response.text.strip()
+        if len(body) > 500:
+            body = body[:500] + "..."
+        return f"status={exc.response.status_code} body={body}"
+    return str(exc)
 
 
 def extract_ocr_markdown(payload: dict[str, Any]) -> str:
@@ -588,6 +752,9 @@ def image_ocr_result_to_dict(result: ImageOCRResult) -> dict[str, Any]:
         "bbox": result.candidate.bbox.model_dump(mode="json"),
         "cropBox": result.candidate.crop_box,
         "cropSize": result.candidate.crop_size,
+        "imageSource": result.candidate.image_source,
+        "imageSize": result.candidate.image_size,
+        "payloadBytes": result.candidate.payload_bytes,
         "text": result.text,
         "markdownEndpoint": "/markdown-ocr",
     }
