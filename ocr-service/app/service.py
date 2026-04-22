@@ -27,6 +27,15 @@ class LayoutParsingRequest(BaseModel):
     useTableRecognition: bool | None = True
 
 
+class MarkdownOCRResponse(BaseModel):
+    markdown: str
+    text: str
+    pages: list[dict[str, Any]]
+    provider: str
+    model: str
+    durationMs: int
+
+
 class TableCellHTMLParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -130,7 +139,14 @@ def extract_markdown_text(content: Any) -> str:
     return ""
 
 
-def build_prompt() -> str:
+def build_prompt(markdown_only: bool = False) -> str:
+    if markdown_only:
+        return (
+            "请对图片执行OCR，并只输出可直接嵌入Docling文档结果的Markdown。"
+            "保持原始阅读顺序；正文使用自然段；列表使用Markdown列表；"
+            "如果存在表格，请优先用HTML <table>...</table> 表示，保留rowspan/colspan。"
+            "不要输出代码块包裹，不要添加解释性前后缀。"
+        )
     return (
         "请对图片执行OCR与版面解析，输出尽量完整的Markdown文本。"
         "如果存在表格，请优先用HTML <table>...</table> 表示，保留rowspan/colspan。"
@@ -184,7 +200,7 @@ async def is_glm_endpoint_ready(base_url: str, session: aiohttp.ClientSession) -
         return False
 
 
-async def call_glm_ocr(image_bytes: bytes, session: aiohttp.ClientSession) -> str:
+async def call_glm_ocr(image_bytes: bytes, session: aiohttp.ClientSession, markdown_only: bool = False) -> str:
     base_url = resolve_glm_base_url()
     ready = await is_glm_endpoint_ready(base_url, session)
     if not ready:
@@ -203,7 +219,7 @@ async def call_glm_ocr(image_bytes: bytes, session: aiohttp.ClientSession) -> st
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": build_prompt()},
+                    {"type": "text", "text": build_prompt(markdown_only)},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
                 ],
             }
@@ -338,6 +354,71 @@ def build_page_from_markdown(markdown_text: str, page_no: int) -> tuple[dict[str
     return page, official_item
 
 
+def markdown_to_plain_text(markdown_text: str) -> str:
+    content = markdown_text.strip()
+    content = re.sub(r"<table[\s\S]*?</table>", lambda match: table_html_to_text(match.group(0)), content, flags=re.IGNORECASE)
+    content = re.sub(r"^#{1,6}\s+", "", content, flags=re.MULTILINE)
+    content = re.sub(r"^[-*+]\s+", "", content, flags=re.MULTILINE)
+    content = re.sub(r"^\d+[.)]\s+", "", content, flags=re.MULTILINE)
+    return "\n".join(line.strip() for line in content.splitlines() if line.strip()).strip()
+
+
+def table_html_to_text(table_html: str) -> str:
+    text = re.sub(r"</tr\s*>", "\n", table_html, flags=re.IGNORECASE)
+    text = re.sub(r"</t[dh]\s*>", " | ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    rows = []
+    for raw_line in text.splitlines():
+        row = re.sub(r"\s*\|\s*$", "", raw_line.strip())
+        row = re.sub(r"\s+", " ", row)
+        if row:
+            rows.append(row)
+    return "\n".join(rows).strip()
+
+
+def decode_kserve_image_payload(payload: dict[str, Any]) -> bytes:
+    inputs = payload.get("inputs")
+    if not isinstance(inputs, list):
+        raise ValueError("inputs must be a list")
+    for item in inputs:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").lower()
+        data = item.get("data")
+        if name not in {"image", "images", "input", "file"} and data is None:
+            continue
+        if isinstance(data, list) and data:
+            first = data[0]
+            if isinstance(first, str):
+                return decode_base64_payload(first)
+            if isinstance(first, list):
+                return bytes(int(value) for value in first)
+        if isinstance(data, str):
+            return decode_base64_payload(data)
+    raise ValueError("no supported base64 image input found")
+
+
+def build_kserve_response(markdown_text: str, model_name: str) -> dict[str, Any]:
+    plain_text = markdown_to_plain_text(markdown_text)
+    return {
+        "model_name": model_name,
+        "outputs": [
+            {
+                "name": "text",
+                "datatype": "BYTES",
+                "shape": [1],
+                "data": [plain_text],
+            },
+            {
+                "name": "markdown",
+                "datatype": "BYTES",
+                "shape": [1],
+                "data": [markdown_text],
+            },
+        ],
+    }
+
+
 app = FastAPI(title="GLM OCR Service", version="1.0.0")
 
 
@@ -417,3 +498,83 @@ async def layout_parsing(payload: LayoutParsingRequest) -> dict[str, Any]:
             "layoutParsingResults": official_items,
         },
     }
+
+
+@app.post("/markdown-ocr", response_model=MarkdownOCRResponse)
+async def markdown_ocr(payload: LayoutParsingRequest) -> MarkdownOCRResponse:
+    started_at = time.perf_counter()
+    try:
+        raw_bytes = decode_base64_payload(payload.file)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid file payload: {exc}") from exc
+
+    file_type = payload.fileType
+    if file_type not in (0, 1):
+        file_type = 0 if raw_bytes[:4] == b"%PDF" else 1
+    try:
+        images = render_pdf_pages(raw_bytes) if file_type == 0 else [ensure_jpeg(raw_bytes)]
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"decode file failed: {exc}") from exc
+    if not images:
+        raise HTTPException(status_code=422, detail="no page images extracted")
+
+    pages: list[dict[str, Any]] = []
+    async with aiohttp.ClientSession() as session:
+        for index, image in enumerate(images):
+            try:
+                markdown_text = await call_glm_ocr(image, session, markdown_only=True)
+            except Exception as exc:
+                logger.exception("markdown_ocr_failed page=%s error=%s", index + 1, exc)
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            pages.append(
+                {
+                    "pageNo": index + 1,
+                    "markdown": markdown_text,
+                    "text": markdown_to_plain_text(markdown_text),
+                }
+            )
+
+    merged_markdown = "\n\n".join(str(page["markdown"]).strip() for page in pages if str(page["markdown"]).strip())
+    return MarkdownOCRResponse(
+        markdown=merged_markdown,
+        text=markdown_to_plain_text(merged_markdown),
+        pages=pages,
+        provider="glm-ocr",
+        model=(os.getenv("GLM_MODEL", "glm-4.1v-thinking-flash") or "").strip(),
+        durationMs=int((time.perf_counter() - started_at) * 1000),
+    )
+
+
+@app.get("/v2")
+async def kserve_server_metadata() -> dict[str, Any]:
+    return {"name": "glm-ocr", "version": "1.0.0", "extensions": []}
+
+
+@app.get("/v2/models/{model_name}")
+async def kserve_model_metadata(model_name: str) -> dict[str, Any]:
+    return {
+        "name": model_name,
+        "versions": ["1"],
+        "platform": "glm-ocr",
+        "inputs": [{"name": "image", "datatype": "BYTES", "shape": [-1]}],
+        "outputs": [
+            {"name": "text", "datatype": "BYTES", "shape": [1]},
+            {"name": "markdown", "datatype": "BYTES", "shape": [1]},
+        ],
+    }
+
+
+@app.post("/v2/models/{model_name}/infer")
+async def kserve_model_infer(model_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        raw_bytes = decode_kserve_image_payload(payload)
+        image = ensure_jpeg(raw_bytes)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid kserve image payload: {exc}") from exc
+    async with aiohttp.ClientSession() as session:
+        try:
+            markdown_text = await call_glm_ocr(image, session, markdown_only=True)
+        except Exception as exc:
+            logger.exception("kserve_glm_ocr_failed model=%s error=%s", model_name, exc)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return build_kserve_response(markdown_text, model_name)

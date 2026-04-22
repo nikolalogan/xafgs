@@ -161,6 +161,7 @@ make ocr-model-cache-warm
 - `docker-compose` 中 `OCR_WHEELS_ONLY` 默认已设为 `1`（本地 wheel 优先且不回源）；仅 `make ocr-build-online-fallback` 会显式传入 `OCR_WHEELS_ONLY=0` 允许回源。
 - OCR 不默认采用运行时安装依赖，避免容器启动变慢且将失败暴露到更晚阶段。
 - `ocr-service` 已切换为 GLM OCR 适配服务，默认走项目内 `vllm`（`GLM_BASE_URL` 默认 `http://vllm:8000`），入口保持 `POST /layout-parsing`。
+- `ocr-service` 额外提供 `POST /markdown-ocr`，用于返回可直接嵌入 Docling 结果的 Markdown；同时暴露 KServe v2 兼容端点 `/v2/models/{model}/infer`，供 Docling 远程 OCR 试验接入。
 - 新增 `docling-service`，提供 `POST /convert` 文档转换接口，并通过网关暴露为 `/docling/convert`。
 - CPU 稳定性参数默认启用：`FLAGS_use_mkldnn=0`、`FLAGS_enable_pir_api=0`、`FLAGS_enable_pir_in_executor=0`、`OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`。
 
@@ -196,7 +197,8 @@ make ocr-model-cache-warm
 - 服务端口：`8091`
 - 网关入口：`POST /docling/convert`
 - 示例页面：`http://localhost:325/app/docling-demo`
-- Docling 默认按离线文本层转换运行，并将文档内图片区域的 GLM OCR 结果原位写回正文；图片文件或扫描 PDF 在示例页切换为 GLM OCR。
+- Docling 默认按离线文本层转换运行，并将文档内图片区域的 GLM Markdown OCR 结果原位写回正文；图片文件或扫描 PDF 在示例页切换为 GLM OCR。
+- 可设置 `DOCLING_OCR_PROVIDER=glm_kserve` 试验 Docling 官方远程 OCR 流程，请求项目内 `ocr-service` 的 KServe v2 兼容 GLM OCR；默认值为 `none`，避免意外启用远程服务。
 
 ## Docling 依赖缓存
 

@@ -16,11 +16,17 @@ import requests
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
+try:
+    from docling.datamodel.pipeline_options import KserveV2OcrOptions
+except Exception:
+    KserveV2OcrOptions = None
 from docling.document_converter import DocumentConverter
 from docling.document_converter import PdfFormatOption
 from docling_core.types.doc.document import BoundingBox
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+
+from app.markdown_normalizer import markdown_to_plain_text, normalize_docling_like_markdown
 
 
 class ConvertRequest(BaseModel):
@@ -54,6 +60,7 @@ class ImageOCRCandidate:
 class ImageOCRResult:
     candidate: ImageOCRCandidate
     text: str
+    raw_text: str = ""
     error: str = ""
 
 
@@ -222,12 +229,49 @@ def get_ocr_service_base_url() -> str:
     return raw.rstrip("/")
 
 
+def get_docling_ocr_provider() -> str:
+    raw = os.getenv("DOCLING_OCR_PROVIDER", "none").strip().lower()
+    if raw in {"none", "glm_kserve"}:
+        return raw
+    return "none"
+
+
+def build_glm_kserve_ocr_options() -> Any:
+    if KserveV2OcrOptions is None:
+        raise RuntimeError("当前 Docling 版本不支持 KserveV2OcrOptions，无法启用 glm_kserve OCR")
+
+    endpoint = os.getenv("DOCLING_GLM_KSERVE_URL", get_ocr_service_base_url()).strip().rstrip("/")
+    model_name = os.getenv("DOCLING_GLM_KSERVE_MODEL", "glm-ocr").strip() or "glm-ocr"
+    try:
+        return KserveV2OcrOptions(
+            url=endpoint,
+            model_name=model_name,
+            transport=os.getenv("DOCLING_GLM_KSERVE_TRANSPORT", "http").strip() or "http",
+        )
+    except TypeError:
+        options = KserveV2OcrOptions()
+        for key, value in {
+            "url": endpoint,
+            "endpoint": endpoint,
+            "model_name": model_name,
+            "model": model_name,
+            "transport": os.getenv("DOCLING_GLM_KSERVE_TRANSPORT", "http").strip() or "http",
+        }.items():
+            if hasattr(options, key):
+                setattr(options, key, value)
+        return options
+
+
 @lru_cache(maxsize=1)
 def get_converter() -> DocumentConverter:
     table_structure_enabled = env_bool("DOCLING_TABLE_STRUCTURE_ENABLED", True)
+    ocr_provider = get_docling_ocr_provider()
     serve_artifacts_path = get_serve_artifacts_path()
     pdf_options = PdfPipelineOptions()
-    pdf_options.do_ocr = False
+    pdf_options.do_ocr = ocr_provider == "glm_kserve"
+    if ocr_provider == "glm_kserve":
+        pdf_options.enable_remote_services = True
+        pdf_options.ocr_options = build_glm_kserve_ocr_options()
     pdf_options.do_table_structure = table_structure_enabled
     pdf_options.force_backend_text = True
     ensure_serve_artifacts()
@@ -239,6 +283,8 @@ def get_converter() -> DocumentConverter:
         )
     pdf_options.artifacts_path = str(serve_artifacts_path)
     print(f"Using Docling serve artifacts from {serve_artifacts_path}")
+    if ocr_provider == "glm_kserve":
+        print(f"Using Docling remote OCR provider glm_kserve via {get_ocr_service_base_url()}")
     if table_structure_enabled and has_table_artifacts():
         print("Docling cached table artifacts source: " + get_table_artifacts_summary())
     return DocumentConverter(
@@ -415,19 +461,20 @@ def run_single_image_ocr(candidate: ImageOCRCandidate) -> ImageOCRResult:
         payload = {
             "file": candidate.image_payload,
             "fileType": 1,
-            "visualize": False,
             "useTableRecognition": True,
-            "useRegionDetection": True,
-            "useFormulaRecognition": True,
         }
         response = requests.post(
-            get_ocr_service_base_url() + "/layout-parsing",
+            get_ocr_service_base_url() + "/markdown-ocr",
             json=payload,
             timeout=max(1, env_int("DOCLING_IMAGE_OCR_TIMEOUT_SECONDS", 90)),
         )
         response.raise_for_status()
-        text = extract_ocr_markdown(response.json())
-        return ImageOCRResult(candidate=candidate, text=text)
+        raw_text = extract_markdown_ocr_text(response.json())
+        return ImageOCRResult(
+            candidate=candidate,
+            text=normalize_docling_like_markdown(raw_text),
+            raw_text=raw_text,
+        )
     except Exception as exc:
         return ImageOCRResult(candidate=candidate, text="", error=str(exc))
 
@@ -441,6 +488,13 @@ def extract_ocr_markdown(payload: dict[str, Any]) -> str:
         if value:
             parts.append(value)
     return "\n\n".join(parts).strip()
+
+
+def extract_markdown_ocr_text(payload: dict[str, Any]) -> str:
+    value = str((payload or {}).get("markdown") or "").strip()
+    if value:
+        return value
+    return extract_ocr_markdown(payload)
 
 
 def normalize_for_dedup(value: str) -> str:
@@ -493,8 +547,7 @@ def render_image_ocr_content(result: ImageOCRResult, plain_text: bool = False) -
     if not content:
         return ""
     if plain_text:
-        lines = [line.strip() for line in content.replace("\r\n", "\n").split("\n")]
-        return "\n".join([line for line in lines if line])
+        return markdown_to_plain_text(content)
     return content
 
 
@@ -536,7 +589,10 @@ def image_ocr_result_to_dict(result: ImageOCRResult) -> dict[str, Any]:
         "cropBox": result.candidate.crop_box,
         "cropSize": result.candidate.crop_size,
         "text": result.text,
+        "markdownEndpoint": "/markdown-ocr",
     }
+    if result.raw_text:
+        payload["rawText"] = result.raw_text
     if result.error:
         payload["error"] = result.error
     return payload
