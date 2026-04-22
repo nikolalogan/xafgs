@@ -43,12 +43,17 @@ def get_layout_artifacts_candidates() -> list[Path]:
         artifacts_root / "model_artifacts" / "layout",
         artifacts_root / "layout",
         artifacts_root / "models" / "layout",
+        artifacts_root / "docling-project--docling-layout-heron",
         artifacts_root,
     ]
 
 
 def find_layout_artifacts_path() -> Path | None:
     for candidate in get_layout_artifacts_candidates():
+        if (candidate / "model.safetensors").is_file():
+            return candidate
+    artifacts_root = get_artifacts_path()
+    for candidate in sorted(artifacts_root.glob("*layout*")):
         if (candidate / "model.safetensors").is_file():
             return candidate
     return None

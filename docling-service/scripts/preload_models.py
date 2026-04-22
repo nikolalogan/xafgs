@@ -13,12 +13,16 @@ def get_layout_candidates(target: Path) -> list[Path]:
         target / "model_artifacts" / "layout",
         target / "layout",
         target / "models" / "layout",
+        target / "docling-project--docling-layout-heron",
         target,
     ]
 
 
 def find_layout_artifacts(target: Path) -> Path | None:
     for candidate in get_layout_candidates(target):
+        if (candidate / "model.safetensors").is_file():
+            return candidate
+    for candidate in sorted(target.glob("*layout*")):
         if (candidate / "model.safetensors").is_file():
             return candidate
     return None
