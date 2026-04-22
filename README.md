@@ -206,7 +206,7 @@ make docling-build
 
 - `make docling-wheels-sync` 会将 `docling-service/requirements.txt` 对应依赖下载到 `docling-service/wheels/`；
 - `make docling-model-cache-warm` 会将 Docling 所需 artifacts 预热到 `docling-service/model_cache/`；
-- `docling-service/model_cache/` 是缓存根目录，服务启动时会自动解析其中实际的 layout artifacts 与 tableformer artifacts 子目录；
+- `docling-service/model_cache/` 是缓存根目录，`docling-service/model_cache/serve_artifacts/` 是运行时统一 artifacts 目录；
 - Docling 预热默认通过 `HF_ENDPOINT=https://hf-mirror.com` 下载 Hugging Face 模型，也可在 `.env` 中覆盖为你自己的镜像或代理入口；
 - Docling 默认启用表格结构识别，财务报表等 PDF 会优先输出结构化表格而不是线性文本；
 - `docling-service` 默认启用文档内图片区域的 GLM OCR 补充，可通过环境变量调节并发、超时和单文档图片数上限；
@@ -221,6 +221,16 @@ find docling-service/model_cache -name model.safetensors
 
 ```powershell
 Get-ChildItem docling-service/model_cache -Recurse -Filter model.safetensors
+```
+
+运行前也可确认统一目录已生成：
+
+```bash
+find docling-service/model_cache/serve_artifacts -type f \( -name model.safetensors -o -name tm_config.json \)
+```
+
+```powershell
+Get-ChildItem docling-service/model_cache/serve_artifacts -Recurse -Include model.safetensors,tm_config.json
 ```
 
 若默认镜像不可用，可先设置再预热：

@@ -115,7 +115,7 @@ services:
     environment:
       TZ: "Asia/Shanghai"
       DOCLING_ARTIFACTS_PATH: "/opt/docling-models"
-      DOCLING_SERVE_ARTIFACTS_PATH: "/opt/docling-models"
+      DOCLING_SERVE_ARTIFACTS_PATH: "/opt/docling-models/serve_artifacts"
       HF_HOME: "/opt/docling-models/hf"
       HF_HUB_CACHE: "/opt/docling-models/hf/hub"
       HF_ENDPOINT: "${HF_ENDPOINT:-https://hf-mirror.com}"

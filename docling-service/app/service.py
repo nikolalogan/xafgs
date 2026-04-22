@@ -102,6 +102,13 @@ def get_artifacts_path() -> Path:
     return Path(raw)
 
 
+def get_serve_artifacts_path() -> Path:
+    raw = os.getenv("DOCLING_SERVE_ARTIFACTS_PATH", "").strip()
+    if raw:
+        return Path(raw)
+    return get_artifacts_path() / "serve_artifacts"
+
+
 def get_layout_artifacts_candidates() -> list[Path]:
     artifacts_root = get_artifacts_path()
     return [
@@ -158,6 +165,21 @@ def get_table_artifacts_summary() -> str:
     return "; ".join(details)
 
 
+def get_required_serve_artifact_paths() -> list[Path]:
+    serve_root = get_serve_artifacts_path()
+    return [
+        serve_root / "model.safetensors",
+        serve_root / "accurate" / "tm_config.json",
+        serve_root / "accurate" / "tableformer_accurate.safetensors",
+        serve_root / "fast" / "tm_config.json",
+        serve_root / "fast" / "tableformer_fast.safetensors",
+    ]
+
+
+def get_missing_serve_artifact_paths() -> list[Path]:
+    return [path for path in get_required_serve_artifact_paths() if not path.is_file()]
+
+
 def get_ocr_service_base_url() -> str:
     raw = os.getenv("OCR_SERVICE_BASE_URL", "http://ocr-service:8090").strip()
     return raw.rstrip("/")
@@ -165,27 +187,22 @@ def get_ocr_service_base_url() -> str:
 
 @lru_cache(maxsize=1)
 def get_converter() -> DocumentConverter:
-    layout_artifacts_path = find_layout_artifacts_path()
     table_structure_enabled = env_bool("DOCLING_TABLE_STRUCTURE_ENABLED", True)
+    serve_artifacts_path = get_serve_artifacts_path()
     pdf_options = PdfPipelineOptions()
     pdf_options.do_ocr = False
     pdf_options.do_table_structure = table_structure_enabled
     pdf_options.force_backend_text = True
-    if layout_artifacts_path is not None:
-        pdf_options.artifacts_path = str(layout_artifacts_path)
-        print(f"Using Docling layout artifacts from {layout_artifacts_path}")
-    else:
-        print(
-            "Docling layout artifacts not found in candidates: "
-            + ", ".join(str(path) for path in get_layout_artifacts_candidates())
+    missing_serve_paths = get_missing_serve_artifact_paths()
+    if missing_serve_paths:
+        raise RuntimeError(
+            "Docling serve artifacts not found. Missing: "
+            + ", ".join(str(path) for path in missing_serve_paths)
         )
-    if table_structure_enabled:
-        if not has_table_artifacts():
-            raise RuntimeError(
-                "Docling table artifacts not found in candidates: "
-                + ", ".join(str(path) for path in get_table_artifacts_candidates())
-            )
-        print("Using Docling table artifacts from " + get_table_artifacts_summary())
+    pdf_options.artifacts_path = str(serve_artifacts_path)
+    print(f"Using Docling serve artifacts from {serve_artifacts_path}")
+    if table_structure_enabled and has_table_artifacts():
+        print("Docling cached table artifacts source: " + get_table_artifacts_summary())
     return DocumentConverter(
         format_options={
             InputFormat.PDF: PdfFormatOption(
@@ -543,10 +560,18 @@ def convert(request: ConvertRequest) -> ConvertResponse:
             or "trying to locate the files on the Hub" in message
             or "Cannot find an appropriate cached snapshot folder" in message
             or "Docling table artifacts not found" in message
+            or "Docling serve artifacts not found" in message
         ):
             candidates = ", ".join(str(path) for path in get_layout_artifacts_candidates())
             table_candidates = ", ".join(str(path) for path in get_table_artifacts_candidates())
-            if "Docling table artifacts not found" in message:
+            serve_candidates = ", ".join(str(path) for path in get_required_serve_artifact_paths())
+            if "Docling serve artifacts not found" in message:
+                message = (
+                    "当前 Docling 运行时 artifacts 缺失，请先预热 "
+                    f"{get_artifacts_path()}；运行目录: {get_serve_artifacts_path()}；"
+                    f"缺失文件: {serve_candidates}"
+                )
+            elif "Docling table artifacts not found" in message:
                 message = (
                     "当前 Docling 表格结构模型缓存缺失，请先预热 "
                     f"{get_artifacts_path()}；已检查 table 候选目录: {table_candidates}；"
