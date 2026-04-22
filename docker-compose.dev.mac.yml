@@ -130,7 +130,7 @@ services:
         PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
         PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
         PIP_RETRIES: "${PIP_RETRIES:-10}"
-        DOCLING_WHEELS_ONLY: "${DOCLING_WHEELS_ONLY:-0}"
+        DOCLING_WHEELS_ONLY: "${DOCLING_WHEELS_ONLY:-1}"
     image: sxfgssever-docling-service-dev:latest
     environment:
       TZ: "Asia/Shanghai"
@@ -227,7 +227,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: ${BASE_REGISTRY:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io}/library/redis:7-alpine
+    image: ${BASE_REGISTRY:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io}/library/redis:8-alpine
     environment:
       TZ: "Asia/Shanghai"
     command: ["redis-server", "--appendonly", "yes"]
