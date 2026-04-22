@@ -191,7 +191,7 @@ services:
     restart: unless-stopped
 
   gateway:
-    image: ${BASE_REGISTRY:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io}/library/nginx:1.27-alpine
+    image: ${BASE_REGISTRY:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io}/library/nginx:alpine
     container_name: sxfgssever-dev-gateway
     environment:
       TZ: "Asia/Shanghai"
