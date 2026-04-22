@@ -2,6 +2,7 @@ import base64
 import binascii
 import logging
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -66,6 +67,7 @@ class ImageOCRCandidate:
     image_source: str
     image_size: tuple[int, int]
     payload_bytes: int
+    debug_image_path: str
     image_payload: str
 
 
@@ -112,6 +114,15 @@ def env_float(name: str, default: float) -> float:
     raw = os.getenv(name, "").strip()
     if not raw:
         return default
+
+
+def get_image_ocr_debug_dir() -> Path:
+    raw = os.getenv("DOCLING_IMAGE_OCR_DEBUG_DIR", "/tmp/docling-image-ocr-debug").strip()
+    return Path(raw)
+
+
+def image_ocr_debug_export_enabled() -> bool:
+    return env_bool("DOCLING_IMAGE_OCR_DEBUG_EXPORT", False)
     try:
         return float(raw)
     except ValueError:
@@ -373,6 +384,12 @@ def apply_image_ocr_supplement(
                     )
                     skipped_count += 1
                     continue
+                debug_image_path = export_debug_image(
+                    embedded_image["bytes"],
+                    picture_ref,
+                    page_no,
+                    str(embedded_image["source"]),
+                )
                 candidates.append(
                     ImageOCRCandidate(
                         index=index,
@@ -384,17 +401,19 @@ def apply_image_ocr_supplement(
                         image_source=str(embedded_image["source"]),
                         image_size=image_size,
                         payload_bytes=payload_bytes,
+                        debug_image_path=debug_image_path,
                         image_payload=base64.b64encode(embedded_image["bytes"]).decode("ascii"),
                     )
                 )
                 logger.info(
-                    "image_ocr_candidate picture_ref=%s page_no=%s image_source=%s image_size=%s payload_bytes=%s crop_box=%s",
+                    "image_ocr_candidate picture_ref=%s page_no=%s image_source=%s image_size=%s payload_bytes=%s crop_box=%s debugImagePath=%s",
                     picture_ref,
                     page_no,
                     embedded_image["source"],
                     image_size,
                     payload_bytes,
                     (0, 0, image_size[0], image_size[1]),
+                    debug_image_path or "-",
                 )
                 continue
             page_image = rendered_pages.get(page_no)
@@ -423,6 +442,12 @@ def apply_image_ocr_supplement(
             buffer = BytesIO()
             crop.save(buffer, format="JPEG", quality=90)
             crop_bytes = buffer.getvalue()
+            debug_image_path = export_debug_image(
+                crop_bytes,
+                picture_ref,
+                page_no,
+                "page_crop",
+            )
             candidates.append(
                 ImageOCRCandidate(
                     index=index,
@@ -434,16 +459,18 @@ def apply_image_ocr_supplement(
                     image_source="page_crop",
                     image_size=(crop_width, crop_height),
                     payload_bytes=len(crop_bytes),
+                    debug_image_path=debug_image_path,
                     image_payload=base64.b64encode(crop_bytes).decode("ascii"),
                 )
             )
             logger.info(
-                "image_ocr_candidate picture_ref=%s page_no=%s image_source=page_crop image_size=%s payload_bytes=%s crop_box=%s",
+                "image_ocr_candidate picture_ref=%s page_no=%s image_source=page_crop image_size=%s payload_bytes=%s crop_box=%s debugImagePath=%s",
                 picture_ref,
                 page_no,
                 (crop_width, crop_height),
                 len(crop_bytes),
                 crop_box,
+                debug_image_path or "-",
             )
     finally:
         pdf.close()
@@ -537,6 +564,30 @@ def extract_docling_picture_image(document: Any, picture: Any) -> dict[str, Any]
             extracted["source"],
         )
     return extracted
+
+
+def sanitize_picture_ref(value: str) -> str:
+    sanitized = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(value or "").strip())
+    sanitized = sanitized.strip("._")
+    return sanitized or "picture"
+
+
+def export_debug_image(image_bytes: bytes, picture_ref: str, page_no: int, image_source: str) -> str:
+    if not image_ocr_debug_export_enabled():
+        return ""
+    debug_dir = get_image_ocr_debug_dir()
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    filename = f"page{page_no}_{sanitize_picture_ref(picture_ref)}_{sanitize_picture_ref(image_source)}_{timestamp}.png"
+    path = debug_dir / filename
+    try:
+        with Image.open(BytesIO(image_bytes)) as opened:
+            opened.save(path, format="PNG")
+        logger.info("image_ocr_debug_export picture_ref=%s page_no=%s path=%s", picture_ref, page_no, path)
+        return str(path)
+    except Exception as exc:
+        logger.warning("image_ocr_debug_export_failed picture_ref=%s page_no=%s error=%s", picture_ref, page_no, exc)
+        return ""
 
 
 def image_object_to_bytes(image_obj: Any, source: str) -> dict[str, Any] | None:
@@ -636,13 +687,14 @@ def run_single_image_ocr(candidate: ImageOCRCandidate) -> ImageOCRResult:
     }
     try:
         logger.info(
-            "image_ocr_request picture_ref=%s page_no=%s image_source=%s image_size=%s payload_bytes=%s crop_box=%s",
+            "image_ocr_request picture_ref=%s page_no=%s image_source=%s image_size=%s payload_bytes=%s crop_box=%s debugImagePath=%s",
             candidate.picture_ref,
             candidate.page_no,
             candidate.image_source,
             candidate.image_size,
             candidate.payload_bytes,
             candidate.crop_box,
+            candidate.debug_image_path or "-",
         )
         response = requests.post(
             get_ocr_service_base_url() + "/markdown-ocr",
@@ -658,12 +710,13 @@ def run_single_image_ocr(candidate: ImageOCRCandidate) -> ImageOCRResult:
         ) from exc
     cleaned_text = normalize_docling_like_markdown(raw_text)
     logger.info(
-        "image_ocr_response picture_ref=%s page_no=%s image_source=%s raw_preview=%s cleaned_preview=%s",
+        "image_ocr_response picture_ref=%s page_no=%s image_source=%s raw_preview=%s cleaned_preview=%s debugImagePath=%s",
         candidate.picture_ref,
         candidate.page_no,
         candidate.image_source,
         raw_text[:200].replace("\n", "\\n"),
         cleaned_text[:200].replace("\n", "\\n"),
+        candidate.debug_image_path or "-",
     )
     return ImageOCRResult(
         candidate=candidate,
@@ -793,6 +846,7 @@ def image_ocr_result_to_dict(result: ImageOCRResult) -> dict[str, Any]:
         "imageSource": result.candidate.image_source,
         "imageSize": result.candidate.image_size,
         "payloadBytes": result.candidate.payload_bytes,
+        "debugImagePath": result.candidate.debug_image_path,
         "text": result.text,
         "markdownEndpoint": "/markdown-ocr",
     }

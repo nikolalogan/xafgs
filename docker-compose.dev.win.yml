@@ -142,6 +142,8 @@ services:
       DOCLING_GLM_KSERVE_URL: "http://ocr-service:8090"
       DOCLING_GLM_KSERVE_MODEL: "glm-ocr"
       DOCLING_IMAGE_EXPORT_SCALE: "${DOCLING_IMAGE_EXPORT_SCALE:-6.0}"
+      DOCLING_IMAGE_OCR_DEBUG_EXPORT: "${DOCLING_IMAGE_OCR_DEBUG_EXPORT:-0}"
+      DOCLING_IMAGE_OCR_DEBUG_DIR: "/tmp/docling-image-ocr-debug"
       DOCLING_IMAGE_OCR_TIMEOUT_SECONDS: "${DOCLING_IMAGE_OCR_TIMEOUT_SECONDS:-450}"
       OCR_SERVICE_BASE_URL: "http://ocr-service:8090"
       HF_HOME: "/opt/docling-models/hf"

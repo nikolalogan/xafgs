@@ -202,6 +202,7 @@ make ocr-model-cache-warm
 - 可设置 `DOCLING_OCR_PROVIDER=glm_kserve` 试验 Docling 官方远程 OCR 流程，请求项目内 `ocr-service` 的 KServe v2 兼容 GLM OCR；默认值为 `none`，避免意外启用远程服务。
 - 图片 OCR 失败会中断 `/docling/convert` 并返回错误，避免转换成功但图片仍残留 `<!-- image -->`；可通过 `DOCLING_IMAGE_OCR_TIMEOUT_SECONDS` 调整 Docling 等待 OCR 服务的时间。
 - 可通过 `DOCLING_IMAGE_EXPORT_SCALE` 调整 Docling 导出图片倍率，默认 `6.0`；用于尽量放大 `PictureItem.get_image(document)` 返回的图片，便于 GLM OCR 识别。
+- 可通过 `DOCLING_IMAGE_OCR_DEBUG_EXPORT=1` 开启调试导出，将实际送往 OCR 的图片保存到 `DOCLING_IMAGE_OCR_DEBUG_DIR`（默认 `/tmp/docling-image-ocr-debug`），并在日志与 `document.imageOcr.items[]` 中输出 `debugImagePath`。
 
 ## Docling 依赖缓存
 
