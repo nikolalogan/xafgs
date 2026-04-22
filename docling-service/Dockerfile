@@ -1,5 +1,5 @@
 ARG BASE_REGISTRY=swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io
-FROM ${BASE_REGISTRY}/library/python:3.11-slim
+FROM ${BASE_REGISTRY}/library/python:3.11-slim AS base
 
 WORKDIR /app
 
@@ -35,15 +35,23 @@ RUN apt-get update \
         libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
+FROM base AS builder
+
 COPY requirements.txt /app/
 COPY wheels /opt/wheels
+RUN python -m venv /opt/venv
 RUN --mount=type=cache,target=/root/.cache/pip \
     if [ "${DOCLING_WHEELS_ONLY}" = "1" ]; then \
-      pip install --no-cache-dir --no-index --find-links /opt/wheels -r /app/requirements.txt; \
+      /opt/venv/bin/pip install --no-index --find-links /opt/wheels -r /app/requirements.txt; \
     else \
-      pip install --no-cache-dir --find-links /opt/wheels --index-url "${PIP_INDEX_URL}" --trusted-host "${PIP_TRUSTED_HOST}" --retries "${PIP_RETRIES}" --progress-bar off -r /app/requirements.txt; \
+      /opt/venv/bin/pip install --find-links /opt/wheels --index-url "${PIP_INDEX_URL}" --trusted-host "${PIP_TRUSTED_HOST}" --retries "${PIP_RETRIES}" --progress-bar off -r /app/requirements.txt; \
     fi
 
+FROM base
+
+ENV PATH=/opt/venv/bin:${PATH}
+
+COPY --from=builder /opt/venv /opt/venv
 COPY app /app/app
 COPY scripts /app/scripts
 
