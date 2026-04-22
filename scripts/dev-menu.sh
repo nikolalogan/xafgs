@@ -39,6 +39,7 @@ while true; do
   show_header
   show_menu
   read -r -p "输入选项编号: " choice
+  choice="${choice%$'\r'}"
 
   case "$choice" in
     1)
