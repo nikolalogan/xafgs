@@ -210,6 +210,7 @@ make docling-build
 - `docling-service/model_cache/` 是缓存根目录，`docling-service/model_cache/serve_artifacts/` 是运行时统一 artifacts 目录；
 - Docling 预热默认通过 `HF_ENDPOINT=https://hf-mirror.com` 下载 Hugging Face 模型，也可在 `.env` 中覆盖为你自己的镜像或代理入口；
 - 开发/构建阶段默认 Docker 基础镜像源为免登录的 `swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io`，如有企业内网镜像源可通过 `BASE_REGISTRY` / `OCR_BASE_REGISTRY` 覆盖；
+- Redis 默认使用兼容的 `redis:7-alpine`，以匹配当前免登录镜像源可用 tag；如需 Redis 8 可自行覆盖 compose 镜像；
 - Docling 默认启用表格结构识别，财务报表等 PDF 会优先输出结构化表格而不是线性文本；
 - `docling-service` 默认启用文档内图片区域的 GLM OCR 补充，可通过环境变量调节并发、超时和单文档图片数上限；
 - `make docling-build` 默认使用本地 `wheels` 离线构建；

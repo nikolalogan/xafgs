@@ -148,7 +148,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: ${BASE_REGISTRY:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io}/library/redis:8-alpine
+    image: ${BASE_REGISTRY:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io}/library/redis:7-alpine
     environment:
       TZ: "Asia/Shanghai"
     command: ["redis-server", "--appendonly", "yes"]
