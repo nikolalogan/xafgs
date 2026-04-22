@@ -110,7 +110,7 @@ services:
         PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
         PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
         PIP_RETRIES: "${PIP_RETRIES:-10}"
-        DOCLING_WHEELS_ONLY: "${DOCLING_WHEELS_ONLY:-0}"
+        DOCLING_WHEELS_ONLY: "${DOCLING_WHEELS_ONLY:-1}"
     image: sxfgssever-docling-service-prod:latest
     environment:
       TZ: "Asia/Shanghai"
