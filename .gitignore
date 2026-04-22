@@ -16,6 +16,7 @@ server/tmp
 /ocr-service/model_cache
 /docling-service/wheels
 /docling-service/model_cache
+/docling-service/debug_images
 *.pyc
 /ocr-service/app/__pycache__
 /docling-service/app/__pycache__

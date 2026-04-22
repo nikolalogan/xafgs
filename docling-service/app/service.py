@@ -51,6 +51,37 @@ class ConvertResponse(BaseModel):
     imageOcrSkippedCount: int = 0
 
 
+class DebugPictureCandidatesRequest(BaseModel):
+    file: str = Field(min_length=1, description="base64 编码文件内容")
+    filename: str = Field(min_length=1, description="原始文件名，需包含扩展名")
+    exportImages: bool = Field(default=True, description="是否导出候选图到调试目录")
+    runOcr: bool = Field(default=False, description="是否调用 markdown-ocr")
+    maxPictures: int | None = Field(default=None, ge=1, le=64, description="最多处理多少张图片")
+
+
+class DebugPictureCandidateItem(BaseModel):
+    pictureRef: str
+    pageNo: int
+    imageSource: str
+    imageSize: tuple[int, int]
+    cropBox: tuple[int, int, int, int]
+    cropSize: tuple[int, int]
+    payloadBytes: int
+    debugImagePath: str = ""
+    ocrMarkdown: str = ""
+    ocrError: str = ""
+
+
+class DebugPictureCandidatesResponse(BaseModel):
+    filename: str
+    durationMs: int
+    detectedCount: int
+    exportedCount: int
+    skippedCount: int
+    debugDir: str = ""
+    candidates: list[DebugPictureCandidateItem]
+
+
 @dataclass(frozen=True)
 class ImageOCRCandidate:
     index: int
@@ -238,6 +269,11 @@ def get_ocr_service_base_url() -> str:
     return raw.rstrip("/")
 
 
+def get_debug_image_dir() -> Path:
+    raw = os.getenv("DOCLING_DEBUG_IMAGE_DIR", "/tmp/docling-picture-debug").strip()
+    return Path(raw)
+
+
 def get_docling_ocr_provider() -> str:
     raw = os.getenv("DOCLING_OCR_PROVIDER", "none").strip().lower()
     if raw in {"none", "glm_kserve"}:
@@ -332,6 +368,57 @@ def apply_image_ocr_supplement(
     min_edge = max(1, env_int("DOCLING_IMAGE_OCR_MIN_EDGE_PX", 32))
     min_area = max(1, env_int("DOCLING_IMAGE_OCR_MIN_AREA_PX", 4096))
 
+    candidates, skipped_count, _ = collect_image_ocr_candidates(
+        file_path=file_path,
+        document=document,
+        pictures=pictures,
+        max_images=max_images,
+        render_scale=render_scale,
+        min_edge=min_edge,
+        min_area=min_area,
+    )
+
+    if not candidates:
+        add_image_ocr_meta(document_dict, [], skipped_count)
+        return ImageOCRSummary(markdown, text, document_dict, 0, skipped_count, len(pictures), 0)
+
+    results = run_image_ocr(candidates)
+    ocr_success_count = len([result for result in results if result.text])
+    applied_results = [
+        result
+        for result in results
+        if normalize_for_dedup(result.text)
+    ]
+    add_image_ocr_meta(document_dict, results, skipped_count)
+    attach_picture_ocr(document_dict, results)
+    merged_markdown, markdown_inserted = replace_image_placeholders(markdown, applied_results)
+    merged_text, _ = replace_image_placeholders(text, applied_results, plain_text=True)
+    applied_count = markdown_inserted
+    skipped_count = max(0, len(pictures) - applied_count)
+    document_dict["imageOcr"]["detectedCount"] = len(pictures)
+    document_dict["imageOcr"]["ocrSuccessCount"] = ocr_success_count
+    document_dict["imageOcr"]["insertedCount"] = applied_count
+    document_dict["imageOcr"]["skippedCount"] = skipped_count
+    return ImageOCRSummary(
+        markdown=merged_markdown,
+        text=merged_text,
+        document=document_dict,
+        applied_count=applied_count,
+        skipped_count=skipped_count,
+        detected_count=len(pictures),
+        ocr_success_count=ocr_success_count,
+    )
+
+
+def collect_image_ocr_candidates(
+    file_path: str,
+    document: Any,
+    pictures: list[Any],
+    max_images: int,
+    render_scale: float,
+    min_edge: int,
+    min_area: int,
+) -> tuple[list[ImageOCRCandidate], int, int]:
     candidates: list[ImageOCRCandidate] = []
     skipped_count = 0
     pdf = pdfium.PdfDocument(file_path)
@@ -438,36 +525,7 @@ def apply_image_ocr_supplement(
     finally:
         pdf.close()
 
-    if not candidates:
-        add_image_ocr_meta(document_dict, [], skipped_count)
-        return ImageOCRSummary(markdown, text, document_dict, 0, skipped_count, len(pictures), 0)
-
-    results = run_image_ocr(candidates)
-    ocr_success_count = len([result for result in results if result.text])
-    applied_results = [
-        result
-        for result in results
-        if normalize_for_dedup(result.text)
-    ]
-    add_image_ocr_meta(document_dict, results, skipped_count)
-    attach_picture_ocr(document_dict, results)
-    merged_markdown, markdown_inserted = replace_image_placeholders(markdown, applied_results)
-    merged_text, _ = replace_image_placeholders(text, applied_results, plain_text=True)
-    applied_count = markdown_inserted
-    skipped_count = max(0, len(pictures) - applied_count)
-    document_dict["imageOcr"]["detectedCount"] = len(pictures)
-    document_dict["imageOcr"]["ocrSuccessCount"] = ocr_success_count
-    document_dict["imageOcr"]["insertedCount"] = applied_count
-    document_dict["imageOcr"]["skippedCount"] = skipped_count
-    return ImageOCRSummary(
-        markdown=merged_markdown,
-        text=merged_text,
-        document=document_dict,
-        applied_count=applied_count,
-        skipped_count=skipped_count,
-        detected_count=len(pictures),
-        ocr_success_count=ocr_success_count,
-    )
+    return candidates, skipped_count, len(pictures)
 
 
 def first_picture_provenance(picture: Any) -> Any | None:
@@ -746,6 +804,19 @@ def attach_picture_ocr(document_dict: dict[str, Any], results: list[ImageOCRResu
         picture["imageOcr"] = image_ocr_result_to_dict(result)
 
 
+def sanitize_debug_stem(filename: str) -> str:
+    stem = Path(filename).stem.strip() or "document"
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in stem)
+    return safe[:80] or "document"
+
+
+def export_debug_candidate_image(candidate: ImageOCRCandidate, target_dir: Path) -> Path:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / f"p{candidate.page_no:03d}_{candidate.index:03d}_{candidate.image_source}.jpg"
+    target_path.write_bytes(base64.b64decode(candidate.image_payload))
+    return target_path
+
+
 def image_ocr_result_to_dict(result: ImageOCRResult) -> dict[str, Any]:
     payload = {
         "source": "glm_ocr",
@@ -765,6 +836,116 @@ def image_ocr_result_to_dict(result: ImageOCRResult) -> dict[str, Any]:
     if result.error:
         payload["error"] = result.error
     return payload
+
+
+@app.post("/debug/picture-candidates", response_model=DebugPictureCandidatesResponse)
+def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPictureCandidatesResponse:
+    suffix = Path(request.filename).suffix.strip()
+    if not suffix:
+        raise HTTPException(status_code=400, detail="filename 必须包含扩展名")
+
+    try:
+        content = base64.b64decode(request.file, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="file 不是合法的 base64") from exc
+
+    started_at = time.perf_counter()
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file.write(content)
+            temp_path = temp_file.name
+
+        result = get_converter().convert(temp_path)
+        document = result.document
+        pictures = list(getattr(document, "pictures", []) or [])
+        max_images = request.maxPictures or max(1, env_int("DOCLING_IMAGE_OCR_MAX_IMAGES", 8))
+        render_scale = max(1.0, env_float("DOCLING_IMAGE_OCR_RENDER_SCALE", 2.0))
+        min_edge = max(1, env_int("DOCLING_IMAGE_OCR_MIN_EDGE_PX", 32))
+        min_area = max(1, env_int("DOCLING_IMAGE_OCR_MIN_AREA_PX", 4096))
+        candidates, skipped_count, detected_count = collect_image_ocr_candidates(
+            file_path=temp_path,
+            document=document,
+            pictures=pictures,
+            max_images=max_images,
+            render_scale=render_scale,
+            min_edge=min_edge,
+            min_area=min_area,
+        )
+
+        debug_dir: Path | None = None
+        if request.exportImages and candidates:
+            debug_dir = get_debug_image_dir() / f"{sanitize_debug_stem(request.filename)}-{int(time.time() * 1000)}"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(
+                "debug_picture_candidates_export_dir filename=%s dir=%s candidate_count=%s",
+                request.filename,
+                debug_dir,
+                len(candidates),
+            )
+
+        response_items: list[DebugPictureCandidateItem] = []
+        exported_count = 0
+        for candidate in candidates:
+            debug_image_path = ""
+            if debug_dir is not None:
+                exported_path = export_debug_candidate_image(candidate, debug_dir)
+                debug_image_path = str(exported_path)
+                exported_count += 1
+                logger.info(
+                    "debug_picture_candidate_exported picture_ref=%s page_no=%s image_source=%s path=%s",
+                    candidate.picture_ref,
+                    candidate.page_no,
+                    candidate.image_source,
+                    debug_image_path,
+                )
+
+            ocr_markdown = ""
+            ocr_error = ""
+            if request.runOcr:
+                try:
+                    ocr_result = run_single_image_ocr(candidate)
+                    ocr_markdown = ocr_result.text
+                except Exception as exc:
+                    ocr_error = str(exc)
+                    logger.exception(
+                        "debug_picture_candidate_ocr_failed picture_ref=%s page_no=%s",
+                        candidate.picture_ref,
+                        candidate.page_no,
+                    )
+
+            response_items.append(
+                DebugPictureCandidateItem(
+                    pictureRef=candidate.picture_ref,
+                    pageNo=candidate.page_no,
+                    imageSource=candidate.image_source,
+                    imageSize=candidate.image_size,
+                    cropBox=candidate.crop_box,
+                    cropSize=candidate.crop_size,
+                    payloadBytes=candidate.payload_bytes,
+                    debugImagePath=debug_image_path,
+                    ocrMarkdown=ocr_markdown,
+                    ocrError=ocr_error,
+                )
+            )
+
+        return DebugPictureCandidatesResponse(
+            filename=request.filename,
+            durationMs=int((time.perf_counter() - started_at) * 1000),
+            detectedCount=detected_count,
+            exportedCount=exported_count,
+            skippedCount=skipped_count,
+            debugDir=str(debug_dir) if debug_dir is not None else "",
+            candidates=response_items,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("debug_picture_candidates_failed filename=%s suffix=%s", request.filename, suffix)
+        raise HTTPException(status_code=500, detail=f"图片调试失败: {exc}") from exc
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 @app.get("/health")

@@ -142,6 +142,7 @@ services:
       DOCLING_GLM_KSERVE_URL: "http://ocr-service:8090"
       DOCLING_GLM_KSERVE_MODEL: "glm-ocr"
       DOCLING_IMAGE_OCR_TIMEOUT_SECONDS: "${DOCLING_IMAGE_OCR_TIMEOUT_SECONDS:-450}"
+      DOCLING_DEBUG_IMAGE_DIR: "/tmp/docling-picture-debug"
       OCR_SERVICE_BASE_URL: "http://ocr-service:8090"
       HF_HOME: "/opt/docling-models/hf"
       HF_HUB_CACHE: "/opt/docling-models/hf/hub"
@@ -154,6 +155,7 @@ services:
       - "8091:8091"
     volumes:
       - ./docling-service/model_cache:/opt/docling-models
+      - ./docling-service/debug_images:/tmp/docling-picture-debug
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8091)); s.close(); sys.exit(0)\""]
       interval: 10s
