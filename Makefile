@@ -100,7 +100,7 @@ docling-model-cache-init:
 
 docling-model-cache-warm: docling-model-cache-init docling-wheels-sync
 	DOCLING_WHEELS_ONLY=0 docker compose -f $(DEV_COMPOSE_FILE) build docling-service
-	docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} docling-service python /app/scripts/preload_models.py
+	docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} docling-service python scripts/preload_models.py
 
 docling-build: docling-model-cache-init docling-wheels-sync docling-model-cache-warm
 	DOCLING_WHEELS_ONLY=1 docker compose -f $(DEV_COMPOSE_FILE) build docling-service
