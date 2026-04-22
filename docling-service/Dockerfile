@@ -38,9 +38,9 @@ RUN apt-get update \
 FROM base AS builder
 
 COPY requirements.txt /app/
-COPY wheels /opt/wheels
 RUN python -m venv /opt/venv
 RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=bind,source=./wheels,target=/opt/wheels,readonly \
     if [ "${DOCLING_WHEELS_ONLY}" = "1" ]; then \
       /opt/venv/bin/pip install --no-index --find-links /opt/wheels -r /app/requirements.txt; \
     else \

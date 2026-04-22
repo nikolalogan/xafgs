@@ -61,7 +61,7 @@ services:
         APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
         PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
         PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-        OCR_WHEELS_ONLY: "${OCR_WHEELS_ONLY:-0}"
+        OCR_WHEELS_ONLY: "${OCR_WHEELS_ONLY:-1}"
         OCR_PPSTRUCTURE_PRELOAD: "${OCR_PPSTRUCTURE_PRELOAD:-1}"
         OCR_PADDLE_PACKAGE: "${OCR_PADDLE_PACKAGE:-paddlepaddle-gpu==3.2.0}"
         OCR_PADDLE_EXTRA_INDEX_URL: "${OCR_PADDLE_EXTRA_INDEX_URL:-https://www.paddlepaddle.org.cn/packages/stable/cu118/}"

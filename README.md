@@ -113,7 +113,7 @@ make down
 
 常用命令：
 
-- `make menu`：菜单式启动/构建/缓存管理入口（推荐）
+- `make menu`：菜单式启动/构建/缓存管理入口（推荐，打包入口含“打包所有/单独打包”二级菜单）
 - `make dev`：开发模式启动（缓存重建 + 热更新）
 - `make dev-fresh`：开发模式启动（无缓存重建 + 热更新）
 - `make macdev`：macOS 开发模式启动（缓存重建 + 热更新）
@@ -151,6 +151,7 @@ make ocr-model-cache-warm
 说明：
 
 - `make ocr-wheels-sync` 会将依赖下载到 `ocr-service/wheels/`，已存在文件会复用；
+- `ocr-service/wheels/` 仅作为宿主机构建缓存目录，Docker 构建时通过 BuildKit bind mount 挂载，不会被 `COPY` 进最终镜像；
 - 若 `paddlepaddle` 在默认索引不可用，可设置 `PADDLE_WHEEL_INDEX_URL`（默认 `https://www.paddlepaddle.org.cn/packages/stable/cpu/`）补充下载源；
 - `paddlepaddle` 的 wheel 补拉采用 `--no-deps`，仅确保关键 wheel 文件落地，避免主机跨平台依赖解析干扰缓存同步；
 - 已将 `protobuf==4.25.8` 显式纳入 OCR 依赖与离线关键检查，避免 `paddlepaddle` 在离线安装阶段因传递依赖缺失失败；
@@ -158,6 +159,7 @@ make ocr-model-cache-warm
 - `make ocr-model-cache-warm` 会将 PaddleX 模型下载到本地 `ocr-service/model_cache/`；
 - `make ocr-build` 会先自动同步本地 wheels，再做离线校验与构建，保证可复现；如需临时回源，使用 `make ocr-build-online-fallback`。
 - `docker-compose` 中 `OCR_WHEELS_ONLY` 默认已设为 `1`（本地 wheel 优先且不回源）；仅 `make ocr-build-online-fallback` 会显式传入 `OCR_WHEELS_ONLY=0` 允许回源。
+- OCR 不默认采用运行时安装依赖，避免容器启动变慢且将失败暴露到更晚阶段。
 - `ocr-service` 已切换为 GLM OCR 适配服务，默认走项目内 `vllm`（`GLM_BASE_URL` 默认 `http://vllm:8000`），入口保持 `POST /layout-parsing`。
 - 新增 `docling-service`，提供 `POST /convert` 文档转换接口，并通过网关暴露为 `/docling/convert`。
 - CPU 稳定性参数默认启用：`FLAGS_use_mkldnn=0`、`FLAGS_enable_pir_api=0`、`FLAGS_enable_pir_in_executor=0`、`OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`。
@@ -209,6 +211,7 @@ make docling-build
 说明：
 
 - `make docling-wheels-sync` 会将 `docling-service/requirements.txt` 对应依赖下载到 `docling-service/wheels/`；
+- `docling-service/wheels/` 仅作为宿主机构建缓存目录，Docker 构建时通过 BuildKit bind mount 挂载，不会进入最终镜像；
 - `make docling-wheels-sync` 默认通过 1Panel Docker 镜像源 `docker.1panel.live/library/python:3.11-slim` 执行下载，可通过 `PYTHON_BASE_IMAGE` 覆盖；
 - `make docling-model-cache-warm` 会将 Docling 所需 artifacts 预热到 `docling-service/model_cache/`；
 - `docling-service/model_cache/` 是缓存根目录，`docling-service/model_cache/serve_artifacts/` 是运行时统一 artifacts 目录；
@@ -219,6 +222,7 @@ make docling-build
 - Docling 默认启用表格结构识别，财务报表等 PDF 会优先输出结构化表格而不是线性文本；
 - `docling-service` 默认启用文档内图片区域的 GLM OCR 补充，可通过环境变量调节并发、超时和单文档图片数上限；
 - `make docling-build` 默认使用本地 `wheels` 离线构建；
+- Docling 不默认采用运行时安装依赖，避免启动更慢且失败更晚暴露；
 - 若运行时报 `Cannot find an appropriate cached snapshot folder`，说明本地 `docling-service/model_cache/` 尚未预热完成。
 
 可用以下命令确认缓存里已经存在关键文件：

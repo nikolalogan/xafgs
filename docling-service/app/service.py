@@ -1,6 +1,7 @@
 import base64
 import binascii
 import os
+import shutil
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -141,13 +142,47 @@ def find_layout_artifacts_path() -> Path | None:
 
 
 def has_table_artifacts() -> bool:
+    return find_table_artifacts_path() is not None
+
+
+def find_table_artifacts_path() -> Path | None:
     for candidate in get_table_artifacts_candidates():
         if (
             (candidate / "accurate" / "tableformer_accurate.safetensors").is_file()
             or (candidate / "fast" / "tableformer_fast.safetensors").is_file()
         ):
-            return True
-    return False
+            return candidate
+    return None
+
+
+def ensure_serve_artifacts() -> None:
+    missing_serve_paths = get_missing_serve_artifact_paths()
+    if not missing_serve_paths:
+        return
+
+    layout_artifacts = find_layout_artifacts_path()
+    table_artifacts = find_table_artifacts_path()
+    if layout_artifacts is None or table_artifacts is None:
+        return
+
+    serve_root = get_serve_artifacts_path()
+    accurate_root = serve_root / "accurate"
+    fast_root = serve_root / "fast"
+    accurate_root.mkdir(parents=True, exist_ok=True)
+    fast_root.mkdir(parents=True, exist_ok=True)
+
+    copies = [
+        (layout_artifacts / "model.safetensors", serve_root / "model.safetensors"),
+        (layout_artifacts / "config.json", serve_root / "config.json"),
+        (layout_artifacts / "preprocessor_config.json", serve_root / "preprocessor_config.json"),
+        (table_artifacts / "accurate" / "tm_config.json", accurate_root / "tm_config.json"),
+        (table_artifacts / "accurate" / "tableformer_accurate.safetensors", accurate_root / "tableformer_accurate.safetensors"),
+        (table_artifacts / "fast" / "tm_config.json", fast_root / "tm_config.json"),
+        (table_artifacts / "fast" / "tableformer_fast.safetensors", fast_root / "tableformer_fast.safetensors"),
+    ]
+    for source, destination in copies:
+        if source.is_file() and not destination.is_file():
+            shutil.copy2(source, destination)
 
 
 def get_table_artifacts_summary() -> str:
@@ -195,6 +230,7 @@ def get_converter() -> DocumentConverter:
     pdf_options.do_ocr = False
     pdf_options.do_table_structure = table_structure_enabled
     pdf_options.force_backend_text = True
+    ensure_serve_artifacts()
     missing_serve_paths = get_missing_serve_artifact_paths()
     if missing_serve_paths:
         raise RuntimeError(
@@ -566,7 +602,8 @@ def convert(request: ConvertRequest) -> ConvertResponse:
         ):
             candidates = ", ".join(str(path) for path in get_layout_artifacts_candidates())
             table_candidates = ", ".join(str(path) for path in get_table_artifacts_candidates())
-            serve_candidates = ", ".join(str(path) for path in get_required_serve_artifact_paths())
+            missing_serve_paths = get_missing_serve_artifact_paths()
+            serve_candidates = ", ".join(str(path) for path in missing_serve_paths)
             if "Docling serve artifacts not found" in message:
                 message = (
                     "当前 Docling 运行时 artifacts 缺失，请先预热 "

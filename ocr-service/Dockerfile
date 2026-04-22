@@ -9,6 +9,7 @@ ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
 ARG PIP_DEFAULT_TIMEOUT=600
 ARG PIP_RETRIES=10
+ARG OCR_WHEELS_ONLY=1
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -35,7 +36,12 @@ RUN apt-get update \
 
 COPY requirements.txt /app/
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" --trusted-host "${PIP_TRUSTED_HOST}" --retries "${PIP_RETRIES}" --progress-bar off -r /app/requirements.txt
+    --mount=type=bind,source=./wheels,target=/opt/wheels,readonly \
+    if [ "${OCR_WHEELS_ONLY}" = "1" ]; then \
+      pip install --no-cache-dir --no-index --find-links /opt/wheels -r /app/requirements.txt; \
+    else \
+      pip install --no-cache-dir --find-links /opt/wheels --index-url "${PIP_INDEX_URL}" --trusted-host "${PIP_TRUSTED_HOST}" --retries "${PIP_RETRIES}" --progress-bar off -r /app/requirements.txt; \
+    fi
 
 COPY app /app/app
 
