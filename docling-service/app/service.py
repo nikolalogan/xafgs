@@ -906,6 +906,7 @@ def convert(request: ConvertRequest) -> ConvertResponse:
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("docling_convert_failed filename=%s suffix=%s", request.filename, suffix)
         message = str(exc)
         if (
             "Missing safe tensors file" in message
