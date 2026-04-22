@@ -113,6 +113,15 @@ def get_layout_artifacts_candidates() -> list[Path]:
     ]
 
 
+def get_table_artifacts_candidates() -> list[Path]:
+    artifacts_root = get_artifacts_path()
+    return [
+        artifacts_root / "docling-project--docling-models" / "model_artifacts" / "tableformer",
+        artifacts_root / "model_artifacts" / "tableformer",
+        artifacts_root / "tableformer",
+    ]
+
+
 def find_layout_artifacts_path() -> Path | None:
     for candidate in get_layout_artifacts_candidates():
         if (candidate / "model.safetensors").is_file():
@@ -124,6 +133,31 @@ def find_layout_artifacts_path() -> Path | None:
     return None
 
 
+def has_table_artifacts() -> bool:
+    for candidate in get_table_artifacts_candidates():
+        if (
+            (candidate / "accurate" / "tableformer_accurate.safetensors").is_file()
+            or (candidate / "fast" / "tableformer_fast.safetensors").is_file()
+        ):
+            return True
+    return False
+
+
+def get_table_artifacts_summary() -> str:
+    details: list[str] = []
+    for candidate in get_table_artifacts_candidates():
+        accurate = candidate / "accurate" / "tableformer_accurate.safetensors"
+        fast = candidate / "fast" / "tableformer_fast.safetensors"
+        if accurate.is_file() or fast.is_file():
+            modes: list[str] = []
+            if accurate.is_file():
+                modes.append(f"accurate={accurate}")
+            if fast.is_file():
+                modes.append(f"fast={fast}")
+            details.append(f"{candidate} ({', '.join(modes)})")
+    return "; ".join(details)
+
+
 def get_ocr_service_base_url() -> str:
     raw = os.getenv("OCR_SERVICE_BASE_URL", "http://ocr-service:8090").strip()
     return raw.rstrip("/")
@@ -132,9 +166,10 @@ def get_ocr_service_base_url() -> str:
 @lru_cache(maxsize=1)
 def get_converter() -> DocumentConverter:
     layout_artifacts_path = find_layout_artifacts_path()
+    table_structure_enabled = env_bool("DOCLING_TABLE_STRUCTURE_ENABLED", True)
     pdf_options = PdfPipelineOptions()
     pdf_options.do_ocr = False
-    pdf_options.do_table_structure = False
+    pdf_options.do_table_structure = table_structure_enabled
     pdf_options.force_backend_text = True
     if layout_artifacts_path is not None:
         pdf_options.artifacts_path = str(layout_artifacts_path)
@@ -144,6 +179,13 @@ def get_converter() -> DocumentConverter:
             "Docling layout artifacts not found in candidates: "
             + ", ".join(str(path) for path in get_layout_artifacts_candidates())
         )
+    if table_structure_enabled:
+        if not has_table_artifacts():
+            raise RuntimeError(
+                "Docling table artifacts not found in candidates: "
+                + ", ".join(str(path) for path in get_table_artifacts_candidates())
+            )
+        print("Using Docling table artifacts from " + get_table_artifacts_summary())
     return DocumentConverter(
         format_options={
             InputFormat.PDF: PdfFormatOption(
@@ -500,13 +542,23 @@ def convert(request: ConvertRequest) -> ConvertResponse:
             or "Network is unreachable" in message
             or "trying to locate the files on the Hub" in message
             or "Cannot find an appropriate cached snapshot folder" in message
+            or "Docling table artifacts not found" in message
         ):
             candidates = ", ".join(str(path) for path in get_layout_artifacts_candidates())
-            message = (
-                "当前 Docling 离线模型缓存缺失，请先预热 "
-                f"{get_artifacts_path()}；已检查候选目录: {candidates}；"
-                "图片或扫描 PDF 请在示例页切换为 GLM OCR"
-            )
+            table_candidates = ", ".join(str(path) for path in get_table_artifacts_candidates())
+            if "Docling table artifacts not found" in message:
+                message = (
+                    "当前 Docling 表格结构模型缓存缺失，请先预热 "
+                    f"{get_artifacts_path()}；已检查 table 候选目录: {table_candidates}；"
+                    "图片或扫描 PDF 请在示例页切换为 GLM OCR"
+                )
+            else:
+                message = (
+                    "当前 Docling 离线模型缓存缺失，请先预热 "
+                    f"{get_artifacts_path()}；已检查 layout 候选目录: {candidates}；"
+                    f"table 候选目录: {table_candidates}；"
+                    "图片或扫描 PDF 请在示例页切换为 GLM OCR"
+                )
         raise HTTPException(status_code=500, detail=f"docling 转换失败: {message}") from exc
     finally:
         if temp_path and os.path.exists(temp_path):
