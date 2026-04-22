@@ -86,6 +86,7 @@ make windev   # Windows
 
 ### 跨平台启动命令
 
+- `make menu` 会按平台自动分发：Windows 走 PowerShell 菜单，macOS/Linux 走 Bash 菜单；
 - `make macdev` 使用 `docker-compose.dev.mac.yml`，固定挂载：
   - `/Users/logan/Documents/code/pgsql` -> PostgreSQL 数据目录
   - `/Users/logan/Documents/code/pgfile` -> 后端文件上传目录

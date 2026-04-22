@@ -1,13 +1,15 @@
 .PHONY: help menu dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-model-cache-init ocr-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback
 
-UNAME_S := $(shell uname -s 2>/dev/null || echo Unknown)
-
 ifeq ($(OS),Windows_NT)
+UNAME_S := Windows_NT
 DEV_COMPOSE_FILE := docker-compose.dev.win.yml
-else ifeq ($(UNAME_S),Darwin)
+else
+UNAME_S := $(shell uname -s 2>/dev/null || echo Unknown)
+ifeq ($(UNAME_S),Darwin)
 DEV_COMPOSE_FILE := docker-compose.dev.mac.yml
 else
 DEV_COMPOSE_FILE := docker-compose.dev.yml
+endif
 endif
 
 help:
@@ -45,8 +47,15 @@ help:
 	@echo "  make logs      # 查看开发模式日志"
 	@echo "  make ps        # 查看容器状态"
 
+ifeq ($(OS),Windows_NT)
+menu: SHELL := powershell.exe
+menu: .SHELLFLAGS := -ExecutionPolicy Bypass -Command
 menu:
-	DEV_COMPOSE_FILE="$(DEV_COMPOSE_FILE)" bash scripts/dev-menu.sh
+	& { .\scripts\dev-menu.ps1 "$(DEV_COMPOSE_FILE)" }
+else
+menu:
+	bash scripts/dev-menu.sh "$(DEV_COMPOSE_FILE)"
+endif
 
 dev: macdev
 
