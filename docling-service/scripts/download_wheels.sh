@@ -18,7 +18,7 @@ PIP_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
 PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
 PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT:-600}"
 PIP_RETRIES="${PIP_RETRIES:-10}"
-PYTHON_BASE_IMAGE="${PYTHON_BASE_IMAGE:-registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim}"
+PYTHON_BASE_IMAGE="${PYTHON_BASE_IMAGE:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/python:3.11-slim}"
 
 echo "Using Python base image: $PYTHON_BASE_IMAGE"
 

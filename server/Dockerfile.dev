@@ -1,4 +1,4 @@
-ARG BASE_REGISTRY=registry.cn-hangzhou.aliyuncs.com
+ARG BASE_REGISTRY=swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io
 FROM ${BASE_REGISTRY}/library/golang:1.25-bookworm
 
 WORKDIR /app
