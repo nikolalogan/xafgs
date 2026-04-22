@@ -98,6 +98,40 @@ services:
       retries: 6
     restart: unless-stopped
 
+  docling-service:
+    build:
+      context: ./docling-service
+      dockerfile: Dockerfile
+      args:
+        BASE_REGISTRY: "${BASE_REGISTRY:-docker.m.daocloud.io}"
+        APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
+        APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
+        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
+        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
+        PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
+        PIP_RETRIES: "${PIP_RETRIES:-10}"
+        DOCLING_WHEELS_ONLY: "${DOCLING_WHEELS_ONLY:-0}"
+    image: sxfgssever-docling-service-prod:latest
+    environment:
+      TZ: "Asia/Shanghai"
+      DOCLING_ARTIFACTS_PATH: "/opt/docling-models"
+      DOCLING_SERVE_ARTIFACTS_PATH: "/opt/docling-models"
+      HF_HOME: "/opt/docling-models/hf"
+      HF_HUB_CACHE: "/opt/docling-models/hf/hub"
+      HF_ENDPOINT: "${HF_ENDPOINT:-https://hf-mirror.com}"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    expose:
+      - "8091"
+    volumes:
+      - ./docling-service/model_cache:/opt/docling-models
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8091)); s.close(); sys.exit(0)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   gateway:
     image: ${BASE_REGISTRY:-docker.m.daocloud.io}/library/nginx:1.27-alpine
     container_name: sxfgssever-prod-gateway
@@ -110,6 +144,7 @@ services:
     depends_on:
       - frontend
       - backend
+      - docling-service
     restart: unless-stopped
 
   redis:

@@ -91,6 +91,13 @@ make windev   # Windows
 - `make windev` 使用 `docker-compose.dev.win.yml`，固定挂载：
   - `E:/code/xafgs-temp/pgsql` -> PostgreSQL 数据目录
   - `E:/code/xafgs-temp/pgfile` -> 后端文件上传目录
+- `make down` / `make logs` / `make ps` / `make ocr-build*` / `make docling-build*` 会自动跟随当前平台选择对应的开发编排文件，不再固定写死 `docker-compose.dev.yml`
+
+Windows 使用前请先确认：
+
+- Docker Desktop 已启动且 Linux 引擎可用；
+- 当前终端对 `desktop-linux` context 有访问权限；
+- 若出现 `permission denied while trying to connect to the docker API`，请重启 Docker Desktop 或改用管理员 PowerShell 重新执行。
 
 不再依赖 `HOST_DATA_ROOT` 环境变量。
 
@@ -116,6 +123,12 @@ make down
 - `make ocr-build`：自动同步+校验 `wheels`，再离线构建 OCR 镜像（推荐）
 - `make ocr-build-offline`：仅使用本地 `wheels` 构建 OCR 镜像（缺失依赖直接失败）
 - `make ocr-build-online-fallback`：自动同步 `wheels` 后构建 OCR 镜像（允许缺失依赖回源下载）
+- `make docling-wheels-sync`：同步 Docling Python 依赖到本地 `docling-service/wheels/`
+- `make docling-model-cache-init`：初始化本地 Docling 模型缓存目录 `docling-service/model_cache`
+- `make docling-model-cache-warm`：预热 Docling 模型到本地 `model_cache`
+- `make docling-build`：自动同步+预热后离线构建 Docling 镜像（推荐）
+- `make docling-build-offline`：仅使用本地 `wheels` 构建 Docling 镜像
+- `make docling-build-online-fallback`：自动同步 `wheels` 后构建 Docling 镜像（允许缺失依赖回源）
 - `make prod`：生产模式启动（后台）
 - `make down`：停止开发+生产所有容器
 - `make logs`：查看开发模式日志
@@ -142,6 +155,7 @@ make ocr-model-cache-warm
 - `make ocr-build` 会先自动同步本地 wheels，再做离线校验与构建，保证可复现；如需临时回源，使用 `make ocr-build-online-fallback`。
 - `docker-compose` 中 `OCR_WHEELS_ONLY` 默认已设为 `1`（本地 wheel 优先且不回源）；仅 `make ocr-build-online-fallback` 会显式传入 `OCR_WHEELS_ONLY=0` 允许回源。
 - `ocr-service` 已切换为 GLM OCR 适配服务，默认走项目内 `vllm`（`GLM_BASE_URL` 默认 `http://vllm:8000`），入口保持 `POST /layout-parsing`。
+- 新增 `docling-service`，提供 `POST /convert` 文档转换接口，并通过网关暴露为 `/docling/convert`。
 - CPU 稳定性参数默认启用：`FLAGS_use_mkldnn=0`、`FLAGS_enable_pir_api=0`、`FLAGS_enable_pir_in_executor=0`、`OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`。
 
 ## OCR 模型调用（GLM）
@@ -169,6 +183,49 @@ make ocr-model-cache-warm
 - 官方推理接口：`POST /layout-parsing`
 - 网关入口：`/ocr/*`（例如 `POST /ocr/layout-parsing`）
 - 说明：当前 `ocr-service` 已统一切换为 GLM OCR 适配服务，无旧 OCR Task 接口
+
+## Docling 服务调用
+
+- 服务目录：`docling-service/`
+- 服务端口：`8091`
+- 网关入口：`POST /docling/convert`
+- 示例页面：`http://localhost:325/app/docling-demo`
+- Docling 默认按离线文本层转换运行，不下载 OCR 模型；图片或扫描 PDF 在示例页切换为 GLM OCR。
+
+## Docling 依赖缓存
+
+为避免每次构建 `docling-service` 都重复下载依赖/模型，项目支持本地 `wheels` 与 `model_cache` 双缓存：
+
+```bash
+make docling-wheels-sync
+make docling-model-cache-warm
+make docling-build
+```
+
+说明：
+
+- `make docling-wheels-sync` 会将 `docling-service/requirements.txt` 对应依赖下载到 `docling-service/wheels/`；
+- `make docling-model-cache-warm` 会将 Docling 所需 artifacts 预热到 `docling-service/model_cache/`；
+- `docling-service/model_cache/` 是缓存根目录，服务启动时会自动解析其中实际的 layout artifacts 子目录；
+- Docling 预热默认通过 `HF_ENDPOINT=https://hf-mirror.com` 下载 Hugging Face 模型，也可在 `.env` 中覆盖为你自己的镜像或代理入口；
+- `make docling-build` 默认使用本地 `wheels` 离线构建；
+- 若运行时报 `Cannot find an appropriate cached snapshot folder`，说明本地 `docling-service/model_cache/` 尚未预热完成。
+
+可用以下命令确认缓存里已经存在关键文件：
+
+```bash
+find docling-service/model_cache -name model.safetensors
+```
+
+```powershell
+Get-ChildItem docling-service/model_cache -Recurse -Filter model.safetensors
+```
+
+若默认镜像不可用，可先设置再预热：
+
+```bash
+HF_ENDPOINT=https://你的镜像或代理 make docling-model-cache-warm
+```
 
 ## GLM OCR 在线演示（本地）
 
