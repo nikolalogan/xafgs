@@ -74,6 +74,8 @@ def ensure_runtime_artifacts(target: Path) -> Path:
 
     copies = [
         (layout_artifacts / "model.safetensors", serve_target / "model.safetensors"),
+        (layout_artifacts / "config.json", serve_target / "config.json"),
+        (layout_artifacts / "preprocessor_config.json", serve_target / "preprocessor_config.json"),
         (table_artifacts / "accurate" / "tableformer_accurate.safetensors", accurate_target / "tableformer_accurate.safetensors"),
         (table_artifacts / "accurate" / "tm_config.json", accurate_target / "tm_config.json"),
         (table_artifacts / "fast" / "tableformer_fast.safetensors", fast_target / "tableformer_fast.safetensors"),
@@ -100,6 +102,8 @@ def print_cache_summary(target: Path) -> None:
             print(f"Docling table artifacts ready: {fast}")
         print(f"Docling serve artifacts ready: {serve_target}")
         print(f"Docling serve layout ready: {serve_target / 'model.safetensors'}")
+        print(f"Docling serve layout config ready: {serve_target / 'config.json'}")
+        print(f"Docling serve layout preprocessor ready: {serve_target / 'preprocessor_config.json'}")
         print(f"Docling serve accurate config ready: {serve_target / 'accurate' / 'tm_config.json'}")
         print(f"Docling serve fast config ready: {serve_target / 'fast' / 'tm_config.json'}")
         return

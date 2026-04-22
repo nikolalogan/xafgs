@@ -169,6 +169,8 @@ def get_required_serve_artifact_paths() -> list[Path]:
     serve_root = get_serve_artifacts_path()
     return [
         serve_root / "model.safetensors",
+        serve_root / "config.json",
+        serve_root / "preprocessor_config.json",
         serve_root / "accurate" / "tm_config.json",
         serve_root / "accurate" / "tableformer_accurate.safetensors",
         serve_root / "fast" / "tm_config.json",
