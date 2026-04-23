@@ -152,7 +152,7 @@ func (service *fileParseQueueService) RunOnce(ctx context.Context) bool {
 	ocrError := strings.TrimSpace(result.OCRError)
 	if result.OCRPending || (ocrTaskStatus == model.OCRTaskStatusPending || ocrTaskStatus == model.OCRTaskStatusRunning) {
 		if isParseJobOCRTimeout(job, fileParseOCRTimeout) {
-			_, _ = service.repository.MarkFailed(job.ID, "等待 OCR 结果超时（30分钟）")
+			_, _ = service.repository.MarkFailed(job.ID, "等待 Docling 结果超时（30分钟）")
 			log.Printf("file-parse ocr-timeout fileId=%d versionNo=%d", job.FileID, job.VersionNo)
 			return true
 		}
@@ -173,7 +173,7 @@ func (service *fileParseQueueService) RunOnce(ctx context.Context) bool {
 	}
 	if ocrTaskStatus == model.OCRTaskStatusFailed || ocrTaskStatus == model.OCRTaskStatusCancelled {
 		if ocrError == "" {
-			ocrError = "OCR 任务失败"
+			ocrError = "Docling 任务失败"
 		}
 		_, _ = service.repository.MarkFailed(job.ID, ocrError)
 		return true
@@ -241,13 +241,13 @@ func decodeFileParseResult(raw []byte) *model.FileParseResultDTO {
 
 func deriveParseCurrentStage(status string, ocrPending bool, ocrTaskStatus string) string {
 	if strings.TrimSpace(status) == model.FileParseJobStatusRunning && (ocrPending || ocrTaskStatus == model.OCRTaskStatusPending || ocrTaskStatus == model.OCRTaskStatusRunning) {
-		return "等待OCR"
+		return "等待Docling"
 	}
 	switch strings.TrimSpace(status) {
 	case model.FileParseJobStatusPending:
 		return "解析排队"
 	case model.FileParseJobStatusRunning:
-		return "解析中"
+		return "Docling解析中"
 	case model.FileParseJobStatusSucceeded:
 		return "解析完成"
 	case model.FileParseJobStatusFailed:

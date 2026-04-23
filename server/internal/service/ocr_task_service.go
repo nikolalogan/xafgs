@@ -26,10 +26,10 @@ type ocrTaskService struct {
 }
 
 const (
-	ocrProviderLocalAsync     = "local-async"
-	ocrAsyncRetryMaxAttempts  = 2
-	ocrAsyncRetryBackoff      = 2 * time.Second
-	ocrAsyncAttemptTimeout    = 6 * time.Minute
+	ocrProviderLocalAsync    = "local-async"
+	ocrAsyncRetryMaxAttempts = 2
+	ocrAsyncRetryBackoff     = 2 * time.Second
+	ocrAsyncAttemptTimeout   = 6 * time.Minute
 )
 
 func NewOCRTaskService(fileRepository repository.FileRepository, ocrClient OCRClient) OCRTaskService {
@@ -53,7 +53,7 @@ func (service *ocrTaskService) EnsureTask(_ context.Context, version model.FileV
 		VersionNo:     version.VersionNo,
 		FileName:      version.OriginName,
 		MimeType:      version.MimeType,
-		ProviderMode:  "auto",
+		ProviderMode:  "docling",
 		EnableTables:  true,
 		ContentBase64: base64.StdEncoding.EncodeToString(raw),
 	}
@@ -63,7 +63,7 @@ func (service *ocrTaskService) EnsureTask(_ context.Context, version model.FileV
 		FileID:             version.FileID,
 		VersionNo:          version.VersionNo,
 		Status:             model.OCRTaskStatusPending,
-		ProviderMode:       "auto",
+		ProviderMode:       "docling",
 		ProviderUsed:       ocrProviderLocalAsync,
 		RequestPayloadJSON: requestJSON,
 		CreatedAt:          now,

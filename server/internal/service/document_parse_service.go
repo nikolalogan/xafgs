@@ -27,6 +27,7 @@ import (
 	"unicode/utf8"
 
 	"sxfgssever/server/internal/model"
+	"sxfgssever/server/internal/response"
 )
 
 const (
@@ -92,6 +93,9 @@ type ParsedDocument struct {
 	Version        model.FileVersionDTO
 	Profile        DocumentProfile
 	OCRTask        *model.OCRTask
+	Markdown       string
+	Text           string
+	Document       json.RawMessage
 	Slices         []model.DocumentSlice
 	Tables         []model.DocumentTable
 	TableFragments []model.DocumentTableFragment
@@ -129,147 +133,44 @@ func (service *documentParseService) ParseCaseFile(ctx context.Context, caseFile
 	}
 	profile := buildDocumentProfile(version, raw)
 	applyBusinessProfileHints(&profile, bizKey)
-	switch profile.FileType {
-	case "text", "json":
-		text := decodePlainTextPayload(raw)
-		if text == "" {
-			return ParsedDocument{
-				Version: version,
-				Profile: profile,
-				Slices:  buildScannedPageSlices(caseFile, version, profile),
-			}, nil
+	if service.ocrTaskService == nil {
+		return ParsedDocument{}, model.NewAPIError(500, response.CodeInternal, "Docling 解析服务未配置")
+	}
+	task, taskError := service.ocrTaskService.EnsureTask(ctx, version, raw, profile)
+	if taskError != nil {
+		return ParsedDocument{}, taskError
+	}
+	profile.SourceType = model.DocumentSourceTypeOCR
+	profile.OCRQueueMode = "docling_queue"
+	switch task.Status {
+	case model.OCRTaskStatusSucceeded:
+		if parsed, ok := buildParsedDocumentFromOCRTask(caseFile, version, profile, task); ok {
+			parsed.OCRTask = &task
+			return parsed, nil
 		}
-		slices := buildTextSlices(caseFile, version, text, profile)
-		tables, fragments, cells := buildDelimitedTables(caseFile, version, text, profile, ',')
-		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}
-		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
-	case "csv":
-		text := decodePlainTextPayload(raw)
-		if text == "" {
-			return ParsedDocument{
-				Version: version,
-				Profile: profile,
-				Slices:  buildScannedPageSlices(caseFile, version, profile),
-			}, nil
-		}
-		slices := buildTextSlices(caseFile, version, text, profile)
-		tables, fragments, cells := buildDelimitedTables(caseFile, version, text, profile, ',')
-		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}
-		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
-	case "tsv":
-		text := decodePlainTextPayload(raw)
-		if text == "" {
-			return ParsedDocument{
-				Version: version,
-				Profile: profile,
-				Slices:  buildScannedPageSlices(caseFile, version, profile),
-			}, nil
-		}
-		slices := buildTextSlices(caseFile, version, text, profile)
-		tables, fragments, cells := buildDelimitedTables(caseFile, version, text, profile, '\t')
-		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}
-		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
-	case "docx":
-		slices, tables, fragments, cells := parseDOCXDocument(caseFile, version, raw, profile)
-		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}
-		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
-	case "xlsx":
-		slices, tables, fragments, cells := parseXLSXDocument(caseFile, version, raw, profile)
-		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells}
-		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
-	case "xls":
-		slices := parseLegacyXLSDocument(caseFile, version, raw, profile)
-		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices}
-		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
-	case "pdf":
-		if profile.OCRRequired {
-			if service.ocrTaskService != nil {
-				task, taskError := service.ocrTaskService.EnsureTask(ctx, version, raw, profile)
-				if taskError == nil {
-					if task.Status == model.OCRTaskStatusSucceeded {
-						if parsed, ok := buildParsedDocumentFromOCRTask(caseFile, version, profile, task); ok {
-							parsed.OCRTask = &task
-							logPDFParseSummary(caseFile, version, parsed.Profile, len(parsed.Slices), len(parsed.Tables))
-							return parsed, nil
-						}
-					}
-					logPDFParseSummary(caseFile, version, profile, 0, 0)
-					return ParsedDocument{
-						Version: version,
-						Profile: profile,
-						OCRTask: &task,
-						Slices:  buildScannedPageSlices(caseFile, version, profile),
-					}, nil
-				}
-			}
-			logPDFParseSummary(caseFile, version, profile, 0, 0)
-			return ParsedDocument{
-				Version: version,
-				Profile: profile,
-				Slices:  buildScannedPageSlices(caseFile, version, profile),
-			}, nil
-		}
-		slices, tables, fragments, cells, figures := parsePDFDocument(caseFile, version, raw, profile)
-		logPDFParseSummary(caseFile, version, profile, len(slices), len(tables))
-		parsed := ParsedDocument{Version: version, Profile: profile, Slices: slices, Tables: tables, TableFragments: fragments, TableCells: cells, Figures: figures}
-		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
-	default:
-		if profile.OCRRequired {
-			if service.ocrTaskService != nil {
-				task, taskError := service.ocrTaskService.EnsureTask(ctx, version, raw, profile)
-				if taskError == nil {
-					if task.Status == model.OCRTaskStatusSucceeded {
-						if parsed, ok := buildParsedDocumentFromOCRTask(caseFile, version, profile, task); ok {
-							parsed.OCRTask = &task
-							return parsed, nil
-						}
-					}
-					return ParsedDocument{
-						Version: version,
-						Profile: profile,
-						OCRTask: &task,
-						Slices:  buildScannedPageSlices(caseFile, version, profile),
-					}, nil
-				}
-			}
-			return ParsedDocument{
-				Version: version,
-				Profile: profile,
-				Slices:  buildScannedPageSlices(caseFile, version, profile),
-			}, nil
-		}
-		text := decodePlainTextPayload(raw)
-		if text == "" {
-			return ParsedDocument{
-				Version: version,
-				Profile: profile,
-				Slices: []model.DocumentSlice{
-					{
-						CaseFileID:  caseFile.ID,
-						FileID:      caseFile.FileID,
-						VersionNo:   version.VersionNo,
-						SliceType:   model.DocumentStructurePage,
-						SourceType:  profile.SourceType,
-						Title:       version.OriginName,
-						PageStart:   1,
-						PageEnd:     max(1, profile.PageCount),
-						BBoxJSON:    json.RawMessage(`{"x":0,"y":0,"w":1,"h":1}`),
-						RawText:     "",
-						CleanText:   "",
-						TableJSON:   json.RawMessage(`null`),
-						Confidence:  0.25,
-						ParseStatus: model.DocumentParseStatusParsed,
-						OCRPending:  false,
-					},
-				},
-			}, nil
-		}
-		parsed := ParsedDocument{
+		return ParsedDocument{}, model.NewAPIError(500, response.CodeInternal, "Docling 解析结果无效")
+	case model.OCRTaskStatusFailed, model.OCRTaskStatusCancelled:
+		profile.ParseStrategy = "docling_failed"
+		profile.OCRSkipReason = strings.TrimSpace(task.ErrorMessage)
+		return ParsedDocument{
 			Version: version,
 			Profile: profile,
-			Slices:  buildTextSlices(caseFile, version, text, profile),
+			OCRTask: &task,
+			Slices:  buildFailedDoclingSlices(caseFile, version, profile),
+		}, nil
+	default:
+		profile.OCRRequired = true
+		profile.ParseStrategy = "docling_pending"
+		profile.OCRSkipReason = "docling_pending"
+		if task.PageCount > 0 {
+			profile.PageCount = max(1, task.PageCount)
 		}
-		return service.applyOCRSupplementIfNeeded(ctx, caseFile, version, raw, parsed), nil
+		return ParsedDocument{
+			Version: version,
+			Profile: profile,
+			OCRTask: &task,
+			Slices:  buildPendingDoclingSlices(caseFile, version, profile),
+		}, nil
 	}
 }
 
@@ -380,7 +281,7 @@ func applyBusinessProfileHints(profile *DocumentProfile, bizKey string) {
 		return
 	}
 	profile.BizClass = detectBizClassByBizKey(bizKey)
-	profile.OCRQueueMode = "single_worker"
+	profile.OCRQueueMode = "docling_queue"
 	if profile.BizClass == "std_doc" && isTextualDocumentProfile(*profile) {
 		profile.OCRSkipReason = "std_doc_textual_skip_ocr"
 	}
@@ -491,6 +392,53 @@ func buildScannedPageSlices(caseFile model.ReportCaseFile, version model.FileVer
 		})
 	}
 	return slices
+}
+
+func buildPendingDoclingSlices(caseFile model.ReportCaseFile, version model.FileVersionDTO, profile DocumentProfile) []model.DocumentSlice {
+	pageCount := max(1, profile.PageCount)
+	slices := make([]model.DocumentSlice, 0, pageCount)
+	for pageNo := 1; pageNo <= pageCount; pageNo++ {
+		slices = append(slices, model.DocumentSlice{
+			CaseFileID:  caseFile.ID,
+			FileID:      caseFile.FileID,
+			VersionNo:   version.VersionNo,
+			SliceType:   model.DocumentStructurePage,
+			SourceType:  model.DocumentSourceTypeOCR,
+			Title:       "待 Docling 解析页 " + strconv.Itoa(pageNo),
+			PageStart:   pageNo,
+			PageEnd:     pageNo,
+			BBoxJSON:    mustJSON(map[string]any{"page": pageNo, "doclingPending": true}),
+			RawText:     "",
+			CleanText:   "",
+			TableJSON:   json.RawMessage(`null`),
+			Confidence:  0.35,
+			ParseStatus: model.DocumentParseStatusNeedsOCR,
+			OCRPending:  true,
+		})
+	}
+	return slices
+}
+
+func buildFailedDoclingSlices(caseFile model.ReportCaseFile, version model.FileVersionDTO, profile DocumentProfile) []model.DocumentSlice {
+	return []model.DocumentSlice{
+		{
+			CaseFileID:  caseFile.ID,
+			FileID:      caseFile.FileID,
+			VersionNo:   version.VersionNo,
+			SliceType:   model.DocumentStructurePage,
+			SourceType:  model.DocumentSourceTypeOCR,
+			Title:       "Docling 解析失败",
+			PageStart:   1,
+			PageEnd:     max(1, profile.PageCount),
+			BBoxJSON:    mustJSON(map[string]any{"doclingFailed": true}),
+			RawText:     "",
+			CleanText:   "",
+			TableJSON:   json.RawMessage(`null`),
+			Confidence:  0.2,
+			ParseStatus: model.DocumentParseStatusFailed,
+			OCRPending:  false,
+		},
+	}
 }
 
 func buildFailedPDFPageSlices(caseFile model.ReportCaseFile, version model.FileVersionDTO, profile DocumentProfile, pageCount int) []model.DocumentSlice {

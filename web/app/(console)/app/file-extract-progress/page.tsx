@@ -43,6 +43,9 @@ type FileParseResultDTO = {
   figureCount: number
   fragmentCount: number
   cellCount: number
+  markdown?: string
+  text?: string
+  document?: Record<string, unknown> | null
   slices: unknown[]
   tables: unknown[]
   figures: unknown[]
@@ -258,12 +261,12 @@ export default function FileExtractProgressPage() {
                     { title: '文件类型', dataIndex: 'fileType', width: 100, render: value => value || '-' },
                     { title: '来源类型', dataIndex: 'sourceType', width: 120, render: value => value || '-' },
                     { title: '提取方式', dataIndex: 'parseStrategy', width: 140, render: value => value || '-' },
-                    { title: 'OCR状态', dataIndex: 'ocrTaskStatus', width: 110, render: value => value || '-' },
-                    { title: 'OCR待完成', dataIndex: 'ocrPending', width: 100, render: value => value ? <Tag color="processing">是</Tag> : '-' },
+                    { title: 'Docling状态', dataIndex: 'ocrTaskStatus', width: 120, render: value => value || '-' },
+                    { title: 'Docling待完成', dataIndex: 'ocrPending', width: 120, render: value => value ? <Tag color="processing">是</Tag> : '-' },
                     { title: '状态', dataIndex: 'parseStatus', width: 110, render: value => <Tag color={parseStatusColor(String(value || ''))}>{String(value || '-')}</Tag> },
                     { title: '阶段', dataIndex: 'currentStage', width: 120, render: value => value || '-' },
                     { title: '更新时间', dataIndex: 'updatedAt', width: 170, render: value => formatShanghaiDateTime(value) },
-                    { title: 'OCR错误', dataIndex: 'ocrError', width: 220, render: value => value || '-' },
+                    { title: 'Docling错误', dataIndex: 'ocrError', width: 220, render: value => value || '-' },
                     { title: '错误', dataIndex: 'errorMessage', width: 220, render: value => value || '-' },
                     {
                       title: '操作',

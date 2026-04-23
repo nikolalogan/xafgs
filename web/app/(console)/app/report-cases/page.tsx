@@ -540,7 +540,7 @@ export default function ReportCasesPage() {
             { title: '状态', dataIndex: 'status', render: value => <Tag color={statusColorMap[value] || 'default'}>{value}</Tag> },
             { title: '文件数', render: (_, record) => record.summary?.fileCount ?? 0, width: 90 },
             { title: '待复核', render: (_, record) => record.summary?.reviewPendingCount ?? 0, width: 90 },
-            { title: '待OCR', render: (_, record) => record.summary?.needsOCRCount ?? 0, width: 90 },
+            { title: '待Docling', render: (_, record) => record.summary?.needsOCRCount ?? 0, width: 100 },
           ]}
         />
       </Card>
@@ -597,7 +597,7 @@ export default function ReportCasesPage() {
 
           <Card title="切片与表格">
             <div className="mb-3 text-xs text-gray-500">
-              PDF 现按页输出，并补充页内表格候选块；扫描件当前只保留页级占位并标记为待 OCR。
+              Docling 解析结果现按页级粗定位输出，不再二次拆分为伪原文段落。
             </div>
             <div className="mb-2 text-sm font-semibold text-gray-900">DocumentSlice</div>
             <Table
@@ -616,7 +616,7 @@ export default function ReportCasesPage() {
                   title: '内容',
                   render: (_, record) => record.cleanText
                     ? <div className="max-w-[640px] whitespace-pre-wrap break-all text-xs text-gray-700">{record.cleanText}</div>
-                    : <span className="text-xs text-gray-400">{record.ocrPending ? '待 OCR' : '-'}</span>,
+                    : <span className="text-xs text-gray-400">{record.ocrPending ? '待 Docling' : '-'}</span>,
                 },
               ]}
             />
@@ -678,7 +678,7 @@ export default function ReportCasesPage() {
                     <Tag color="warning">{item.caseFile.reviewStatus}</Tag>
                   </div>
                   <div className="mb-3 text-xs text-gray-500">
-                    来源文件将通过 <code>fact -&gt; source_ref -&gt; file/version/page</code> 链路保留，可继续扩展到 OCR/表格单元格。
+                    来源文件将通过 <code>fact -&gt; source_ref -&gt; file/version/page</code> 链路保留，Docling 结果仅提供粗粒度页级定位。
                   </div>
                   <Table
                     rowKey="id"
@@ -780,7 +780,7 @@ export default function ReportCasesPage() {
           </Form.Item>
         </Form>
         <div className="mt-3 text-xs text-gray-500">
-          当前版本已实现：报告模板、实例、文件挂接、真实 DocumentSlice 落库、扫描件待 OCR 状态、表格对象与 cell 级来源回链骨架。OCR 服务暂未接入，仅预留 provider 口子。
+          当前版本已实现：报告模板、实例、文件挂接、真实 DocumentSlice 落库、Docling 队列状态、表格对象与 cell 级来源回链骨架。
         </div>
       </Card>
     </div>

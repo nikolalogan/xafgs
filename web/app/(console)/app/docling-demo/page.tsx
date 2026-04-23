@@ -223,19 +223,19 @@ export default function DoclingDemoPage() {
   }
 
   return (
-    <Space direction="vertical" size={16} className="w-full">
+    <Space orientation="vertical" size={16} className="w-full">
       {contextHolder}
       <Alert
         type="info"
         showIcon
-        message="Docling 文档转换示例"
+        title="Docling 文档转换示例"
         description="Docling 默认使用离线文本层转换，并将文档内图片区域的 GLM OCR 结果按接近 Docling 的 Markdown 块结构原位写回正文；纯图片文件或扫描 PDF 仍建议切换 GLM OCR。"
       />
 
       <Row gutter={16} align="top">
         <Col span={8}>
           <Card title="输入参数" extra={<Button icon={<ReloadOutlined />} onClick={() => { setUploadFile(null); setResult(null); setLastRequest(null) }}>重置</Button>}>
-            <Space direction="vertical" size={12} className="w-full">
+            <Space orientation="vertical" size={12} className="w-full">
               <Upload
                 beforeUpload={() => false}
                 maxCount={1}
@@ -301,7 +301,7 @@ export default function DoclingDemoPage() {
                         key: 'raw',
                         label: '原始响应',
                         children: (
-                          <Space direction="vertical" size={12} className="w-full">
+                          <Space orientation="vertical" size={12} className="w-full">
                             <Typography.Text>engine: {result.engine === 'docling' ? 'Docling 文本层' : 'GLM OCR'}</Typography.Text>
                             {result.engine === 'docling' && <Typography.Text>filename: {((result.data as ConvertResponse).filename) || '-'}</Typography.Text>}
                             {result.engine === 'docling' && <Typography.Text>durationMs: {String((result.data as ConvertResponse).durationMs ?? '-')}</Typography.Text>}

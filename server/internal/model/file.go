@@ -141,6 +141,9 @@ type FileParseResultDTO struct {
 	FigureCount   int                         `json:"figureCount"`
 	FragmentCount int                         `json:"fragmentCount"`
 	CellCount     int                         `json:"cellCount"`
+	Markdown      string                      `json:"markdown,omitempty"`
+	Text          string                      `json:"text,omitempty"`
+	Document      json.RawMessage             `json:"document,omitempty"`
 	Slices        []FileParseSlicePreviewDTO  `json:"slices"`
 	Tables        []FileParseTablePreviewDTO  `json:"tables"`
 	Figures       []FileParseFigurePreviewDTO `json:"figures"`

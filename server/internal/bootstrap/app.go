@@ -160,7 +160,7 @@ func NewApp() (*fiber.App, Config) {
 	fileStorage := service.NewLocalFileStorage(cfg.FileStorageRoot)
 	fileService := service.NewFileService(fileRepository, fileStorage)
 	ocrProvider := service.NewNoopOCRProvider()
-	ocrClient := service.NewHTTPOCRClient()
+	ocrClient := service.NewHTTPDoclingClient()
 	ocrTaskService := service.NewOCRTaskService(fileRepository, ocrClient)
 	tableRepairPreviewService := service.NewTableRepairPreviewService()
 	aiClient := ai.NewOpenAICompatClient(nil)

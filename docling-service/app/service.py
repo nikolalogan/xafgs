@@ -1,19 +1,28 @@
 import base64
 import binascii
+import hashlib
+import json
 import logging
 import os
 import shutil
 import tempfile
 import time
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from io import BytesIO
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from pypdf import PdfReader
+from pypdf.generic import ContentStream
 import pypdfium2 as pdfium
 import requests
+try:
+    import redis
+except Exception:
+    redis = None
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -25,7 +34,7 @@ from docling.document_converter import DocumentConverter
 from docling.document_converter import PdfFormatOption
 from docling_core.types.doc.document import BoundingBox
 from fastapi import FastAPI, HTTPException
-from PIL import Image
+from PIL import Image, ImageChops, ImageFilter, ImageOps
 from pydantic import BaseModel, Field
 
 from app.markdown_normalizer import markdown_to_plain_text, normalize_docling_like_markdown
@@ -54,7 +63,10 @@ class ConvertResponse(BaseModel):
 class DebugPictureCandidatesRequest(BaseModel):
     file: str = Field(min_length=1, description="base64 编码文件内容")
     filename: str = Field(min_length=1, description="原始文件名，需包含扩展名")
-    mode: str = Field(default="page_crop", description="候选图模式：page_crop、docling_picture_image、both")
+    mode: str = Field(
+        default="auto",
+        description="候选图模式：auto、docling_raw、pdf_native_embedded_image、pdf_bbox_refine、both",
+    )
     exportImages: bool = Field(default=True, description="是否导出候选图到调试目录")
     runOcr: bool = Field(default=False, description="是否调用 markdown-ocr")
     maxPictures: int | None = Field(default=None, ge=1, le=64, description="最多处理多少张图片")
@@ -66,10 +78,21 @@ class DebugPictureCandidateItem(BaseModel):
     pageNo: int
     candidateSource: str
     imageSource: str
+    imageName: str = ""
     imageSize: tuple[int, int]
+    nativeImageSize: tuple[int, int] | None = None
     cropBox: tuple[int, int, int, int]
     cropSize: tuple[int, int]
     payloadBytes: int
+    drawBox: tuple[int, int, int, int] | None = None
+    matchedPictureRef: str = ""
+    unmatchedPdfImage: bool = False
+    imageDigest: str = ""
+    deduped: bool = False
+    dedupeReason: str = ""
+    searchBox: tuple[int, int, int, int] | None = None
+    refinedFromBox: tuple[int, int, int, int] | None = None
+    selectionReason: str = ""
     debugImagePath: str = ""
     ocrMarkdown: str = ""
     ocrError: str = ""
@@ -92,13 +115,25 @@ class ImageOCRCandidate:
     index: int
     picture_ref: str
     page_no: int
-    bbox: BoundingBox
+    candidate_source: str
+    bbox: BoundingBox | None
+    image_name: str
+    native_image_size: tuple[int, int] | None
     crop_box: tuple[int, int, int, int]
     crop_size: tuple[int, int]
     image_source: str
     image_size: tuple[int, int]
     payload_bytes: int
     image_payload: str
+    draw_box: tuple[int, int, int, int] | None = None
+    matched_picture_ref: str = ""
+    unmatched_pdf_image: bool = False
+    image_digest: str = ""
+    draw_order: int = 0
+    search_box: tuple[int, int, int, int] | None = None
+    refined_from_box: tuple[int, int, int, int] | None = None
+    selection_reason: str = ""
+    debug_extension: str = "png"
 
 
 @dataclass(frozen=True)
@@ -106,6 +141,9 @@ class ImageOCRResult:
     candidate: ImageOCRCandidate
     text: str
     raw_text: str = ""
+    normalized_markdown: str = ""
+    deduped: bool = False
+    dedupe_reason: str = ""
     error: str = ""
 
 
@@ -121,6 +159,11 @@ class ImageOCRSummary:
 
 
 app = FastAPI(title="docling-service", version="0.1.0")
+
+PDF_LOCAL_SEARCH_EXPAND_FACTOR = 2.5
+PDF_LOCAL_SEARCH_MIN_WINDOW = 160
+PDF_REFINE_COMPONENT_MIN_EDGE = 24
+IMAGE_OCR_REDIS_KEY_PREFIX = "docling:imageocr:md5:"
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -274,6 +317,26 @@ def get_ocr_service_base_url() -> str:
     return raw.rstrip("/")
 
 
+def get_image_ocr_redis_url() -> str:
+    return os.getenv("DOCLING_IMAGE_OCR_REDIS_URL", "").strip()
+
+
+def get_image_ocr_redis_ttl_seconds() -> int:
+    return max(1, env_int("DOCLING_IMAGE_OCR_REDIS_TTL_SECONDS", 604800))
+
+
+@lru_cache(maxsize=1)
+def get_image_ocr_redis_client() -> Any | None:
+    redis_url = get_image_ocr_redis_url()
+    if not redis_url or redis is None:
+        return None
+    try:
+        return redis.Redis.from_url(redis_url, decode_responses=True)
+    except Exception as exc:
+        logger.info("image_ocr_redis_client_unavailable error=%s", exc)
+        return None
+
+
 def get_debug_image_dir() -> Path:
     raw = os.getenv("DOCLING_DEBUG_IMAGE_DIR", "/tmp/docling-picture-debug").strip()
     return Path(raw)
@@ -390,51 +453,73 @@ def apply_image_ocr_supplement(
 ) -> ImageOCRSummary:
     if not env_bool("DOCLING_IMAGE_OCR_ENABLED", True):
         return ImageOCRSummary(markdown, text, document_dict, 0, 0, 0, 0)
-    if not str(file_path).lower().endswith(".pdf"):
+    file_kind = infer_file_kind(file_path)
+    if file_kind not in {"pdf", "native"}:
         return ImageOCRSummary(markdown, text, document_dict, 0, 0, 0, 0)
 
     pictures = list(getattr(document, "pictures", []) or [])
-    if not pictures:
-        add_image_ocr_meta(document_dict, [], 0)
-        return ImageOCRSummary(markdown, text, document_dict, 0, 0, 0, 0)
 
     max_images = max(0, env_int("DOCLING_IMAGE_OCR_MAX_IMAGES", 8))
     if max_images <= 0:
-        add_image_ocr_meta(document_dict, [], len(pictures))
+        add_image_ocr_meta(document_dict, [], len(pictures), candidate_mode="pdf_native_embedded_image")
         return ImageOCRSummary(markdown, text, document_dict, 0, len(pictures), len(pictures), 0)
 
-    render_scale = max(1.0, env_float("DOCLING_IMAGE_OCR_RENDER_SCALE", 2.0))
     min_edge = max(1, env_int("DOCLING_IMAGE_OCR_MIN_EDGE_PX", 32))
     min_area = max(1, env_int("DOCLING_IMAGE_OCR_MIN_AREA_PX", 4096))
 
-    candidates, skipped_count, _ = collect_image_ocr_candidates(
-        file_path=file_path,
-        document=document,
-        pictures=pictures,
-        max_images=max_images,
-        render_scale=render_scale,
-        min_edge=min_edge,
-        min_area=min_area,
-    )
+    candidate_mode = "pdf_native_embedded_image"
+    if file_kind == "pdf":
+        candidates, skipped_count, detected_count, candidate_errors = collect_pdf_native_embedded_image_candidates(
+            file_path=file_path,
+            document=document,
+            pictures=pictures,
+            max_images=max_images,
+            min_edge=min_edge,
+            min_area=min_area,
+        )
+    else:
+        candidate_mode = "native_embedded_image"
+        office_media = collect_office_media_images(file_path)
+        candidates, skipped_count, detected_count, candidate_errors = collect_native_embedded_image_candidates(
+            document=document,
+            pictures=pictures,
+            max_images=max_images,
+            min_edge=min_edge,
+            min_area=min_area,
+            fallback_media=office_media,
+        )
+    if candidate_errors:
+        logger.info("image_ocr_candidate_errors errors=%s", candidate_errors)
 
     if not candidates:
-        add_image_ocr_meta(document_dict, [], skipped_count)
-        return ImageOCRSummary(markdown, text, document_dict, 0, skipped_count, len(pictures), 0)
+        add_image_ocr_meta(document_dict, [], skipped_count, candidate_mode=candidate_mode)
+        document_dict["imageOcr"]["detectedCount"] = detected_count
+        return ImageOCRSummary(markdown, text, document_dict, 0, skipped_count, detected_count, 0)
 
     results = run_image_ocr(candidates)
     ocr_success_count = len([result for result in results if result.text])
     applied_results = [
         result
         for result in results
-        if normalize_for_dedup(result.text)
+        if result.normalized_markdown and not result.deduped
     ]
-    add_image_ocr_meta(document_dict, results, skipped_count)
+    matched_results = [
+        result
+        for result in applied_results
+        if result.candidate.matched_picture_ref and not result.candidate.unmatched_pdf_image
+    ]
+    unmatched_results = [
+        result
+        for result in applied_results
+        if result.candidate.unmatched_pdf_image or not result.candidate.matched_picture_ref
+    ]
+    add_image_ocr_meta(document_dict, results, skipped_count, candidate_mode=candidate_mode)
     attach_picture_ocr(document_dict, results)
-    merged_markdown, markdown_inserted = replace_image_placeholders(markdown, applied_results)
-    merged_text, _ = replace_image_placeholders(text, applied_results, plain_text=True)
+    merged_markdown, markdown_inserted = merge_image_ocr_content(markdown, matched_results, unmatched_results)
+    merged_text, _ = merge_image_ocr_content(text, matched_results, unmatched_results, plain_text=True)
     applied_count = markdown_inserted
-    skipped_count = max(0, len(pictures) - applied_count)
-    document_dict["imageOcr"]["detectedCount"] = len(pictures)
+    skipped_count = max(0, detected_count - applied_count)
+    document_dict["imageOcr"]["detectedCount"] = detected_count
     document_dict["imageOcr"]["ocrSuccessCount"] = ocr_success_count
     document_dict["imageOcr"]["insertedCount"] = applied_count
     document_dict["imageOcr"]["skippedCount"] = skipped_count
@@ -444,7 +529,7 @@ def apply_image_ocr_supplement(
         document=document_dict,
         applied_count=applied_count,
         skipped_count=skipped_count,
-        detected_count=len(pictures),
+        detected_count=detected_count,
         ocr_success_count=ocr_success_count,
     )
 
@@ -475,7 +560,7 @@ def collect_image_ocr_candidates(
                 skipped_count += 1
                 continue
             page_no = max(1, int(getattr(prov, "page_no", 1) or 1))
-            embedded_image = extract_embedded_picture_image(picture)
+            embedded_image = extract_embedded_picture_image(picture, document=document)
             if embedded_image is not None:
                 payload_bytes = len(embedded_image["bytes"])
                 image_size = embedded_image["image_size"]
@@ -494,13 +579,17 @@ def collect_image_ocr_candidates(
                         index=index,
                         picture_ref=picture_ref,
                         page_no=page_no,
+                        candidate_source="convert_current",
                         bbox=prov.bbox,
+                        image_name="",
+                        native_image_size=image_size,
                         crop_box=(0, 0, image_size[0], image_size[1]),
                         crop_size=image_size,
                         image_source=str(embedded_image["source"]),
                         image_size=image_size,
                         payload_bytes=payload_bytes,
                         image_payload=base64.b64encode(embedded_image["bytes"]).decode("ascii"),
+                        debug_extension=str(embedded_image.get("extension") or "png"),
                     )
                 )
                 logger.info(
@@ -544,13 +633,17 @@ def collect_image_ocr_candidates(
                     index=index,
                     picture_ref=picture_ref,
                     page_no=page_no,
+                    candidate_source="convert_current",
                     bbox=prov.bbox,
+                    image_name="",
+                    native_image_size=None,
                     crop_box=crop_box,
                     crop_size=(crop_width, crop_height),
                     image_source="page_crop",
                     image_size=(crop_width, crop_height),
                     payload_bytes=len(crop_bytes),
                     image_payload=base64.b64encode(crop_bytes).decode("ascii"),
+                    debug_extension="jpg",
                 )
             )
             logger.info(
@@ -567,7 +660,307 @@ def collect_image_ocr_candidates(
     return candidates, skipped_count, len(pictures)
 
 
-def collect_docling_picture_image_candidates(
+def collect_native_embedded_image_candidates(
+    document: Any,
+    pictures: list[Any],
+    max_images: int,
+    min_edge: int,
+    min_area: int,
+    fallback_media: list[dict[str, Any]] | None = None,
+) -> tuple[list[ImageOCRCandidate], int, int, list[str]]:
+    candidates: list[ImageOCRCandidate] = []
+    skipped_count = 0
+    errors: list[str] = []
+    fallback_index = 0
+    for index, picture in enumerate(pictures):
+        picture_ref = str(getattr(picture, "self_ref", "") or f"picture:{index}")
+        if len(candidates) >= max_images:
+            logger.info("debug_native_embedded_image_skip picture_ref=%s reason=max_images_reached", picture_ref)
+            skipped_count += 1
+            continue
+        page_no = get_page_no_from_picture(picture)
+        extracted = extract_embedded_picture_image(picture, document=document)
+        selection_reason = "embedded_image_direct_export"
+        image_name = ""
+        if extracted is None and fallback_media and fallback_index < len(fallback_media):
+            extracted = fallback_media[fallback_index]
+            fallback_index += 1
+            selection_reason = str(extracted.get("selection_reason") or "fallback_embedded_image_direct_export")
+            image_name = str(extracted.get("image_name") or "")
+        if extracted is None:
+            message = f"pictureRef={picture_ref} pageNo={page_no} no embedded image"
+            logger.info("debug_native_embedded_image_failed %s", message)
+            errors.append(message)
+            skipped_count += 1
+            continue
+        image_size = extracted["image_size"]
+        if image_size[0] < min_edge or image_size[1] < min_edge or image_size[0] * image_size[1] < min_area:
+            message = f"pictureRef={picture_ref} pageNo={page_no} embedded image too small: {image_size}"
+            logger.info("debug_native_embedded_image_failed %s", message)
+            errors.append(message)
+            skipped_count += 1
+            continue
+        image_bytes = extracted["bytes"]
+        candidates.append(
+            ImageOCRCandidate(
+                index=index,
+                picture_ref=picture_ref,
+                page_no=page_no,
+                candidate_source="native_embedded_image",
+                bbox=getattr(first_picture_provenance(picture), "bbox", None),
+                image_name=image_name,
+                native_image_size=image_size,
+                crop_box=(0, 0, image_size[0], image_size[1]),
+                crop_size=image_size,
+                image_source=str(extracted["source"]),
+                image_size=image_size,
+                payload_bytes=len(image_bytes),
+                image_payload=base64.b64encode(image_bytes).decode("ascii"),
+                matched_picture_ref=picture_ref,
+                selection_reason=selection_reason,
+                debug_extension=str(extracted.get("extension") or "png"),
+            )
+        )
+        logger.info(
+            "debug_native_embedded_image_candidate picture_ref=%s page_no=%s image_size=%s payload_bytes=%s image_source=%s",
+            picture_ref,
+            page_no,
+            image_size,
+            len(image_bytes),
+            extracted["source"],
+        )
+    return candidates, skipped_count, len(pictures), errors
+
+
+def collect_office_media_images(file_path: str) -> list[dict[str, Any]]:
+    normalized_path = str(file_path).lower()
+    media_prefix = ""
+    source_name = ""
+    if normalized_path.endswith(".docx"):
+        media_prefix = "word/media/"
+        source_name = "docx_zip_media"
+    elif normalized_path.endswith(".pptx"):
+        media_prefix = "ppt/media/"
+        source_name = "pptx_zip_media"
+    if not media_prefix:
+        return []
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            media_names = sorted(
+                name
+                for name in archive.namelist()
+                if name.startswith(media_prefix) and not name.endswith("/")
+            )
+            images: list[dict[str, Any]] = []
+            for media_name in media_names:
+                try:
+                    payload = archive.read(media_name)
+                except Exception:
+                    continue
+                extracted = image_object_to_bytes(payload, source_name)
+                if extracted is None:
+                    continue
+                images.append(
+                    {
+                        **extracted,
+                        "image_name": Path(media_name).name,
+                        "selection_reason": f"{media_prefix.replace('/', '_').strip('_')}_direct_export",
+                    }
+                )
+            return images
+    except Exception as exc:
+        logger.info("office_media_extract_failed file_path=%s prefix=%s error=%s", file_path, media_prefix, exc)
+        return []
+
+
+def collect_pdf_native_embedded_image_candidates(
+    file_path: str,
+    document: Any,
+    pictures: list[Any],
+    max_images: int,
+    min_edge: int,
+    min_area: int,
+) -> tuple[list[ImageOCRCandidate], int, int, list[str]]:
+    candidates: list[ImageOCRCandidate] = []
+    errors: list[str] = []
+    detected_count = 0
+    try:
+        reader = PdfReader(file_path)
+    except Exception as exc:
+        return [], 0, 0, [f"pypdf read failed: {exc}"]
+
+    for page_index, page in enumerate(reader.pages):
+        page_no = page_index + 1
+        try:
+            image_lookup = build_page_image_lookup(page)
+            draws = extract_pdf_image_draws(page)
+        except Exception as exc:
+            message = f"pageNo={page_no} pdf native image parse failed: {exc}"
+            logger.exception("debug_pdf_native_embedded_image_failed page_no=%s", page_no)
+            errors.append(message)
+            continue
+        for draw in draws:
+            image = image_lookup.get(str(draw.get("image_name") or ""))
+            if image is None:
+                continue
+            extracted = extract_pdf_image_payload(image, str(draw.get("image_name") or ""))
+            if extracted is None:
+                continue
+            detected_count += 1
+            image_bytes = extracted["bytes"]
+            image_size = extracted["image_size"]
+            if image_size[0] < min_edge or image_size[1] < min_edge or image_size[0] * image_size[1] < min_area:
+                continue
+            digest = compute_image_digest(image_bytes)
+            draw_order = int(draw.get("order") or 0)
+            candidates.append(
+                ImageOCRCandidate(
+                    index=draw_order,
+                    picture_ref=f"pdf-native:{page_no}:{draw_order}:{extracted['image_name']}",
+                    page_no=page_no,
+                    candidate_source="pdf_native_embedded_image",
+                    bbox=None,
+                    image_name=str(extracted["image_name"]),
+                    native_image_size=image_size,
+                    crop_box=(0, 0, image_size[0], image_size[1]),
+                    crop_size=image_size,
+                    image_source="pdf_native_embedded_image",
+                    image_size=image_size,
+                    payload_bytes=len(image_bytes),
+                    image_payload=base64.b64encode(image_bytes).decode("ascii"),
+                    draw_box=draw.get("draw_box"),
+                    image_digest=digest,
+                    draw_order=draw_order,
+                    selection_reason="pypdf_page_images_direct_extract",
+                    debug_extension=str(extracted.get("extension") or "png"),
+                )
+            )
+            logger.info(
+                "debug_pdf_native_embedded_image_candidate page_no=%s image_name=%s native_size=%s draw_box=%s digest=%s payload_bytes=%s",
+                page_no,
+                extracted["image_name"],
+                image_size,
+                draw.get("draw_box"),
+                digest,
+                len(image_bytes),
+            )
+
+    candidates = match_docling_picture_to_pdf_image(document, pictures, candidates)
+    candidates.sort(key=candidate_sort_key)
+    skipped_count = max(0, len(candidates) - max_images)
+    if max_images >= 0:
+        candidates = candidates[:max_images]
+    return candidates, skipped_count, detected_count, errors
+
+
+def collect_pdf_bbox_refine_candidates(
+    file_path: str,
+    document: Any,
+    pictures: list[Any],
+    max_images: int,
+    render_scale: float,
+    min_edge: int,
+    min_area: int,
+) -> tuple[list[ImageOCRCandidate], int, int, list[str]]:
+    candidates: list[ImageOCRCandidate] = []
+    skipped_count = 0
+    errors: list[str] = []
+    pdf = pdfium.PdfDocument(file_path)
+    try:
+        rendered_pages: dict[int, Any] = {}
+        for index, picture in enumerate(pictures):
+            picture_ref = str(getattr(picture, "self_ref", "") or f"picture:{index}")
+            if len(candidates) >= max_images:
+                logger.info("debug_pdf_bbox_refine_skip picture_ref=%s reason=max_images_reached", picture_ref)
+                skipped_count += 1
+                continue
+            prov = first_picture_provenance(picture)
+            if prov is None or getattr(prov, "bbox", None) is None:
+                message = f"pictureRef={picture_ref} missing bbox"
+                logger.info("debug_pdf_bbox_refine_failed %s", message)
+                errors.append(message)
+                skipped_count += 1
+                continue
+            page_no = max(1, int(getattr(prov, "page_no", 1) or 1))
+            page_image = rendered_pages.get(page_no)
+            if page_image is None:
+                page_image = render_pdf_page(pdf, page_no, render_scale)
+                rendered_pages[page_no] = page_image
+            refined_from_box, search_box = build_pdf_search_box(document, page_no, prov.bbox, page_image.size)
+            if refined_from_box is None or search_box is None:
+                message = f"pictureRef={picture_ref} pageNo={page_no} invalid search box"
+                logger.info("debug_pdf_bbox_refine_failed %s", message)
+                errors.append(message)
+                skipped_count += 1
+                continue
+            search_image = page_image.crop(search_box)
+            anchor_center = (
+                int((refined_from_box[0] + refined_from_box[2]) / 2) - search_box[0],
+                int((refined_from_box[1] + refined_from_box[3]) / 2) - search_box[1],
+            )
+            local_box, selection_reason = choose_refined_component_box(search_image, anchor_center)
+            if local_box is None:
+                crop_box = search_box
+            else:
+                crop_box = clamp_box(
+                    (
+                        search_box[0] + local_box[0],
+                        search_box[1] + local_box[1],
+                        search_box[0] + local_box[2],
+                        search_box[1] + local_box[3],
+                    ),
+                    page_image.size,
+                ) or search_box
+            left, top, right, bottom = crop_box
+            crop_width = right - left
+            crop_height = bottom - top
+            if crop_width < min_edge or crop_height < min_edge or crop_width * crop_height < min_area:
+                message = f"pictureRef={picture_ref} pageNo={page_no} refined crop too small: {(crop_width, crop_height)}"
+                logger.info("debug_pdf_bbox_refine_failed %s", message)
+                errors.append(message)
+                skipped_count += 1
+                continue
+            crop = page_image.crop(crop_box)
+            buffer = BytesIO()
+            crop.save(buffer, format="JPEG", quality=90)
+            crop_bytes = buffer.getvalue()
+            candidates.append(
+                ImageOCRCandidate(
+                    index=index,
+                    picture_ref=picture_ref,
+                    page_no=page_no,
+                    candidate_source="pdf_bbox_refine",
+                    bbox=prov.bbox,
+                    image_name="",
+                    native_image_size=None,
+                    crop_box=crop_box,
+                    crop_size=(crop_width, crop_height),
+                    image_source="pdf_bbox_refine",
+                    image_size=(crop_width, crop_height),
+                    payload_bytes=len(crop_bytes),
+                    image_payload=base64.b64encode(crop_bytes).decode("ascii"),
+                    search_box=search_box,
+                    refined_from_box=refined_from_box,
+                    selection_reason=selection_reason,
+                    debug_extension="jpg",
+                )
+            )
+            logger.info(
+                "debug_pdf_bbox_refine_candidate picture_ref=%s page_no=%s search_box=%s refined_from_box=%s crop_box=%s image_size=%s selection_reason=%s",
+                picture_ref,
+                page_no,
+                search_box,
+                refined_from_box,
+                crop_box,
+                (crop_width, crop_height),
+                selection_reason,
+            )
+    finally:
+        pdf.close()
+    return candidates, skipped_count, len(pictures), errors
+
+
+def collect_docling_raw_candidates(
     document: Any,
     pictures: list[Any],
     max_images: int,
@@ -597,7 +990,7 @@ def collect_docling_picture_image_candidates(
             skipped_count += 1
             continue
         try:
-            image_obj = get_image(document)
+            image_obj = call_picture_image_method(get_image, document)
             extracted = image_object_to_bytes(image_obj, "docling_picture_image")
         except Exception as exc:
             message = f"pictureRef={picture_ref} pageNo={page_no} get_image failed: {exc}"
@@ -618,17 +1011,22 @@ def collect_docling_picture_image_candidates(
                 index=index,
                 picture_ref=picture_ref,
                 page_no=page_no,
+                candidate_source="docling_raw",
                 bbox=prov.bbox,
+                image_name="",
+                native_image_size=image_size,
                 crop_box=(0, 0, image_size[0], image_size[1]),
                 crop_size=image_size,
                 image_source=str(extracted["source"]),
                 image_size=image_size,
                 payload_bytes=len(image_bytes),
                 image_payload=base64.b64encode(image_bytes).decode("ascii"),
+                selection_reason="docling_get_image",
+                debug_extension=str(extracted.get("extension") or "png"),
             )
         )
         logger.info(
-            "debug_docling_picture_image_candidate picture_ref=%s page_no=%s image_size=%s payload_bytes=%s",
+            "debug_docling_raw_candidate picture_ref=%s page_no=%s image_size=%s payload_bytes=%s",
             picture_ref,
             page_no,
             image_size,
@@ -644,7 +1042,48 @@ def first_picture_provenance(picture: Any) -> Any | None:
     return prov[0]
 
 
-def extract_embedded_picture_image(picture: Any) -> dict[str, Any] | None:
+def get_page_no_from_picture(picture: Any) -> int:
+    prov = first_picture_provenance(picture)
+    return max(1, int(getattr(prov, "page_no", 1) or 1))
+
+
+def infer_file_kind(filename: str) -> str:
+    suffix = Path(filename).suffix.strip().lower()
+    if suffix == ".pdf":
+        return "pdf"
+    if suffix in {".docx", ".pptx", ".html", ".htm", ".md"}:
+        return "native"
+    return "other"
+
+
+def picture_has_embedded_image(picture: Any, document: Any | None = None) -> bool:
+    return extract_embedded_picture_image(picture, document=document) is not None
+
+
+def resolve_debug_mode(mode: str, filename: str, document: Any, pictures: list[Any]) -> str:
+    normalized = mode.strip().lower() or "auto"
+    if normalized == "native_embedded_image":
+        normalized = "pdf_native_embedded_image" if infer_file_kind(filename) == "pdf" else "native_embedded_image"
+    if normalized != "auto":
+        return normalized
+    file_kind = infer_file_kind(filename)
+    if file_kind == "pdf":
+        return "pdf_native_embedded_image"
+    if file_kind == "native" and any(picture_has_embedded_image(picture, document=document) for picture in pictures):
+        return "native_embedded_image"
+    return "docling_raw"
+
+
+def call_picture_image_method(method: Any, document: Any | None) -> Any:
+    try:
+        return method()
+    except TypeError:
+        if document is None:
+            raise
+        return method(document)
+
+
+def extract_embedded_picture_image(picture: Any, document: Any | None = None) -> dict[str, Any] | None:
     for attribute, source in (
         ("pil_image", "embedded_pil_image"),
         ("image", "embedded_image"),
@@ -662,7 +1101,7 @@ def extract_embedded_picture_image(picture: Any) -> dict[str, Any] | None:
         method = getattr(picture, method_name, None)
         if callable(method):
             try:
-                extracted = image_object_to_bytes(method(), source)
+                extracted = image_object_to_bytes(call_picture_image_method(method, document), source)
             except Exception:
                 extracted = None
             if extracted is not None:
@@ -676,15 +1115,18 @@ def image_object_to_bytes(image_obj: Any, source: str) -> dict[str, Any] | None:
     if isinstance(image_obj, (bytes, bytearray)):
         width = 0
         height = 0
+        extension = "png"
         try:
             with Image.open(BytesIO(bytes(image_obj))) as opened:
                 width, height = opened.size
+                extension = normalize_image_extension(opened.format)
         except Exception:
             pass
         return {
             "bytes": bytes(image_obj),
             "image_size": (width, height),
             "source": source,
+            "extension": extension,
         }
     if hasattr(image_obj, "size") and hasattr(image_obj, "save"):
         buffer = BytesIO()
@@ -694,6 +1136,7 @@ def image_object_to_bytes(image_obj: Any, source: str) -> dict[str, Any] | None:
             "bytes": buffer.getvalue(),
             "image_size": (int(width), int(height)),
             "source": source,
+            "extension": "png",
         }
     nested = getattr(image_obj, "pil_image", None)
     if nested is not None:
@@ -706,8 +1149,268 @@ def image_object_to_bytes(image_obj: Any, source: str) -> dict[str, Any] | None:
             "bytes": bytes(nested_bytes),
             "image_size": (width, height),
             "source": source,
+            "extension": "png",
         }
     return None
+
+
+def normalize_image_extension(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"jpeg", "jpg"}:
+        return "jpg"
+    if normalized in {"png", "webp", "bmp", "gif", "tiff", "jp2", "j2k", "jpeg2000"}:
+        return normalized
+    return "png"
+
+
+def normalize_pdf_image_name(value: Any) -> str:
+    current = value
+    if isinstance(current, (list, tuple)) and current:
+        current = current[-1]
+    normalized = str(current or "").strip()
+    if normalized.startswith("/"):
+        normalized = normalized[1:]
+    suffix = Path(normalized).suffix.strip().lower()
+    if suffix in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp", ".jp2", ".j2k"}:
+        normalized = normalized[: -len(suffix)]
+    return normalized
+
+
+def compute_image_digest(image_bytes: bytes) -> str:
+    return hashlib.md5(image_bytes).hexdigest()
+
+
+def decode_candidate_image_bytes(candidate: ImageOCRCandidate) -> bytes:
+    return base64.b64decode(candidate.image_payload)
+
+
+def candidate_sort_key(candidate: ImageOCRCandidate) -> tuple[int, int, int]:
+    return (candidate.page_no, candidate.draw_order, candidate.index)
+
+
+def result_sort_key(result: ImageOCRResult) -> tuple[int, int, int]:
+    return candidate_sort_key(result.candidate)
+
+
+def normalized_bbox_center(draw_box: tuple[int, int, int, int]) -> tuple[float, float]:
+    left, top, right, bottom = draw_box
+    return ((left + right) / 2.0, (top + bottom) / 2.0)
+
+
+def point_in_box(point: tuple[float, float], box: tuple[int, int, int, int]) -> bool:
+    return box[0] <= point[0] <= box[2] and box[1] <= point[1] <= box[3]
+
+
+def squared_distance(point_a: tuple[float, float], point_b: tuple[float, float]) -> float:
+    return (point_a[0] - point_b[0]) ** 2 + (point_a[1] - point_b[1]) ** 2
+
+
+def box_area(box: tuple[int, int, int, int]) -> int:
+    return max(0, box[2] - box[0]) * max(0, box[3] - box[1])
+
+
+def multiply_pdf_matrices(
+    left: tuple[float, float, float, float, float, float],
+    right: tuple[float, float, float, float, float, float],
+) -> tuple[float, float, float, float, float, float]:
+    a, b, c, d, e, f = left
+    g, h, i, j, k, l = right
+    return (
+        a * g + b * i,
+        a * h + b * j,
+        c * g + d * i,
+        c * h + d * j,
+        e * g + f * i + k,
+        e * h + f * j + l,
+    )
+
+
+def apply_pdf_matrix(
+    matrix: tuple[float, float, float, float, float, float],
+    point: tuple[float, float],
+) -> tuple[float, float]:
+    a, b, c, d, e, f = matrix
+    x, y = point
+    return (x * a + y * c + e, x * b + y * d + f)
+
+
+def matrix_to_draw_box(
+    matrix: tuple[float, float, float, float, float, float],
+    page_height: float,
+) -> tuple[int, int, int, int]:
+    points = [
+        apply_pdf_matrix(matrix, (0.0, 0.0)),
+        apply_pdf_matrix(matrix, (1.0, 0.0)),
+        apply_pdf_matrix(matrix, (0.0, 1.0)),
+        apply_pdf_matrix(matrix, (1.0, 1.0)),
+    ]
+    min_x = min(point[0] for point in points)
+    max_x = max(point[0] for point in points)
+    min_y = min(point[1] for point in points)
+    max_y = max(point[1] for point in points)
+    return (
+        int(round(min_x)),
+        int(round(page_height - max_y)),
+        int(round(max_x)),
+        int(round(page_height - min_y)),
+    )
+
+
+def extract_pdf_image_draws(page: Any) -> list[dict[str, Any]]:
+    operations = getattr(page.get_contents(), "operations", None)
+    if operations is None:
+        operations = getattr(ContentStream(page.get_contents(), page.pdf), "operations", [])
+    current_matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    graphics_stack: list[tuple[float, float, float, float, float, float]] = []
+    page_height = float(getattr(getattr(page, "mediabox", None), "height", 0) or 0)
+    draws: list[dict[str, Any]] = []
+    for order, operation in enumerate(operations):
+        operands, operator = operation
+        operator_name = str(operator.decode("latin1") if isinstance(operator, bytes) else operator).strip()
+        if operator_name == "q":
+            graphics_stack.append(current_matrix)
+            continue
+        if operator_name == "Q":
+            if graphics_stack:
+                current_matrix = graphics_stack.pop()
+            continue
+        if operator_name == "cm":
+            values = tuple(float(value) for value in operands[:6])
+            if len(values) == 6:
+                current_matrix = multiply_pdf_matrices(current_matrix, values)
+            continue
+        if operator_name != "Do" or not operands:
+            continue
+        image_name = normalize_pdf_image_name(operands[0])
+        draws.append(
+            {
+                "order": order,
+                "image_name": image_name,
+                "matrix": current_matrix,
+                "draw_box": matrix_to_draw_box(current_matrix, page_height) if page_height > 0 else None,
+            }
+        )
+    return draws
+
+
+def build_page_image_lookup(page: Any) -> dict[str, Any]:
+    lookup: dict[str, Any] = {}
+    images = getattr(page, "images", None)
+    if images is None:
+        return lookup
+    items = getattr(images, "items", None)
+    iterable = items() if callable(items) else [(getattr(image, "name", ""), image) for image in images]
+    for raw_name, image in iterable:
+        image_name = normalize_pdf_image_name(getattr(image, "name", raw_name))
+        if image_name and image_name not in lookup:
+            lookup[image_name] = image
+    return lookup
+
+
+def extract_pdf_image_payload(image: Any, fallback_name: str) -> dict[str, Any] | None:
+    image_name = str(getattr(image, "name", fallback_name) or fallback_name)
+    image_bytes = getattr(image, "data", None)
+    if not isinstance(image_bytes, (bytes, bytearray)):
+        return None
+    extension = Path(image_name).suffix.strip().lower().lstrip(".")
+    width = 0
+    height = 0
+    try:
+        pil_image = getattr(image, "image", None)
+        if pil_image is not None and hasattr(pil_image, "size"):
+            width, height = pil_image.size
+            extension = normalize_image_extension(getattr(pil_image, "format", extension))
+        else:
+            with Image.open(BytesIO(bytes(image_bytes))) as opened:
+                width, height = opened.size
+                extension = normalize_image_extension(opened.format or extension)
+    except Exception:
+        extension = normalize_image_extension(extension)
+    return {
+        "image_name": image_name,
+        "image_size": (int(width), int(height)),
+        "bytes": bytes(image_bytes),
+        "extension": extension or "png",
+    }
+
+
+def bbox_to_page_box(document: Any, page_no: int, bbox: BoundingBox) -> tuple[int, int, int, int] | None:
+    page_dimensions = get_document_page_size(document, page_no)
+    if page_dimensions is None:
+        return None
+    _, page_height = page_dimensions
+    top_left = bbox.to_top_left_origin(page_height)
+    left = int(round(top_left.l))
+    top = int(round(top_left.t))
+    right = int(round(top_left.r))
+    bottom = int(round(top_left.b))
+    if right <= left or bottom <= top:
+        return None
+    return (left, top, right, bottom)
+
+
+def match_docling_picture_to_pdf_image(
+    document: Any,
+    pictures: list[Any],
+    candidates: list[ImageOCRCandidate],
+) -> list[ImageOCRCandidate]:
+    by_page: dict[int, list[tuple[int, Any, Any]]] = {}
+    for index, picture in enumerate(pictures):
+        prov = first_picture_provenance(picture)
+        bbox = getattr(prov, "bbox", None)
+        if prov is None or bbox is None:
+            continue
+        page_no = max(1, int(getattr(prov, "page_no", 1) or 1))
+        by_page.setdefault(page_no, []).append((index, picture, bbox))
+
+    unmatched_indexes = set(range(len(candidates)))
+    updated_candidates = list(candidates)
+    for page_no, picture_entries in by_page.items():
+        page_candidate_indexes = [index for index, candidate in enumerate(updated_candidates) if candidate.page_no == page_no]
+        for picture_index, picture, bbox in picture_entries:
+            picture_ref = str(getattr(picture, "self_ref", "") or f"picture:{picture_index}")
+            picture_box = bbox_to_page_box(document, page_no, bbox)
+            if picture_box is None:
+                continue
+            picture_center = normalized_bbox_center(picture_box)
+            best_index: int | None = None
+            best_key: tuple[int, int, float] | None = None
+            for candidate_index in page_candidate_indexes:
+                if candidate_index not in unmatched_indexes:
+                    continue
+                draw_box = updated_candidates[candidate_index].draw_box
+                if draw_box is None:
+                    continue
+                contains_center = 1 if point_in_box(picture_center, draw_box) else 0
+                candidate_center = normalized_bbox_center(draw_box)
+                score = (
+                    contains_center,
+                    box_area(draw_box),
+                    -squared_distance(picture_center, candidate_center),
+                )
+                if best_key is None or score > best_key:
+                    best_key = score
+                    best_index = candidate_index
+            if best_index is None:
+                continue
+            unmatched_indexes.discard(best_index)
+            updated_candidates[best_index] = replace(
+                updated_candidates[best_index],
+                picture_ref=picture_ref,
+                bbox=bbox,
+                matched_picture_ref=picture_ref,
+                unmatched_pdf_image=False,
+                index=picture_index,
+            )
+
+    for candidate_index in unmatched_indexes:
+        candidate = updated_candidates[candidate_index]
+        updated_candidates[candidate_index] = replace(
+            candidate,
+            picture_ref=f"pdf-native:{candidate.page_no}:{candidate.draw_order}:{candidate.image_name or candidate_index}",
+            unmatched_pdf_image=True,
+        )
+    return updated_candidates
 
 
 def render_pdf_page(pdf: Any, page_no: int, scale: float) -> Any:
@@ -719,14 +1422,21 @@ def render_pdf_page(pdf: Any, page_no: int, scale: float) -> Any:
         page.close()
 
 
-def build_crop_box(document: Any, page_no: int, bbox: BoundingBox, image_size: tuple[int, int]) -> tuple[int, int, int, int] | None:
+def get_document_page_size(document: Any, page_no: int) -> tuple[float, float] | None:
     page = (getattr(document, "pages", {}) or {}).get(page_no)
     page_size = getattr(page, "size", None)
     page_width = float(getattr(page_size, "width", 0) or 0)
     page_height = float(getattr(page_size, "height", 0) or 0)
     if page_width <= 0 or page_height <= 0:
         return None
+    return page_width, page_height
 
+
+def bbox_to_image_box(document: Any, page_no: int, bbox: BoundingBox, image_size: tuple[int, int]) -> tuple[int, int, int, int] | None:
+    page_dimensions = get_document_page_size(document, page_no)
+    if page_dimensions is None:
+        return None
+    page_width, page_height = page_dimensions
     top_left = bbox.to_top_left_origin(page_height)
     scale_x = image_size[0] / page_width
     scale_y = image_size[1] / page_height
@@ -736,27 +1446,281 @@ def build_crop_box(document: Any, page_no: int, bbox: BoundingBox, image_size: t
     bottom = int(max(0, min(image_size[1], top_left.b * scale_y)))
     if right <= left or bottom <= top:
         return None
+    return left, top, right, bottom
+
+
+def clamp_box(box: tuple[int, int, int, int], image_size: tuple[int, int]) -> tuple[int, int, int, int] | None:
+    left, top, right, bottom = box
+    width, height = image_size
+    left = max(0, min(width, int(left)))
+    top = max(0, min(height, int(top)))
+    right = max(0, min(width, int(right)))
+    bottom = max(0, min(height, int(bottom)))
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
+
+
+def expand_box(
+    box: tuple[int, int, int, int],
+    image_size: tuple[int, int],
+    expand_factor: float,
+    min_window_size: int = 0,
+) -> tuple[int, int, int, int] | None:
+    left, top, right, bottom = box
+    width = right - left
+    height = bottom - top
+    center_x = left + width / 2.0
+    center_y = top + height / 2.0
+    target_width = max(width * expand_factor, float(min_window_size))
+    target_height = max(height * expand_factor, float(min_window_size))
+    expanded = (
+        int(round(center_x - target_width / 2.0)),
+        int(round(center_y - target_height / 2.0)),
+        int(round(center_x + target_width / 2.0)),
+        int(round(center_y + target_height / 2.0)),
+    )
+    return clamp_box(expanded, image_size)
+
+
+def build_crop_box(document: Any, page_no: int, bbox: BoundingBox, image_size: tuple[int, int]) -> tuple[int, int, int, int] | None:
+    bbox_box = bbox_to_image_box(document, page_no, bbox, image_size)
+    if bbox_box is None:
+        return None
+    left, top, right, bottom = bbox_box
     padding = max(2, env_int("DOCLING_IMAGE_OCR_PADDING_PX", 8))
-    return (
+    return clamp_box(
+        (
         max(0, left - padding),
         max(0, top - padding),
         min(image_size[0], right + padding),
         min(image_size[1], bottom + padding),
+        ),
+        image_size,
     )
+
+
+def build_pdf_search_box(
+    document: Any,
+    page_no: int,
+    bbox: BoundingBox,
+    image_size: tuple[int, int],
+) -> tuple[tuple[int, int, int, int] | None, tuple[int, int, int, int] | None]:
+    bbox_box = bbox_to_image_box(document, page_no, bbox, image_size)
+    if bbox_box is None:
+        return None, None
+    search_box = expand_box(
+        bbox_box,
+        image_size,
+        max(1.0, env_float("DOCLING_PDF_BBOX_REFINE_EXPAND_FACTOR", PDF_LOCAL_SEARCH_EXPAND_FACTOR)),
+        max(1, env_int("DOCLING_PDF_BBOX_REFINE_MIN_WINDOW_PX", PDF_LOCAL_SEARCH_MIN_WINDOW)),
+    )
+    return bbox_box, search_box
+
+
+def build_binary_candidate_mask(image: Image.Image) -> Image.Image:
+    grayscale = ImageOps.autocontrast(image.convert("L"))
+    edge = grayscale.filter(ImageFilter.FIND_EDGES)
+    dark_mask = grayscale.point(lambda value: 255 if value <= 245 else 0)
+    edge_mask = edge.point(lambda value: 255 if value >= 18 else 0)
+    rgb = image.convert("RGB")
+    r, g, b = rgb.split()
+    max_channel = ImageChops.lighter(ImageChops.lighter(r, g), b)
+    min_channel = ImageChops.darker(ImageChops.darker(r, g), b)
+    chroma = ImageChops.subtract(max_channel, min_channel)
+    chroma_mask = chroma.point(lambda value: 255 if value >= 12 else 0)
+    combined = ImageChops.lighter(dark_mask, ImageChops.lighter(edge_mask, chroma_mask))
+    combined = combined.filter(ImageFilter.MaxFilter(5))
+    combined = combined.filter(ImageFilter.MaxFilter(5))
+    combined = combined.filter(ImageFilter.MinFilter(3))
+    return combined
+
+
+def find_connected_component_boxes(mask: Image.Image) -> list[tuple[int, int, int, int]]:
+    width, height = mask.size
+    pixels = mask.load()
+    visited = bytearray(width * height)
+    boxes: list[tuple[int, int, int, int]] = []
+    for y in range(height):
+        for x in range(width):
+            index = y * width + x
+            if visited[index] or pixels[x, y] <= 0:
+                continue
+            visited[index] = 1
+            stack = [(x, y)]
+            min_x = max_x = x
+            min_y = max_y = y
+            while stack:
+                current_x, current_y = stack.pop()
+                for neighbor_x, neighbor_y in (
+                    (current_x - 1, current_y),
+                    (current_x + 1, current_y),
+                    (current_x, current_y - 1),
+                    (current_x, current_y + 1),
+                ):
+                    if neighbor_x < 0 or neighbor_y < 0 or neighbor_x >= width or neighbor_y >= height:
+                        continue
+                    neighbor_index = neighbor_y * width + neighbor_x
+                    if visited[neighbor_index] or pixels[neighbor_x, neighbor_y] <= 0:
+                        continue
+                    visited[neighbor_index] = 1
+                    stack.append((neighbor_x, neighbor_y))
+                    min_x = min(min_x, neighbor_x)
+                    min_y = min(min_y, neighbor_y)
+                    max_x = max(max_x, neighbor_x)
+                    max_y = max(max_y, neighbor_y)
+            boxes.append((min_x, min_y, max_x + 1, max_y + 1))
+    return boxes
+
+
+def choose_refined_component_box(
+    search_image: Image.Image,
+    anchor_center: tuple[int, int],
+) -> tuple[tuple[int, int, int, int] | None, str]:
+    mask = build_binary_candidate_mask(search_image)
+    component_boxes = find_connected_component_boxes(mask)
+    viable_boxes: list[tuple[int, int, int, int]] = []
+    for box in component_boxes:
+        left, top, right, bottom = box
+        width = right - left
+        height = bottom - top
+        if width < PDF_REFINE_COMPONENT_MIN_EDGE or height < PDF_REFINE_COMPONENT_MIN_EDGE:
+            continue
+        viable_boxes.append(box)
+    containing_boxes = [
+        box
+        for box in viable_boxes
+        if box[0] <= anchor_center[0] < box[2] and box[1] <= anchor_center[1] < box[3]
+    ]
+    if not containing_boxes:
+        return None, "fallback_expanded_bbox"
+    selected = max(containing_boxes, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]))
+    padded = expand_box(selected, search_image.size, 1.08)
+    return padded or selected, "largest_component_containing_bbox_center"
 
 
 def run_image_ocr(candidates: list[ImageOCRCandidate]) -> list[ImageOCRResult]:
     max_workers = max(1, env_int("DOCLING_IMAGE_OCR_CONCURRENCY", 2))
-    results: list[ImageOCRResult] = []
+    ordered_candidates = [ensure_candidate_digest(candidate) for candidate in sorted(candidates, key=candidate_sort_key)]
+    pending_by_digest: dict[str, ImageOCRCandidate] = {}
+    result_by_digest: dict[str, ImageOCRResult] = {}
+    for candidate in ordered_candidates:
+        if candidate.image_digest in result_by_digest:
+            continue
+        cached = get_cached_image_ocr_result(candidate)
+        if cached is not None:
+            result_by_digest[candidate.image_digest] = cached
+            continue
+        if candidate.image_digest not in pending_by_digest:
+            pending_by_digest[candidate.image_digest] = candidate
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [
             executor.submit(run_single_image_ocr, candidate)
-            for candidate in candidates
+            for candidate in pending_by_digest.values()
         ]
         for future in as_completed(futures):
-            results.append(future.result())
-    results.sort(key=lambda item: (item.candidate.page_no, item.candidate.index))
-    return results
+            result = future.result()
+            result_by_digest[result.candidate.image_digest] = result
+            cache_image_ocr_result(result)
+
+    ordered_results: list[ImageOCRResult] = []
+    for candidate in ordered_candidates:
+        base_result = result_by_digest.get(candidate.image_digest)
+        if base_result is None:
+            continue
+        ordered_results.append(
+            replace(
+                base_result,
+                candidate=candidate,
+            )
+        )
+    return mark_deduped_image_ocr_results(ordered_results)
+
+
+def ensure_candidate_digest(candidate: ImageOCRCandidate) -> ImageOCRCandidate:
+    if candidate.image_digest:
+        return candidate
+    image_bytes = decode_candidate_image_bytes(candidate)
+    return replace(candidate, image_digest=compute_image_digest(image_bytes))
+
+
+def get_cached_image_ocr_result(candidate: ImageOCRCandidate) -> ImageOCRResult | None:
+    client = get_image_ocr_redis_client()
+    if client is None or not candidate.image_digest:
+        return None
+    try:
+        cached = client.get(IMAGE_OCR_REDIS_KEY_PREFIX + candidate.image_digest)
+    except Exception as exc:
+        logger.info("image_ocr_redis_get_failed digest=%s error=%s", candidate.image_digest, exc)
+        return None
+    if not cached:
+        return None
+    try:
+        payload = json.loads(cached)
+    except ValueError:
+        return None
+    markdown = str(payload.get("markdown") or "")
+    normalized_markdown = str(payload.get("normalized_markdown") or normalize_for_dedup(markdown))
+    return ImageOCRResult(
+        candidate=candidate,
+        text=markdown,
+        normalized_markdown=normalized_markdown,
+    )
+
+
+def cache_image_ocr_result(result: ImageOCRResult) -> None:
+    if not result.candidate.image_digest or not result.text:
+        return
+    client = get_image_ocr_redis_client()
+    if client is None:
+        return
+    payload = {
+        "markdown": result.text,
+        "normalized_markdown": result.normalized_markdown or normalize_for_dedup(result.text),
+        "width": result.candidate.image_size[0],
+        "height": result.candidate.image_size[1],
+        "page_no": result.candidate.page_no,
+        "image_name": result.candidate.image_name,
+    }
+    try:
+        client.setex(
+            IMAGE_OCR_REDIS_KEY_PREFIX + result.candidate.image_digest,
+            get_image_ocr_redis_ttl_seconds(),
+            json.dumps(payload, ensure_ascii=False),
+        )
+    except Exception as exc:
+        logger.info("image_ocr_redis_set_failed digest=%s error=%s", result.candidate.image_digest, exc)
+
+
+def mark_deduped_image_ocr_results(results: list[ImageOCRResult]) -> list[ImageOCRResult]:
+    seen_digests: set[str] = set()
+    seen_markdowns: set[str] = set()
+    marked: list[ImageOCRResult] = []
+    for result in sorted(results, key=result_sort_key):
+        normalized_markdown = result.normalized_markdown or normalize_for_dedup(result.text)
+        deduped = False
+        dedupe_reason = ""
+        digest = result.candidate.image_digest
+        if digest and digest in seen_digests:
+            deduped = True
+            dedupe_reason = "duplicate_image_digest"
+        elif normalized_markdown and normalized_markdown in seen_markdowns:
+            deduped = True
+            dedupe_reason = "duplicate_normalized_markdown"
+        if digest and not deduped:
+            seen_digests.add(digest)
+        if normalized_markdown and not deduped:
+            seen_markdowns.add(normalized_markdown)
+        marked.append(
+            replace(
+                result,
+                normalized_markdown=normalized_markdown,
+                deduped=deduped,
+                dedupe_reason=dedupe_reason,
+            )
+        )
+    return marked
 
 
 def run_single_image_ocr(candidate: ImageOCRCandidate) -> ImageOCRResult:
@@ -800,6 +1764,7 @@ def run_single_image_ocr(candidate: ImageOCRCandidate) -> ImageOCRResult:
         candidate=candidate,
         text=cleaned_text,
         raw_text=raw_text,
+        normalized_markdown=normalize_for_dedup(cleaned_text),
     )
 
 
@@ -866,6 +1831,44 @@ def replace_image_placeholders(
     return merged, replaced_count
 
 
+def merge_image_ocr_content(
+    value: str,
+    matched_results: list[ImageOCRResult],
+    unmatched_results: list[ImageOCRResult],
+    plain_text: bool = False,
+) -> tuple[str, int]:
+    content = str(value or "")
+    placeholder = "<!-- image -->"
+    merged = content
+    inserted_count = 0
+    fallback_results: list[ImageOCRResult] = []
+
+    if placeholder in merged:
+        for result in matched_results:
+            replacement = render_image_ocr_content(result, plain_text=plain_text)
+            if not replacement:
+                continue
+            if placeholder in merged:
+                merged = merged.replace(placeholder, replacement, 1)
+                inserted_count += 1
+            else:
+                fallback_results.append(result)
+        fallback_results.extend(unmatched_results)
+    else:
+        merged = content.strip()
+        fallback_results = [*matched_results, *unmatched_results]
+
+    fallback = build_fallback_image_ocr_block(fallback_results, plain_text=plain_text)
+    if fallback:
+        rendered_fallback_count = len([result for result in fallback_results if render_image_ocr_content(result, plain_text=plain_text)])
+        inserted_count += rendered_fallback_count
+        if merged.strip():
+            merged = merged.strip() + "\n\n" + fallback
+        else:
+            merged = fallback
+    return merged, inserted_count
+
+
 def build_fallback_image_ocr_block(results: list[ImageOCRResult], plain_text: bool = False) -> str:
     sections: list[str] = []
     for result in results:
@@ -884,11 +1887,17 @@ def render_image_ocr_content(result: ImageOCRResult, plain_text: bool = False) -
     return content
 
 
-def add_image_ocr_meta(document_dict: dict[str, Any], results: list[ImageOCRResult], skipped_count: int) -> None:
+def add_image_ocr_meta(
+    document_dict: dict[str, Any],
+    results: list[ImageOCRResult],
+    skipped_count: int,
+    candidate_mode: str = "pdf_bbox_refine",
+) -> None:
     document_dict["imageOcr"] = {
         "enabled": env_bool("DOCLING_IMAGE_OCR_ENABLED", True),
         "provider": "glm-ocr",
-        "appliedCount": len([item for item in results if item.text]),
+        "candidateMode": candidate_mode,
+        "appliedCount": len([item for item in results if item.text and not item.deduped]),
         "failedCount": len([item for item in results if item.error]),
         "skippedCount": skipped_count,
         "detectedCount": 0,
@@ -902,7 +1911,12 @@ def attach_picture_ocr(document_dict: dict[str, Any], results: list[ImageOCRResu
     pictures = document_dict.get("pictures")
     if not isinstance(pictures, list):
         return
-    by_ref = {item.candidate.picture_ref: item for item in results}
+    by_ref: dict[str, ImageOCRResult] = {}
+    for item in results:
+        picture_ref = item.candidate.matched_picture_ref or item.candidate.picture_ref
+        if not picture_ref or item.candidate.unmatched_pdf_image or picture_ref in by_ref:
+            continue
+        by_ref[picture_ref] = item
     for picture in pictures:
         if not isinstance(picture, dict):
             continue
@@ -921,7 +1935,7 @@ def sanitize_debug_stem(filename: str) -> str:
 
 def export_debug_candidate_image(candidate: ImageOCRCandidate, target_dir: Path) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
-    extension = "png" if candidate.image_source == "docling_picture_image" else "jpg"
+    extension = candidate.debug_extension or "png"
     target_path = target_dir / f"p{candidate.page_no:03d}_{candidate.index:03d}_{candidate.image_source}.{extension}"
     target_path.write_bytes(base64.b64decode(candidate.image_payload))
     return target_path
@@ -932,15 +1946,31 @@ def image_ocr_result_to_dict(result: ImageOCRResult) -> dict[str, Any]:
         "source": "glm_ocr",
         "pictureRef": result.candidate.picture_ref,
         "pageNo": result.candidate.page_no,
-        "bbox": result.candidate.bbox.model_dump(mode="json"),
+        "candidateSource": result.candidate.candidate_source,
+        "imageName": result.candidate.image_name,
+        "nativeImageSize": result.candidate.native_image_size,
         "cropBox": result.candidate.crop_box,
         "cropSize": result.candidate.crop_size,
         "imageSource": result.candidate.image_source,
         "imageSize": result.candidate.image_size,
         "payloadBytes": result.candidate.payload_bytes,
+        "drawBox": result.candidate.draw_box,
+        "matchedPictureRef": result.candidate.matched_picture_ref,
+        "unmatchedPdfImage": result.candidate.unmatched_pdf_image,
+        "imageDigest": result.candidate.image_digest,
+        "deduped": result.deduped,
+        "dedupeReason": result.dedupe_reason,
         "text": result.text,
         "markdownEndpoint": "/markdown-ocr",
     }
+    if result.candidate.bbox is not None:
+        payload["bbox"] = result.candidate.bbox.model_dump(mode="json")
+    if result.candidate.search_box is not None:
+        payload["searchBox"] = result.candidate.search_box
+    if result.candidate.refined_from_box is not None:
+        payload["refinedFromBox"] = result.candidate.refined_from_box
+    if result.candidate.selection_reason:
+        payload["selectionReason"] = result.candidate.selection_reason
     if result.raw_text:
         payload["rawText"] = result.raw_text
     if result.error:
@@ -954,8 +1984,11 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
     if not suffix:
         raise HTTPException(status_code=400, detail="filename 必须包含扩展名")
     mode = request.mode.strip().lower()
-    if mode not in {"page_crop", "docling_picture_image", "both"}:
-        raise HTTPException(status_code=400, detail="mode 仅支持 page_crop、docling_picture_image、both")
+    if mode not in {"auto", "docling_raw", "pdf_native_embedded_image", "pdf_bbox_refine", "native_embedded_image", "both"}:
+        raise HTTPException(
+            status_code=400,
+            detail="mode 仅支持 auto、docling_raw、pdf_native_embedded_image、pdf_bbox_refine、both",
+        )
 
     try:
         content = base64.b64decode(request.file, validate=True)
@@ -974,15 +2007,59 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
         skipped_count = 0
         errors: list[str] = []
         candidates_by_source: list[tuple[str, ImageOCRCandidate]] = []
+        render_scale = max(1.0, env_float("DOCLING_IMAGE_OCR_RENDER_SCALE", 2.0))
+        min_edge = max(1, env_int("DOCLING_IMAGE_OCR_MIN_EDGE_PX", 32))
+        min_area = max(1, env_int("DOCLING_IMAGE_OCR_MIN_AREA_PX", 4096))
 
-        if mode in {"page_crop", "both"}:
-            result = get_converter().convert(temp_path)
-            document = result.document
-            pictures = list(getattr(document, "pictures", []) or [])
-            render_scale = max(1.0, env_float("DOCLING_IMAGE_OCR_RENDER_SCALE", 2.0))
-            min_edge = max(1, env_int("DOCLING_IMAGE_OCR_MIN_EDGE_PX", 32))
-            min_area = max(1, env_int("DOCLING_IMAGE_OCR_MIN_AREA_PX", 4096))
-            page_crop_candidates, page_crop_skipped_count, page_crop_detected_count = collect_image_ocr_candidates(
+        result = get_converter().convert(temp_path)
+        document = result.document
+        pictures = list(getattr(document, "pictures", []) or [])
+        effective_mode = resolve_debug_mode(mode, request.filename, document, pictures)
+        office_media = collect_office_media_images(temp_path)
+
+        if effective_mode in {"pdf_native_embedded_image", "native_embedded_image", "both"}:
+            if infer_file_kind(request.filename) == "pdf" or effective_mode == "pdf_native_embedded_image":
+                (
+                    native_candidates,
+                    native_skipped_count,
+                    native_detected_count,
+                    native_errors,
+                ) = collect_pdf_native_embedded_image_candidates(
+                    file_path=temp_path,
+                    document=document,
+                    pictures=pictures,
+                    max_images=max_images,
+                    min_edge=min_edge,
+                    min_area=min_area,
+                )
+                native_source = "pdf_native_embedded_image"
+            else:
+                (
+                    native_candidates,
+                    native_skipped_count,
+                    native_detected_count,
+                    native_errors,
+                ) = collect_native_embedded_image_candidates(
+                    document=document,
+                    pictures=pictures,
+                    max_images=max_images,
+                    min_edge=min_edge,
+                    min_area=min_area,
+                    fallback_media=office_media,
+                )
+                native_source = "native_embedded_image"
+            detected_count = max(detected_count, native_detected_count)
+            skipped_count += native_skipped_count
+            errors.extend(native_errors)
+            candidates_by_source.extend((native_source, candidate) for candidate in native_candidates)
+
+        if effective_mode in {"pdf_bbox_refine", "both"}:
+            (
+                refined_candidates,
+                refined_skipped_count,
+                refined_detected_count,
+                refined_errors,
+            ) = collect_pdf_bbox_refine_candidates(
                 file_path=temp_path,
                 document=document,
                 pictures=pictures,
@@ -991,11 +2068,12 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
                 min_edge=min_edge,
                 min_area=min_area,
             )
-            detected_count = max(detected_count, page_crop_detected_count)
-            skipped_count += page_crop_skipped_count
-            candidates_by_source.extend(("page_crop", candidate) for candidate in page_crop_candidates)
+            detected_count = max(detected_count, refined_detected_count)
+            skipped_count += refined_skipped_count
+            errors.extend(refined_errors)
+            candidates_by_source.extend(("pdf_bbox_refine", candidate) for candidate in refined_candidates)
 
-        if mode in {"docling_picture_image", "both"}:
+        if effective_mode in {"docling_raw", "both"}:
             try:
                 image_scale = request.imageScale or max(1.0, env_float("DOCLING_DEBUG_IMAGES_SCALE", 2.0))
                 debug_result = build_debug_picture_converter(image_scale).convert(temp_path)
@@ -1006,7 +2084,7 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
                     docling_skipped_count,
                     docling_detected_count,
                     docling_errors,
-                ) = collect_docling_picture_image_candidates(
+                ) = collect_docling_raw_candidates(
                     document=debug_document,
                     pictures=debug_pictures,
                     max_images=max_images,
@@ -1014,10 +2092,10 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
                 detected_count = max(detected_count, docling_detected_count)
                 skipped_count += docling_skipped_count
                 errors.extend(docling_errors)
-                candidates_by_source.extend(("docling_picture_image", candidate) for candidate in docling_candidates)
+                candidates_by_source.extend(("docling_raw", candidate) for candidate in docling_candidates)
             except Exception as exc:
-                message = f"docling_picture_image convert failed: {exc}"
-                logger.exception("debug_docling_picture_image_failed filename=%s", request.filename)
+                message = f"docling_raw convert failed: {exc}"
+                logger.exception("debug_docling_raw_failed filename=%s", request.filename)
                 errors.append(message)
 
         debug_dir: Path | None = None
@@ -1033,7 +2111,20 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
 
         response_items: list[DebugPictureCandidateItem] = []
         exported_count = 0
+        debug_results_by_candidate: dict[tuple[int, int, str, str], ImageOCRResult] = {}
+        if request.runOcr and candidates_by_source:
+            try:
+                debug_results = run_image_ocr([candidate for _, candidate in candidates_by_source])
+                debug_results_by_candidate = {
+                    (result.candidate.page_no, result.candidate.draw_order, result.candidate.picture_ref, result.candidate.image_digest): result
+                    for result in debug_results
+                }
+            except Exception as exc:
+                message = f"debug OCR failed: {exc}"
+                logger.exception("debug_picture_candidate_ocr_failed filename=%s", request.filename)
+                errors.append(message)
         for candidate_source, candidate in candidates_by_source:
+            candidate = ensure_candidate_digest(candidate)
             debug_image_path = ""
             if debug_dir is not None:
                 exported_path = export_debug_candidate_image(candidate, debug_dir)
@@ -1047,9 +2138,9 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
                     candidate.image_source,
                     debug_image_path,
                 )
-                if candidate_source == "docling_picture_image":
+                if candidate_source == "docling_raw":
                     logger.info(
-                        "debug_docling_picture_image_exported picture_ref=%s page_no=%s image_size=%s path=%s",
+                        "debug_docling_raw_exported picture_ref=%s page_no=%s image_size=%s path=%s",
                         candidate.picture_ref,
                         candidate.page_no,
                         candidate.image_size,
@@ -1059,16 +2150,19 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
             ocr_markdown = ""
             ocr_error = ""
             if request.runOcr:
-                try:
-                    ocr_result = run_single_image_ocr(candidate)
+                ocr_result = debug_results_by_candidate.get(
+                    (candidate.page_no, candidate.draw_order, candidate.picture_ref, candidate.image_digest)
+                )
+                if ocr_result is not None:
                     ocr_markdown = ocr_result.text
-                except Exception as exc:
-                    ocr_error = str(exc)
-                    logger.exception(
-                        "debug_picture_candidate_ocr_failed picture_ref=%s page_no=%s",
-                        candidate.picture_ref,
-                        candidate.page_no,
-                    )
+                    deduped = ocr_result.deduped
+                    dedupe_reason = ocr_result.dedupe_reason
+                else:
+                    deduped = False
+                    dedupe_reason = "ocr_result_missing"
+            else:
+                deduped = False
+                dedupe_reason = ""
 
             response_items.append(
                 DebugPictureCandidateItem(
@@ -1076,10 +2170,21 @@ def debug_picture_candidates(request: DebugPictureCandidatesRequest) -> DebugPic
                     pageNo=candidate.page_no,
                     candidateSource=candidate_source,
                     imageSource=candidate.image_source,
+                    imageName=candidate.image_name,
                     imageSize=candidate.image_size,
+                    nativeImageSize=candidate.native_image_size,
                     cropBox=candidate.crop_box,
                     cropSize=candidate.crop_size,
                     payloadBytes=candidate.payload_bytes,
+                    drawBox=candidate.draw_box,
+                    matchedPictureRef=candidate.matched_picture_ref,
+                    unmatchedPdfImage=candidate.unmatched_pdf_image,
+                    imageDigest=candidate.image_digest,
+                    deduped=deduped,
+                    dedupeReason=dedupe_reason,
+                    searchBox=candidate.search_box,
+                    refinedFromBox=candidate.refined_from_box,
+                    selectionReason=candidate.selection_reason,
                     debugImagePath=debug_image_path,
                     ocrMarkdown=ocr_markdown,
                     ocrError=ocr_error,

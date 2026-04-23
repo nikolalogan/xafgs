@@ -25,6 +25,9 @@ func BuildFileParseResultDTO(parsed ParsedDocument) model.FileParseResultDTO {
 		FigureCount:   len(parsed.Figures),
 		FragmentCount: len(parsed.TableFragments),
 		CellCount:     len(parsed.TableCells),
+		Markdown:      parsed.Markdown,
+		Text:          parsed.Text,
+		Document:      parsed.Document,
 		Slices:        buildSlicePreviews(parsed.Slices),
 		Tables:        buildTablePreviews(parsed.Tables, parsed.TableCells),
 		Figures:       buildFigurePreviews(parsed.Figures),
@@ -190,11 +193,23 @@ func formatBBoxSourceRef(bbox json.RawMessage, pageStart int, pageEnd int) strin
 	if len(bbox) > 0 && json.Unmarshal(bbox, &payload) == nil {
 		pageNo := toInt(payload["page"])
 		block := toInt(payload["block"])
+		doclingRef := strings.TrimSpace(firstString(payload["doclingRef"]))
 		if pageNo > 0 && block > 0 {
 			return fmt.Sprintf("第%d页/块%d", pageNo, block)
 		}
+		if pageNo > 0 && doclingRef != "" {
+			return fmt.Sprintf("第%d页/Docling(%s)", pageNo, doclingRef)
+		}
 		if pageNo > 0 {
 			return fmt.Sprintf("第%d页", pageNo)
+		}
+		pageStartRef := toInt(payload["pageStart"])
+		pageEndRef := toInt(payload["pageEnd"])
+		if pageStartRef > 0 && pageEndRef >= pageStartRef {
+			if pageStartRef == pageEndRef {
+				return fmt.Sprintf("第%d页", pageStartRef)
+			}
+			return fmt.Sprintf("第%d-%d页", pageStartRef, pageEndRef)
 		}
 	}
 	if pageStart > 0 && pageStart == pageEnd {
@@ -304,4 +319,3 @@ func truncateResultText(value string, limit int) string {
 	runes := []rune(value)
 	return string(runes[:limit]) + "…"
 }
-

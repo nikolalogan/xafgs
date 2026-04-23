@@ -7,8 +7,9 @@ import { Table } from '@tiptap/extension-table'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
-import { Typography } from 'antd'
+import { Tabs, Typography } from 'antd'
 import DOMPurify from 'dompurify'
+import { marked } from 'marked'
 
 type FileParseSlicePreviewDTO = {
   sliceType: string
@@ -58,6 +59,9 @@ type ParsedFileResult = {
     fileId: number
     versionNo: number
   }
+  markdown?: string
+  text?: string
+  document?: Record<string, unknown> | null
   slices: FileParseSlicePreviewDTO[]
   tables: FileParseTablePreviewDTO[]
   figures: FileParseFigurePreviewDTO[]
@@ -85,6 +89,26 @@ const formatSliceContent = (value: string) => {
   if (!hasHTMLTag(normalized))
     return formatText(normalized)
   return DOMPurify.sanitize(normalized).replaceAll('\r\n', '\n').replaceAll('\n', '<br>')
+}
+
+const markdownToHTML = (value: string) => {
+  const markdown = String(value || '').trim()
+  if (!markdown)
+    return ''
+  return DOMPurify.sanitize(String(marked.parse(markdown)))
+}
+
+const formatPlainTextBlock = (value: string) => {
+  const text = String(value || '').trim()
+  if (!text)
+    return <Typography.Text type="secondary">暂无纯文本内容</Typography.Text>
+  return <pre className="parsed-document-plain-text m-0 whitespace-pre-wrap text-sm leading-7">{text}</pre>
+}
+
+const formatJSONBlock = (value: unknown) => {
+  if (!value)
+    return <Typography.Text type="secondary">暂无原始 Docling 结构</Typography.Text>
+  return <pre className="parsed-document-json m-0 whitespace-pre-wrap text-xs leading-6">{JSON.stringify(value, null, 2)}</pre>
 }
 
 const summarizeText = (value: string, maxLen: number) => {
@@ -185,6 +209,7 @@ const buildDocumentHTML = (result: ParsedFileResult) => {
 
 export default function ParsedDocumentViewer({ result }: ParsedDocumentViewerProps) {
   const contentHTML = useMemo(() => buildDocumentHTML(result), [result])
+  const markdownHTML = useMemo(() => markdownToHTML(result.markdown || ''), [result.markdown])
   const editor = useEditor({
     immediatelyRender: false,
     editable: false,
@@ -204,13 +229,50 @@ export default function ParsedDocumentViewer({ result }: ParsedDocumentViewerPro
     editor.commands.setContent(contentHTML || '<p>（暂无内容）</p>')
   }, [editor, contentHTML])
 
-  return (
-    <div className="parsed-document-viewer rounded border border-gray-200 bg-white p-3">
+  const structurePreview = (
+    <>
       {editor
         ? <EditorContent editor={editor} />
         : <Typography.Text type="secondary">整文预览加载中…</Typography.Text>}
+    </>
+  )
+
+  const defaultActiveKey = markdownHTML ? 'markdown' : 'structure'
+
+  return (
+    <div className="parsed-document-viewer rounded border border-gray-200 bg-white p-3">
+      <Tabs
+        defaultActiveKey={defaultActiveKey}
+        items={[
+          ...(markdownHTML
+            ? [{
+                key: 'markdown',
+                label: 'Markdown',
+                children: <div className="parsed-document-markdown" dangerouslySetInnerHTML={{ __html: markdownHTML }} />,
+              }]
+            : []),
+          {
+            key: 'text',
+            label: '纯文本',
+            children: formatPlainTextBlock(result.text || ''),
+          },
+          {
+            key: 'structure',
+            label: '结构化预览',
+            children: structurePreview,
+          },
+          {
+            key: 'document',
+            label: '原始Docling结构',
+            children: formatJSONBlock(result.document),
+          },
+        ]}
+      />
       <style jsx global>{`
-        .parsed-document-viewer .ProseMirror {
+        .parsed-document-viewer .ProseMirror,
+        .parsed-document-viewer .parsed-document-markdown,
+        .parsed-document-viewer .parsed-document-plain-text,
+        .parsed-document-viewer .parsed-document-json {
           min-height: 420px;
           max-height: 640px;
           overflow: auto;
@@ -222,27 +284,57 @@ export default function ParsedDocumentViewer({ result }: ParsedDocumentViewerPro
           color: #6b7280;
           font-size: 12px;
         }
-        .parsed-document-viewer .ProseMirror table {
+        .parsed-document-viewer .ProseMirror table,
+        .parsed-document-viewer .parsed-document-markdown table {
           width: 100%;
           border-collapse: collapse;
           border: 1px solid #d1d5db;
           margin: 8px 0 16px;
           table-layout: fixed;
         }
-        .parsed-document-viewer .ProseMirror tr {
+        .parsed-document-viewer .ProseMirror tr,
+        .parsed-document-viewer .parsed-document-markdown tr {
           border: 1px solid #d1d5db;
         }
         .parsed-document-viewer .ProseMirror th,
-        .parsed-document-viewer .ProseMirror td {
+        .parsed-document-viewer .ProseMirror td,
+        .parsed-document-viewer .parsed-document-markdown th,
+        .parsed-document-viewer .parsed-document-markdown td {
           border: 1px solid #d1d5db;
           padding: 6px 8px;
           vertical-align: top;
           white-space: pre-wrap;
           word-break: break-word;
         }
-        .parsed-document-viewer .ProseMirror th {
+        .parsed-document-viewer .ProseMirror th,
+        .parsed-document-viewer .parsed-document-markdown th {
           background: #f3f4f6;
           font-weight: 600;
+        }
+        .parsed-document-viewer .parsed-document-markdown h1,
+        .parsed-document-viewer .parsed-document-markdown h2,
+        .parsed-document-viewer .parsed-document-markdown h3 {
+          margin: 14px 0 8px;
+          font-weight: 600;
+        }
+        .parsed-document-viewer .parsed-document-markdown p {
+          margin: 8px 0;
+        }
+        .parsed-document-viewer .parsed-document-markdown ul,
+        .parsed-document-viewer .parsed-document-markdown ol {
+          padding-left: 24px;
+        }
+        .parsed-document-viewer .parsed-document-markdown code {
+          background: #f3f4f6;
+          border-radius: 4px;
+          padding: 1px 4px;
+        }
+        .parsed-document-viewer .parsed-document-markdown pre {
+          background: #f9fafb;
+          border: 1px solid #e5e7eb;
+          border-radius: 6px;
+          padding: 10px;
+          overflow: auto;
         }
         .parsed-document-viewer .ProseMirror br {
           display: block;

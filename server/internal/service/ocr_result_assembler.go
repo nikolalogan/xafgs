@@ -20,11 +20,11 @@ func buildParsedDocumentFromOCRTask(caseFile model.ReportCaseFile, version model
 	ocrProfile := profile
 	ocrProfile.SourceType = model.DocumentSourceTypeOCR
 	ocrProfile.OCRRequired = false
-	ocrProfile.ParseStrategy = "ocr_async_completed"
+	ocrProfile.ParseStrategy = "docling_async_completed"
 	ocrProfile.PageCount = max(1, result.PageCount)
 	ocrProfile.HasTextLayer = true
 
-	slices := make([]model.DocumentSlice, 0, len(result.Pages)*2+1)
+	slices := make([]model.DocumentSlice, 0, len(result.Pages)+1)
 	tables := make([]model.DocumentTable, 0)
 	fragments := make([]model.DocumentTableFragment, 0)
 	cells := make([]model.DocumentTableCell, 0)
@@ -44,34 +44,11 @@ func buildParsedDocumentFromOCRTask(caseFile model.ReportCaseFile, version model
 				Title:       fmt.Sprintf("%s - 第%d页", version.OriginName, page.PageNo),
 				PageStart:   page.PageNo,
 				PageEnd:     page.PageNo,
-				BBoxJSON:    mustJSON(map[string]any{"page": page.PageNo}),
+				BBoxJSON:    mustJSON(map[string]any{"page": page.PageNo, "kind": "docling_page"}),
 				RawText:     pageText,
 				CleanText:   pageText,
 				TableJSON:   json.RawMessage(`null`),
 				Confidence:  maxFloat(result.Confidence, 0.88),
-				ParseStatus: model.DocumentParseStatusParsed,
-				OCRPending:  false,
-			})
-		}
-		for _, block := range page.Blocks {
-			blockText := normalizeText(block.Text)
-			if blockText == "" {
-				continue
-			}
-			slices = append(slices, model.DocumentSlice{
-				CaseFileID:  caseFile.ID,
-				FileID:      caseFile.FileID,
-				VersionNo:   version.VersionNo,
-				SliceType:   model.DocumentStructureParagraph,
-				SourceType:  model.DocumentSourceTypeOCR,
-				Title:       "",
-				PageStart:   page.PageNo,
-				PageEnd:     page.PageNo,
-				BBoxJSON:    mustJSON(map[string]any{"page": page.PageNo, "block": block.BlockNo, "bbox": block.BBox}),
-				RawText:     blockText,
-				CleanText:   blockText,
-				TableJSON:   json.RawMessage(`null`),
-				Confidence:  maxFloat(result.Confidence, 0.86),
 				ParseStatus: model.DocumentParseStatusParsed,
 				OCRPending:  false,
 			})
@@ -120,7 +97,7 @@ func buildParsedDocumentFromOCRTask(caseFile model.ReportCaseFile, version model
 		TitleLevel:  1,
 		PageStart:   1,
 		PageEnd:     max(1, result.PageCount),
-		BBoxJSON:    json.RawMessage(`{"ocr":true}`),
+		BBoxJSON:    mustJSON(map[string]any{"kind": "docling_document", "pageStart": 1, "pageEnd": max(1, result.PageCount)}),
 		RawText:     strings.Join(combinedText, "\n\n"),
 		CleanText:   strings.Join(combinedText, "\n\n"),
 		TableJSON:   json.RawMessage(`null`),
@@ -132,6 +109,9 @@ func buildParsedDocumentFromOCRTask(caseFile model.ReportCaseFile, version model
 	return ParsedDocument{
 		Version:        version,
 		Profile:        ocrProfile,
+		Markdown:       result.Markdown,
+		Text:           result.Text,
+		Document:       result.Document,
 		Slices:         slices,
 		Tables:         tables,
 		TableFragments: fragments,

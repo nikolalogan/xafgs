@@ -71,6 +71,9 @@ type FileParseResultDTO = {
   figureCount: number
   fragmentCount: number
   cellCount: number
+  markdown?: string
+  text?: string
+  document?: Record<string, unknown> | null
   slices: FileParseSlicePreviewDTO[]
   tables: FileParseTablePreviewDTO[]
   figures: FileParseFigurePreviewDTO[]
@@ -1166,11 +1169,11 @@ export default function FilesPage() {
             </Descriptions.Item>
             <Descriptions.Item label="重试次数">{parseJob.retryCount}</Descriptions.Item>
             <Descriptions.Item label="提取方式">{parseJob.parseStrategy || '-'}</Descriptions.Item>
-            <Descriptions.Item label="OCR状态">{parseJob.ocrTaskStatus || (parseJob.ocrPending ? 'pending' : '-')}</Descriptions.Item>
-            <Descriptions.Item label="OCR待完成">{parseJob.ocrPending ? '是' : '否'}</Descriptions.Item>
+            <Descriptions.Item label="Docling状态">{parseJob.ocrTaskStatus || (parseJob.ocrPending ? 'pending' : '-')}</Descriptions.Item>
+            <Descriptions.Item label="Docling待完成">{parseJob.ocrPending ? '是' : '否'}</Descriptions.Item>
             <Descriptions.Item label="文件类型">{parseJob.fileType || '-'}</Descriptions.Item>
             <Descriptions.Item label="来源类型">{parseJob.sourceType || '-'}</Descriptions.Item>
-            <Descriptions.Item label="OCR错误" span={2}>{parseJob.ocrError || '-'}</Descriptions.Item>
+            <Descriptions.Item label="Docling错误" span={2}>{parseJob.ocrError || '-'}</Descriptions.Item>
             <Descriptions.Item label="错误信息" span={2}>{parseJob.errorMessage || '-'}</Descriptions.Item>
           </Descriptions>
         )}
@@ -1195,10 +1198,10 @@ export default function FilesPage() {
                 <Descriptions bordered size="small" column={2}>
                   <Descriptions.Item label="Slice 数">{parseResult.sliceCount}</Descriptions.Item>
                   <Descriptions.Item label="表格数">{parseResult.tableCount}</Descriptions.Item>
-                  <Descriptions.Item label="OCR 状态">{parseResult.ocrTaskStatus || (parseResult.ocrPending ? 'pending' : '-')}</Descriptions.Item>
-                  <Descriptions.Item label="OCR Provider">{parseResult.ocrProvider || '-'}</Descriptions.Item>
-                  <Descriptions.Item label="OCR 任务ID">{parseResult.ocrTaskId || '-'}</Descriptions.Item>
-                  <Descriptions.Item label="OCR 错误">{parseResult.ocrError || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Docling 状态">{parseResult.ocrTaskStatus || (parseResult.ocrPending ? 'pending' : '-')}</Descriptions.Item>
+                  <Descriptions.Item label="Docling Provider">{parseResult.ocrProvider || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Docling 任务ID">{parseResult.ocrTaskId || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Docling 错误">{parseResult.ocrError || '-'}</Descriptions.Item>
                   <Descriptions.Item label="图表候选数">{parseResult.figureCount}</Descriptions.Item>
                   <Descriptions.Item label="表格片段数">{parseResult.fragmentCount}</Descriptions.Item>
                   <Descriptions.Item label="单元格数">{parseResult.cellCount}</Descriptions.Item>

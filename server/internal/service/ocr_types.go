@@ -1,5 +1,7 @@
 package service
 
+import "encoding/json"
+
 type OCRTaskSubmitRequest struct {
 	FileID        int64  `json:"fileId"`
 	VersionNo     int    `json:"versionNo"`
@@ -39,6 +41,9 @@ type OCRTaskResult struct {
 	PageCount  int             `json:"pageCount"`
 	Confidence float64         `json:"confidence"`
 	Language   string          `json:"language"`
+	Markdown   string          `json:"markdown,omitempty"`
+	Text       string          `json:"text,omitempty"`
+	Document   json.RawMessage `json:"document,omitempty"`
 	Pages      []OCRResultPage `json:"pages"`
 }
 
