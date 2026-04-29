@@ -10,13 +10,14 @@ import (
 )
 
 type FileParseJobRepository interface {
-	Enqueue(fileID int64, versionNo int, requestedBy int64) (model.FileParseJob, bool, bool)
+	Enqueue(fileID int64, versionNo int, requestedBy int64, context model.FileParseJobContext) (model.FileParseJob, bool, bool)
 	FindByID(jobID int64) (model.FileParseJob, bool)
 	FindLatest(fileID int64, versionNo int) (model.FileParseJob, bool)
 	ClaimNext(maxRetry int, runningRetryAfter time.Duration) (model.FileParseJob, bool)
 	MarkRunning(jobID int64, resultJSON []byte, fileType string, sourceType string, parseStrategy string, ocrTaskStatus string, ocrPending bool, ocrError string) (model.FileParseJob, bool)
 	MarkSucceeded(jobID int64, resultJSON []byte, fileType string, sourceType string, parseStrategy string, ocrTaskStatus string, ocrError string) (model.FileParseJob, bool)
 	MarkFailed(jobID int64, errorMessage string) (model.FileParseJob, bool)
+	Cancel(jobID int64, errorMessage string) (model.FileParseJob, bool)
 	List(limit int) []model.FileParseJob
 }
 
@@ -33,7 +34,7 @@ func NewFileParseJobRepository() FileParseJobRepository {
 	}
 }
 
-func (repository *fileParseJobRepository) Enqueue(fileID int64, versionNo int, requestedBy int64) (model.FileParseJob, bool, bool) {
+func (repository *fileParseJobRepository) Enqueue(fileID int64, versionNo int, requestedBy int64, context model.FileParseJobContext) (model.FileParseJob, bool, bool) {
 	if fileID <= 0 || versionNo <= 0 {
 		return model.FileParseJob{}, false, false
 	}
@@ -51,13 +52,18 @@ func (repository *fileParseJobRepository) Enqueue(fileID int64, versionNo int, r
 
 	now := time.Now().UTC()
 	job := model.FileParseJob{
-		ID:          repository.nextJobID,
-		FileID:      fileID,
-		VersionNo:   versionNo,
-		Status:      model.FileParseJobStatusPending,
-		RequestedBy: requestedBy,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:             repository.nextJobID,
+		FileID:         fileID,
+		VersionNo:      versionNo,
+		SourceScope:    strings.TrimSpace(context.SourceScope),
+		ProjectID:      context.ProjectID,
+		ProjectName:    strings.TrimSpace(context.ProjectName),
+		CaseFileID:     context.CaseFileID,
+		ManualCategory: strings.TrimSpace(context.ManualCategory),
+		Status:         model.FileParseJobStatusPending,
+		RequestedBy:    requestedBy,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	repository.nextJobID++
 	repository.jobs[job.ID] = job
@@ -200,6 +206,24 @@ func (repository *fileParseJobRepository) MarkFailed(jobID int64, errorMessage s
 	now := time.Now().UTC()
 	job.Status = model.FileParseJobStatusFailed
 	job.RetryCount++
+	job.ErrorMessage = truncateRepositoryText(strings.TrimSpace(errorMessage), 1000)
+	job.OCRPending = false
+	job.FinishedAt = &now
+	job.UpdatedAt = now
+	repository.jobs[jobID] = job
+	return job, true
+}
+
+func (repository *fileParseJobRepository) Cancel(jobID int64, errorMessage string) (model.FileParseJob, bool) {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+
+	job, ok := repository.jobs[jobID]
+	if !ok {
+		return model.FileParseJob{}, false
+	}
+	now := time.Now().UTC()
+	job.Status = model.FileParseJobStatusCancelled
 	job.ErrorMessage = truncateRepositoryText(strings.TrimSpace(errorMessage), 1000)
 	job.OCRPending = false
 	job.FinishedAt = &now

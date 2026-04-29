@@ -46,14 +46,21 @@ type ReportingService interface {
 	GetEnterpriseProject(ctx context.Context, projectID int64) (model.EnterpriseProjectDetailDTO, *model.APIError)
 	UploadEnterpriseProjectFiles(ctx context.Context, projectID int64, manualCategory string, fileHeaders []*multipart.FileHeader, operatorID int64) (model.UploadEnterpriseProjectFileResultDTO, *model.APIError)
 	UpdateEnterpriseProjectFileManualAdjust(ctx context.Context, projectID int64, caseFileID int64, finalSubCategory string, operatorID int64) (model.EnterpriseProjectFileManualAdjustResultDTO, *model.APIError)
+	GetEnterpriseProjectFileMarkdown(ctx context.Context, projectID int64, caseFileID int64) (model.EnterpriseProjectFileMarkdownDTO, *model.APIError)
+	UpdateEnterpriseProjectFileMarkdown(ctx context.Context, projectID int64, caseFileID int64, contentMarkdown string, operatorID int64) (model.EnterpriseProjectFileMarkdownUpdateResultDTO, *model.APIError)
 	GetEnterpriseProjectFileBlocks(ctx context.Context, projectID int64, caseFileID int64) (model.EnterpriseProjectFileBlocksDTO, *model.APIError)
 	UpdateEnterpriseProjectFileBlock(ctx context.Context, projectID int64, caseFileID int64, blockID int64, currentHTML string, operatorID int64) (model.EnterpriseProjectFileBlockUpdateResultDTO, *model.APIError)
 	ConfirmEnterpriseProjectVectorization(ctx context.Context, projectID int64, operatorID int64) (model.EnterpriseProjectVectorConfirmResultDTO, *model.APIError)
 	TerminateEnterpriseProjectFile(ctx context.Context, projectID int64, caseFileID int64, operatorID int64) (model.EnterpriseProjectFileTerminateResultDTO, *model.APIError)
 	RemoveEnterpriseProjectFile(ctx context.Context, projectID int64, caseFileID int64, operatorID int64) (model.EnterpriseProjectFileRemoveResultDTO, *model.APIError)
 	GetEnterpriseProjectProgress(ctx context.Context, projectID int64) (model.EnterpriseProjectProgressDTO, *model.APIError)
-	RunParseQueueOnce(ctx context.Context) bool
-	StartParseWorker(ctx context.Context, interval time.Duration)
+	SyncParsedFileJob(ctx context.Context, job model.FileParseJob, parsed ParsedDocument) *model.APIError
+}
+
+type EnterpriseProjectFileParseQueue interface {
+	EnqueueWithContext(ctx context.Context, fileID int64, versionNo int, requestedBy int64, jobContext model.FileParseJobContext) (model.FileParseJobDTO, *model.APIError)
+	GetLatest(ctx context.Context, fileID int64, versionNo int) (model.FileParseJobDTO, *model.APIError)
+	CancelByID(ctx context.Context, jobID int64, reason string) (model.FileParseJobDTO, *model.APIError)
 }
 
 type reportingService struct {
@@ -68,6 +75,7 @@ type reportingService struct {
 	systemConfigService     SystemConfigService
 	aiClient                ai.ChatCompletionClient
 	knowledgeQueue          KnowledgeIndexQueue
+	fileParseQueue          EnterpriseProjectFileParseQueue
 }
 
 type KnowledgeIndexQueue interface {
@@ -95,6 +103,7 @@ func NewReportingService(
 	systemConfigService SystemConfigService,
 	aiClient ai.ChatCompletionClient,
 	knowledgeQueue KnowledgeIndexQueue,
+	fileParseQueue EnterpriseProjectFileParseQueue,
 ) ReportingService {
 	return &reportingService{
 		reportingRepository:     reportingRepository,
@@ -108,6 +117,7 @@ func NewReportingService(
 		systemConfigService:     systemConfigService,
 		aiClient:                aiClient,
 		knowledgeQueue:          knowledgeQueue,
+		fileParseQueue:          fileParseQueue,
 	}
 }
 
@@ -860,14 +870,6 @@ func (service *reportingService) GetEnterpriseProject(ctx context.Context, proje
 	categories := parseTemplateCategories(template.CategoriesJSON)
 
 	caseFiles := service.reportingRepository.FindReportCaseFiles(project.ReportCaseID)
-	parseJobs := service.reportingRepository.FindReportParseJobsByProjectID(project.ID)
-	parseJobByCaseFileID := map[int64]model.ReportParseJob{}
-	for _, parseJob := range parseJobs {
-		if existing, exists := parseJobByCaseFileID[parseJob.CaseFileID]; !exists || parseJob.ID > existing.ID {
-			parseJobByCaseFileID[parseJob.CaseFileID] = parseJob
-		}
-	}
-
 	groupItemsByCategory := map[string][]model.EnterpriseProjectUploadedFileItem{}
 	for _, caseFile := range caseFiles {
 		category := strings.TrimSpace(caseFile.ManualCategory)
@@ -883,17 +885,18 @@ func (service *reportingService) GetEnterpriseProject(ctx context.Context, proje
 		parseStatus := strings.TrimSpace(caseFile.ParseStatus)
 		lastError := ""
 		lastUpdated := caseFile.UpdatedAt
-		if parseStatus == "" {
-			parseStatus = model.ReportParseJobStatusPending
+		fileJob, _ := service.lookupLatestCaseFileParseJob(ctx, project, caseFile)
+		if fileJob != nil {
+			if strings.TrimSpace(fileJob.Status) != "" {
+				parseStatus = strings.TrimSpace(fileJob.Status)
+			}
+			if strings.TrimSpace(fileJob.ErrorMessage) != "" {
+				lastError = strings.TrimSpace(fileJob.ErrorMessage)
+			}
+			lastUpdated = fileJob.UpdatedAt
 		}
-		if parseJob, exists := parseJobByCaseFileID[caseFile.ID]; exists {
-			if strings.TrimSpace(parseJob.Status) != "" {
-				parseStatus = strings.TrimSpace(parseJob.Status)
-			}
-			if strings.TrimSpace(parseJob.ErrorMessage) != "" {
-				lastError = parseJob.ErrorMessage
-			}
-			lastUpdated = parseJob.UpdatedAt
+		if parseStatus == "" {
+			parseStatus = model.FileParseJobStatusPending
 		}
 		vectorStatus, vectorError := service.resolveVectorStatus(ctx, caseFile.FileID, caseFile.VersionNo)
 		if strings.TrimSpace(lastError) == "" {
@@ -905,9 +908,11 @@ func (service *reportingService) GetEnterpriseProject(ctx context.Context, proje
 			VersionNo:       caseFile.VersionNo,
 			FileName:        fileName,
 			ManualCategory:  category,
+			FileType:        caseFile.FileType,
+			SourceType:      caseFile.SourceType,
 			ParseStatus:     parseStatus,
 			VectorStatus:    vectorStatus,
-			CurrentStage:    deriveCurrentStage(parseStatus, vectorStatus),
+			CurrentStage:    deriveEnterpriseCaseFileStage(caseFile, fileJob, vectorStatus),
 			LastError:       lastError,
 			LastUpdatedTime: lastUpdated,
 		}
@@ -1033,18 +1038,18 @@ func (service *reportingService) UploadEnterpriseProjectFiles(ctx context.Contex
 		if apiError != nil {
 			return model.UploadEnterpriseProjectFileResultDTO{}, apiError
 		}
-		service.reportingRepository.CreateReportParseJob(model.ReportParseJob{
+		if service.fileParseQueue == nil {
+			return model.UploadEnterpriseProjectFileResultDTO{}, model.NewAPIError(500, response.CodeInternal, "统一文件解析队列未配置")
+		}
+		if _, apiError = service.fileParseQueue.EnqueueWithContext(ctx, caseFile.FileID, caseFile.VersionNo, operatorID, model.FileParseJobContext{
+			SourceScope:    "enterprise_project",
 			ProjectID:      project.ID,
-			CaseID:         reportCase.ID,
+			ProjectName:    project.Name,
 			CaseFileID:     caseFile.ID,
-			FileID:         caseFile.FileID,
-			VersionNo:      caseFile.VersionNo,
 			ManualCategory: manualCategory,
-			FileTypeGroup:  candidate.group,
-			Status:         model.ReportParseJobStatusPending,
-			RetryCount:     0,
-			ErrorMessage:   "",
-		})
+		}); apiError != nil {
+			return model.UploadEnterpriseProjectFileResultDTO{}, apiError
+		}
 		results = append(results, caseFile)
 	}
 
@@ -1085,6 +1090,63 @@ func (service *reportingService) UpdateEnterpriseProjectFileManualAdjust(_ conte
 		CaseFileID:       updated.ID,
 		FinalSubCategory: updated.FinalSubCategory,
 		UpdatedAt:        updated.UpdatedAt,
+	}, nil
+}
+
+func (service *reportingService) GetEnterpriseProjectFileMarkdown(ctx context.Context, projectID int64, caseFileID int64) (model.EnterpriseProjectFileMarkdownDTO, *model.APIError) {
+	project, caseFile, apiError := service.resolveEnterpriseProjectCaseFile(projectID, caseFileID)
+	if apiError != nil {
+		return model.EnterpriseProjectFileMarkdownDTO{}, apiError
+	}
+	fileName := fmt.Sprintf("file-%d-v%d", caseFile.FileID, caseFile.VersionNo)
+	if version, ok := service.fileRepository.FindVersion(caseFile.FileID, caseFile.VersionNo); ok && strings.TrimSpace(version.OriginName) != "" {
+		fileName = version.OriginName
+	}
+	notes := parseCaseFileProcessingNotes(caseFile.ProcessingNotesJSON)
+	contentMarkdown := strings.TrimSpace(anyString(notes["contentMarkdown"]))
+	if contentMarkdown == "" {
+		if fileJob, _ := service.lookupLatestCaseFileParseJob(ctx, project, caseFile); fileJob != nil && fileJob.LatestResult != nil {
+			contentMarkdown = strings.TrimSpace(fileJob.LatestResult.Markdown)
+		}
+	}
+	return model.EnterpriseProjectFileMarkdownDTO{
+		ProjectID:       project.ID,
+		CaseFileID:      caseFile.ID,
+		FileID:          caseFile.FileID,
+		VersionNo:       caseFile.VersionNo,
+		FileName:        fileName,
+		ContentMarkdown: contentMarkdown,
+		UpdatedAt:       caseFile.UpdatedAt,
+	}, nil
+}
+
+func (service *reportingService) UpdateEnterpriseProjectFileMarkdown(_ context.Context, projectID int64, caseFileID int64, contentMarkdown string, operatorID int64) (model.EnterpriseProjectFileMarkdownUpdateResultDTO, *model.APIError) {
+	project, caseFile, apiError := service.resolveEnterpriseProjectCaseFile(projectID, caseFileID)
+	if apiError != nil {
+		return model.EnterpriseProjectFileMarkdownUpdateResultDTO{}, apiError
+	}
+	notes := parseCaseFileProcessingNotes(caseFile.ProcessingNotesJSON)
+	notes["contentMarkdown"] = strings.TrimSpace(contentMarkdown)
+	notes["updatedFromMarkdownEditor"] = true
+	serializedNotes, marshalErr := json.Marshal(notes)
+	if marshalErr != nil {
+		return model.EnterpriseProjectFileMarkdownUpdateResultDTO{}, model.NewAPIError(500, response.CodeInternal, "保存 Markdown 失败")
+	}
+	caseFile.ProcessingNotesJSON = serializedNotes
+	caseFile.UpdatedBy = operatorID
+	updated, ok := service.reportingRepository.UpdateReportCaseFile(caseFile)
+	if !ok {
+		return model.EnterpriseProjectFileMarkdownUpdateResultDTO{}, model.NewAPIError(500, response.CodeInternal, "保存 Markdown 失败")
+	}
+	if operatorID > 0 {
+		project.UpdatedBy = operatorID
+		_, _ = service.reportingRepository.UpdateEnterpriseProject(project)
+	}
+	return model.EnterpriseProjectFileMarkdownUpdateResultDTO{
+		ProjectID:       project.ID,
+		CaseFileID:      updated.ID,
+		ContentMarkdown: strings.TrimSpace(contentMarkdown),
+		UpdatedAt:       updated.UpdatedAt,
 	}, nil
 }
 
@@ -1217,33 +1279,35 @@ func (service *reportingService) ConfirmEnterpriseProjectVectorization(ctx conte
 		return model.EnterpriseProjectVectorConfirmResultDTO{}, model.NewAPIError(503, response.CodeInternal, "向量服务不可用")
 	}
 
-	jobs := service.reportingRepository.FindReportParseJobsByProjectID(project.ID)
+	caseFiles := service.reportingRepository.FindReportCaseFiles(project.ReportCaseID)
 	result := model.EnterpriseProjectVectorConfirmResultDTO{
 		ProjectID: project.ID,
-		Items:     make([]model.EnterpriseProjectVectorConfirmItemDTO, 0, len(jobs)),
+		Items:     make([]model.EnterpriseProjectVectorConfirmItemDTO, 0, len(caseFiles)),
 	}
-	for _, job := range jobs {
+	for _, caseFile := range caseFiles {
+		fileJob, _ := service.lookupLatestCaseFileParseJob(ctx, project, caseFile)
+		parseStatus := model.FileParseJobStatusPending
+		if fileJob != nil && strings.TrimSpace(fileJob.Status) != "" {
+			parseStatus = strings.TrimSpace(fileJob.Status)
+		}
 		item := model.EnterpriseProjectVectorConfirmItemDTO{
-			CaseFileID:     job.CaseFileID,
-			FileID:         job.FileID,
-			VersionNo:      job.VersionNo,
-			ManualCategory: job.ManualCategory,
-			ParseStatus:    strings.TrimSpace(job.Status),
+			CaseFileID:     caseFile.ID,
+			FileID:         caseFile.FileID,
+			VersionNo:      caseFile.VersionNo,
+			ManualCategory: caseFile.ManualCategory,
+			ParseStatus:    parseStatus,
 			Action:         "skip",
 		}
-		if item.ParseStatus == "" {
-			item.ParseStatus = model.ReportParseJobStatusPending
-		}
 		result.Total++
-		if item.ParseStatus != model.ReportParseJobStatusSucceeded {
-			item.Reason = "解析未完成"
+		if !isCaseFileReadyForConfirmation(caseFile, fileJob) {
+			item.Reason = "提取未完成"
 			item.VectorStatus = vectorStatusNotEnqueued
 			result.Skipped++
 			result.Items = append(result.Items, item)
 			continue
 		}
 
-		vectorStatus, vectorError := service.resolveVectorStatus(ctx, job.FileID, job.VersionNo)
+		vectorStatus, vectorError := service.resolveVectorStatus(ctx, caseFile.FileID, caseFile.VersionNo)
 		item.VectorStatus = vectorStatus
 		if strings.TrimSpace(vectorError) != "" {
 			item.Reason = vectorError
@@ -1256,7 +1320,7 @@ func (service *reportingService) ConfirmEnterpriseProjectVectorization(ctx conte
 			}
 			result.Skipped++
 		default:
-			apiError := service.knowledgeQueue.Enqueue(ctx, job.FileID, job.VersionNo)
+			apiError := service.knowledgeQueue.Enqueue(ctx, caseFile.FileID, caseFile.VersionNo)
 			if apiError != nil {
 				item.Action = "failed"
 				item.VectorStatus = vectorStatusStatusError
@@ -1291,36 +1355,29 @@ func (service *reportingService) TerminateEnterpriseProjectFile(ctx context.Cont
 		return model.EnterpriseProjectFileTerminateResultDTO{}, model.NewAPIError(404, response.CodeNotFound, "项目文件不存在")
 	}
 
-	jobs := service.reportingRepository.FindReportParseJobsByProjectID(project.ID)
-	var targetJob *model.ReportParseJob
-	for index := range jobs {
-		job := jobs[index]
-		if job.CaseFileID != caseFile.ID {
-			continue
-		}
-		if targetJob == nil || job.ID > targetJob.ID {
-			cloned := job
-			targetJob = &cloned
-		}
-	}
+	targetJob, _ := service.lookupLatestCaseFileParseJob(ctx, project, caseFile)
 	if targetJob == nil {
 		return model.EnterpriseProjectFileTerminateResultDTO{}, model.NewAPIError(404, response.CodeNotFound, "未找到可终止的解析任务")
 	}
 
 	parseStatus := targetJob.Status
-	if targetJob.Status == model.ReportParseJobStatusPending || targetJob.Status == model.ReportParseJobStatusRunning {
-		now := time.Now().UTC()
-		targetJob.Status = model.ReportParseJobStatusCancelled
-		targetJob.ErrorMessage = terminatedByUserMessage
-		targetJob.FinishedAt = &now
-		targetJob.RetryCount = 0
-		_, _ = service.reportingRepository.UpdateReportParseJob(*targetJob)
-		parseStatus = model.ReportParseJobStatusCancelled
+	if targetJob.Status == model.FileParseJobStatusPending || targetJob.Status == model.FileParseJobStatusRunning {
+		if service.fileParseQueue != nil {
+			cancelledJob, apiError := service.fileParseQueue.CancelByID(ctx, targetJob.JobID, terminatedByUserMessage)
+			if apiError == nil {
+				parseStatus = cancelledJob.Status
+				targetJob = &cancelledJob
+			} else {
+				parseStatus = model.FileParseJobStatusCancelled
+			}
+		} else {
+			parseStatus = model.FileParseJobStatusCancelled
+		}
 	}
 
 	vectorStatus, vectorErrorMessage := service.resolveVectorStatus(ctx, targetJob.FileID, targetJob.VersionNo)
 	if service.knowledgeQueue != nil && (vectorStatus == model.KnowledgeIndexJobStatusPending || vectorStatus == model.KnowledgeIndexJobStatusRunning) {
-		if apiError := service.knowledgeQueue.Cancel(ctx, targetJob.FileID, targetJob.VersionNo); apiError == nil {
+		if apiError := service.knowledgeQueue.Cancel(ctx, caseFile.FileID, caseFile.VersionNo); apiError == nil {
 			vectorStatus = model.KnowledgeIndexJobStatusCancelled
 			vectorErrorMessage = ""
 		} else if isAPIErrorStatus(apiError, 404) {
@@ -1370,7 +1427,6 @@ func (service *reportingService) RemoveEnterpriseProjectFile(ctx context.Context
 	if service.knowledgeQueue != nil {
 		_ = service.knowledgeQueue.Cancel(ctx, caseFile.FileID, caseFile.VersionNo)
 	}
-	service.reportingRepository.DeleteReportParseJobsByCaseFileID(caseFile.ID)
 	service.reportingRepository.DeleteSlicesByCaseFileID(caseFile.ID)
 	service.reportingRepository.DeleteTablesByCaseFileID(caseFile.ID)
 	removedFactIDs := service.reportingRepository.DeleteFactsByCaseFileID(caseFile.ID)
@@ -1395,22 +1451,38 @@ func (service *reportingService) GetEnterpriseProjectProgress(ctx context.Contex
 	if !ok {
 		return model.EnterpriseProjectProgressDTO{}, model.NewAPIError(404, response.CodeNotFound, "项目不存在")
 	}
-	jobs := service.reportingRepository.FindReportParseJobsByProjectID(project.ID)
-	items := make([]model.ReportParseJobProgressDTO, 0, len(jobs))
-	allSucceeded := len(jobs) > 0
+	caseFiles := service.reportingRepository.FindReportCaseFiles(project.ReportCaseID)
+	items := make([]model.ReportParseJobProgressDTO, 0, len(caseFiles))
+	allSucceeded := len(caseFiles) > 0
 	hasFailed := false
-	for _, job := range jobs {
-		fileName := fmt.Sprintf("file-%d-v%d", job.FileID, job.VersionNo)
-		fileEntity, ok := service.fileRepository.FindVersion(job.FileID, job.VersionNo)
+	for _, caseFile := range caseFiles {
+		fileName := fmt.Sprintf("file-%d-v%d", caseFile.FileID, caseFile.VersionNo)
+		fileEntity, ok := service.fileRepository.FindVersion(caseFile.FileID, caseFile.VersionNo)
 		if ok && strings.TrimSpace(fileEntity.OriginName) != "" {
 			fileName = fileEntity.OriginName
 		}
-		errorMessage := strings.TrimSpace(job.ErrorMessage)
+		fileJob, _ := service.lookupLatestCaseFileParseJob(ctx, project, caseFile)
+		parseStatus := model.FileParseJobStatusPending
+		errorMessage := ""
+		updatedAt := caseFile.UpdatedAt
+		var startedAt *time.Time
+		var finishedAt *time.Time
+		jobID := int64(0)
+		if fileJob != nil {
+			jobID = fileJob.JobID
+			if strings.TrimSpace(fileJob.Status) != "" {
+				parseStatus = strings.TrimSpace(fileJob.Status)
+			}
+			errorMessage = strings.TrimSpace(fileJob.ErrorMessage)
+			updatedAt = fileJob.UpdatedAt
+			startedAt = fileJob.StartedAt
+			finishedAt = fileJob.FinishedAt
+		}
 		vectorStatus := vectorStatusNotEnqueued
 		if service.knowledgeQueue == nil {
 			vectorStatus = vectorStatusUnavailable
 		} else {
-			status, apiError := service.knowledgeQueue.GetStatus(ctx, job.FileID, job.VersionNo)
+			status, apiError := service.knowledgeQueue.GetStatus(ctx, caseFile.FileID, caseFile.VersionNo)
 			if apiError == nil {
 				vectorStatus = strings.TrimSpace(status.Status)
 				if vectorStatus == "" {
@@ -1433,35 +1505,35 @@ func (service *reportingService) GetEnterpriseProjectProgress(ctx context.Contex
 				}
 			}
 		}
-		currentStage := deriveCurrentStage(job.Status, vectorStatus)
+		currentStage := deriveEnterpriseCaseFileStage(caseFile, fileJob, vectorStatus)
 
-		parseSucceeded := job.Status == model.ReportParseJobStatusSucceeded
+		parseSucceeded := isCaseFileReadyForConfirmation(caseFile, fileJob)
 		vectorSucceeded := vectorStatus == model.KnowledgeIndexJobStatusSucceeded || vectorStatus == vectorStatusUnavailable
 		if !parseSucceeded || !vectorSucceeded {
 			allSucceeded = false
 		}
-		if job.Status == model.ReportParseJobStatusFailed ||
-			job.Status == model.ReportParseJobStatusCancelled ||
+		if parseStatus == model.FileParseJobStatusFailed ||
+			parseStatus == model.FileParseJobStatusCancelled ||
 			vectorStatus == model.KnowledgeIndexJobStatusFailed ||
 			vectorStatus == model.KnowledgeIndexJobStatusCancelled ||
 			vectorStatus == vectorStatusStatusError {
 			hasFailed = true
 		}
 		items = append(items, model.ReportParseJobProgressDTO{
-			JobID:          job.ID,
-			CaseFileID:     job.CaseFileID,
-			FileID:         job.FileID,
-			VersionNo:      job.VersionNo,
+			JobID:          jobID,
+			CaseFileID:     caseFile.ID,
+			FileID:         caseFile.FileID,
+			VersionNo:      caseFile.VersionNo,
 			FileName:       fileName,
-			ManualCategory: job.ManualCategory,
-			FileTypeGroup:  job.FileTypeGroup,
-			ParseStatus:    job.Status,
+			ManualCategory: caseFile.ManualCategory,
+			FileTypeGroup:  detectFileTypeGroup(fileName),
+			ParseStatus:    parseStatus,
 			VectorStatus:   vectorStatus,
 			CurrentStage:   currentStage,
 			ErrorMessage:   errorMessage,
-			UpdatedAt:      job.UpdatedAt,
-			StartedAt:      job.StartedAt,
-			FinishedAt:     job.FinishedAt,
+			UpdatedAt:      updatedAt,
+			StartedAt:      startedAt,
+			FinishedAt:     finishedAt,
 		})
 	}
 	nextStatus := project.Status
@@ -1482,99 +1554,6 @@ func (service *reportingService) GetEnterpriseProjectProgress(ctx context.Contex
 		ProjectID: project.ID,
 		Items:     items,
 	}, nil
-}
-
-func (service *reportingService) RunParseQueueOnce(ctx context.Context) bool {
-	job, ok := service.reportingRepository.ClaimNextReportParseJob(3)
-	if !ok {
-		return false
-	}
-	project, ok := service.reportingRepository.FindEnterpriseProjectByID(job.ProjectID)
-	if !ok {
-		now := time.Now().UTC()
-		job.Status = model.ReportParseJobStatusFailed
-		job.RetryCount++
-		job.ErrorMessage = "项目不存在"
-		job.FinishedAt = &now
-		_, _ = service.reportingRepository.UpdateReportParseJob(job)
-		return true
-	}
-	reportCase, ok := service.reportingRepository.FindReportCaseByID(job.CaseID)
-	if !ok {
-		now := time.Now().UTC()
-		job.Status = model.ReportParseJobStatusFailed
-		job.RetryCount++
-		job.ErrorMessage = "报告实例不存在"
-		job.FinishedAt = &now
-		_, _ = service.reportingRepository.UpdateReportParseJob(job)
-		return true
-	}
-	caseFile, ok := service.reportingRepository.FindReportCaseFileByID(job.CaseFileID)
-	if !ok {
-		now := time.Now().UTC()
-		job.Status = model.ReportParseJobStatusFailed
-		job.RetryCount++
-		job.ErrorMessage = "报告文件不存在"
-		job.FinishedAt = &now
-		_, _ = service.reportingRepository.UpdateReportParseJob(job)
-		return true
-	}
-	operatorID := project.UpdatedBy
-	if operatorID <= 0 {
-		operatorID = project.CreatedBy
-	}
-	if operatorID <= 0 {
-		operatorID = 1
-	}
-	if apiError := service.processSingleCaseFile(ctx, reportCase, caseFile, operatorID); apiError != nil {
-		if service.isParseJobCancelled(job.ID) {
-			return true
-		}
-		now := time.Now().UTC()
-		job.Status = model.ReportParseJobStatusFailed
-		job.RetryCount++
-		job.ErrorMessage = apiError.Message
-		job.FinishedAt = &now
-		_, _ = service.reportingRepository.UpdateReportParseJob(job)
-		project.Status = model.EnterpriseProjectStatusFailed
-		project.UpdatedBy = operatorID
-		_, _ = service.reportingRepository.UpdateEnterpriseProject(project)
-		return true
-	}
-	if service.isParseJobCancelled(job.ID) {
-		return true
-	}
-	if service.isParseJobCancelled(job.ID) {
-		return true
-	}
-	now := time.Now().UTC()
-	job.Status = model.ReportParseJobStatusSucceeded
-	job.ErrorMessage = ""
-	job.FinishedAt = &now
-	_, _ = service.reportingRepository.UpdateReportParseJob(job)
-	project.Status = model.EnterpriseProjectStatusProcessing
-	project.UpdatedBy = operatorID
-	_, _ = service.reportingRepository.UpdateEnterpriseProject(project)
-	return true
-}
-
-func (service *reportingService) StartParseWorker(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		interval = 2 * time.Second
-	}
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				for service.RunParseQueueOnce(ctx) {
-				}
-			}
-		}
-	}()
 }
 
 func parseTemplateCategories(raw json.RawMessage) []map[string]any {
@@ -1622,6 +1601,71 @@ func detectFileTypeGroup(fileName string) string {
 	}
 }
 
+func (service *reportingService) lookupLatestCaseFileParseJob(ctx context.Context, project model.EnterpriseProject, caseFile model.ReportCaseFile) (*model.FileParseJobDTO, *model.APIError) {
+	if service.fileParseQueue == nil {
+		return nil, nil
+	}
+	job, apiError := service.fileParseQueue.GetLatest(ctx, caseFile.FileID, caseFile.VersionNo)
+	if apiError != nil {
+		if isAPIErrorStatus(apiError, 404) {
+			return nil, nil
+		}
+		return nil, apiError
+	}
+	if normalizeParseSourceScope(job.SourceScope) != "enterprise_project" {
+		return nil, nil
+	}
+	if job.CaseFileID > 0 && job.CaseFileID != caseFile.ID {
+		return nil, nil
+	}
+	if job.ProjectID > 0 && job.ProjectID != project.ID {
+		return nil, nil
+	}
+	return &job, nil
+}
+
+func deriveEnterpriseCaseFileStage(caseFile model.ReportCaseFile, fileJob *model.FileParseJobDTO, vectorStatus string) string {
+	if fileJob == nil {
+		return "解析排队"
+	}
+	switch strings.TrimSpace(fileJob.Status) {
+	case model.FileParseJobStatusPending:
+		return "解析排队"
+	case model.FileParseJobStatusRunning:
+		if fileJob.OCRPending || fileJob.OCRTaskStatus == model.OCRTaskStatusPending || fileJob.OCRTaskStatus == model.OCRTaskStatusRunning {
+			return "Docling解析中"
+		}
+		return "同步项目内容中"
+	case model.FileParseJobStatusFailed, model.FileParseJobStatusCancelled:
+		return "解析失败"
+	case model.FileParseJobStatusSucceeded:
+		if isCaseFileReadyForConfirmation(caseFile, fileJob) {
+			return "提取完成"
+		}
+		return "同步项目内容中"
+	default:
+		return "解析排队"
+	}
+}
+
+func isCaseFileReadyForConfirmation(caseFile model.ReportCaseFile, fileJob *model.FileParseJobDTO) bool {
+	if fileJob == nil || strings.TrimSpace(fileJob.Status) != model.FileParseJobStatusSucceeded {
+		return false
+	}
+	notes := parseCaseFileProcessingNotes(caseFile.ProcessingNotesJSON)
+	lastJobID := int64(anyFloat64(notes["lastFileParseJobId"]))
+	if lastJobID <= 0 {
+		lastJobID = int64(anyFloat64(notes["last_file_parse_job_id"]))
+	}
+	if lastJobID != fileJob.JobID {
+		return false
+	}
+	if strings.TrimSpace(anyString(notes["processingStatus"])) != "synced" {
+		return false
+	}
+	return strings.TrimSpace(anyString(notes["lastSyncError"])) == ""
+}
+
 func deriveCurrentStage(parseStatus string, vectorStatus string) string {
 	switch parseStatus {
 	case model.ReportParseJobStatusPending:
@@ -1652,6 +1696,28 @@ func deriveCurrentStage(parseStatus string, vectorStatus string) string {
 		return "向量状态异常"
 	default:
 		return "待处理"
+	}
+}
+
+func anyString(value any) string {
+	return strings.TrimSpace(fmt.Sprintf("%v", value))
+}
+
+func anyFloat64(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case json.Number:
+		number, _ := typed.Float64()
+		return number
+	default:
+		return 0
 	}
 }
 
@@ -2287,7 +2353,41 @@ func isRenderableSliceType(sliceType string) bool {
 	return sliceType == model.DocumentStructureTable
 }
 
-func (service *reportingService) processSingleCaseFile(ctx context.Context, reportCase model.ReportCase, caseFile model.ReportCaseFile, operatorID int64) *model.APIError {
+func (service *reportingService) SyncParsedFileJob(ctx context.Context, job model.FileParseJob, parsed ParsedDocument) *model.APIError {
+	if normalizeParseSourceScope(job.SourceScope) != "enterprise_project" || job.CaseFileID <= 0 || job.ProjectID <= 0 {
+		return nil
+	}
+	project, ok := service.reportingRepository.FindEnterpriseProjectByID(job.ProjectID)
+	if !ok {
+		return model.NewAPIError(404, response.CodeNotFound, "项目不存在")
+	}
+	caseFile, ok := service.reportingRepository.FindReportCaseFileByID(job.CaseFileID)
+	if !ok || caseFile.CaseID != project.ReportCaseID {
+		return model.NewAPIError(404, response.CodeNotFound, "项目文件不存在")
+	}
+	operatorID := job.RequestedBy
+	if operatorID <= 0 {
+		operatorID = project.UpdatedBy
+	}
+	if operatorID <= 0 {
+		operatorID = project.CreatedBy
+	}
+	if operatorID <= 0 {
+		operatorID = 1
+	}
+	if apiError := service.syncParsedCaseFile(caseFile, parsed, operatorID, job.ID); apiError != nil {
+		project.Status = model.EnterpriseProjectStatusFailed
+		project.UpdatedBy = operatorID
+		_, _ = service.reportingRepository.UpdateEnterpriseProject(project)
+		return apiError
+	}
+	project.Status = model.EnterpriseProjectStatusProcessing
+	project.UpdatedBy = operatorID
+	_, _ = service.reportingRepository.UpdateEnterpriseProject(project)
+	return nil
+}
+
+func (service *reportingService) processSingleCaseFile(ctx context.Context, _ model.ReportCase, caseFile model.ReportCaseFile, operatorID int64) *model.APIError {
 	fileEntity, ok := service.fileRepository.FindFileByID(caseFile.FileID)
 	if !ok || fileEntity.LatestVersionNo <= 0 {
 		return model.NewAPIError(404, response.CodeNotFound, "底层文件不存在")
@@ -2297,7 +2397,14 @@ func (service *reportingService) processSingleCaseFile(ctx context.Context, repo
 	if apiError != nil {
 		return apiError
 	}
+	return service.syncParsedCaseFile(caseFile, parsed, operatorID, 0)
+}
 
+func (service *reportingService) syncParsedCaseFile(caseFile model.ReportCaseFile, parsed ParsedDocument, operatorID int64, fileParseJobID int64) *model.APIError {
+	reportCase, ok := service.reportingRepository.FindReportCaseByID(caseFile.CaseID)
+	if !ok {
+		return model.NewAPIError(404, response.CodeNotFound, "报告实例不存在")
+	}
 	caseFile.SuggestedSubCategory = service.suggestSubCategory(caseFile.ManualCategory, parsed.Version.OriginName)
 	caseFile.FinalSubCategory = ""
 	caseFile.Status = model.ReportCaseFileStatusPendingReview
@@ -2308,27 +2415,34 @@ func (service *reportingService) processSingleCaseFile(ctx context.Context, repo
 	caseFile.ParseStatus = chooseParseStatus(parsed)
 	caseFile.OCRPending = parsed.OCRTask != nil && parsed.OCRTask.Status != model.OCRTaskStatusSucceeded
 	caseFile.IsScannedSuspected = parsed.Profile.IsScannedSuspected
-	notes, _ := json.Marshal(map[string]any{
-		"originName":          parsed.Version.OriginName,
-		"mimeType":            parsed.Version.MimeType,
-		"sizeBytes":           parsed.Version.SizeBytes,
-		"bizClass":            parsed.Profile.BizClass,
-		"parseStrategy":       parsed.Profile.ParseStrategy,
-		"hasTextLayer":        parsed.Profile.HasTextLayer,
-		"textDensity":         parsed.Profile.TextDensity,
-		"traceable":           true,
-		"ocrProvider":         reportingOCRProvider(parsed),
-		"ocrPending":          caseFile.OCRPending,
-		"ocrTaskId":           reportingOCRTaskID(parsed),
-		"ocrTaskStatus":       reportingOCRTaskStatus(parsed),
-		"ocrSkipReason":       parsed.Profile.OCRSkipReason,
-		"imageOcrApplied":     parsed.Profile.ImageOCRApplied,
-		"imageOcrAppendCount": parsed.Profile.ImageOCRAppendCount,
-		"ocrQueueMode":        parsed.Profile.OCRQueueMode,
-		"isScannedSuspected":  parsed.Profile.IsScannedSuspected,
-		"pdfDiagnostics":      parsed.Profile.PDFDiagnostics,
-	})
-	caseFile.ProcessingNotesJSON = notes
+	notes := parseCaseFileProcessingNotes(caseFile.ProcessingNotesJSON)
+	notes["originName"] = parsed.Version.OriginName
+	notes["mimeType"] = parsed.Version.MimeType
+	notes["sizeBytes"] = parsed.Version.SizeBytes
+	notes["bizClass"] = parsed.Profile.BizClass
+	notes["parseStrategy"] = parsed.Profile.ParseStrategy
+	notes["hasTextLayer"] = parsed.Profile.HasTextLayer
+	notes["textDensity"] = parsed.Profile.TextDensity
+	notes["traceable"] = true
+	notes["ocrProvider"] = reportingOCRProvider(parsed)
+	notes["ocrPending"] = caseFile.OCRPending
+	notes["ocrTaskId"] = reportingOCRTaskID(parsed)
+	notes["ocrTaskStatus"] = reportingOCRTaskStatus(parsed)
+	notes["ocrSkipReason"] = parsed.Profile.OCRSkipReason
+	notes["imageOcrApplied"] = parsed.Profile.ImageOCRApplied
+	notes["imageOcrAppendCount"] = parsed.Profile.ImageOCRAppendCount
+	notes["ocrQueueMode"] = parsed.Profile.OCRQueueMode
+	notes["isScannedSuspected"] = parsed.Profile.IsScannedSuspected
+	notes["pdfDiagnostics"] = parsed.Profile.PDFDiagnostics
+	notes["contentMarkdown"] = strings.TrimSpace(parsed.Markdown)
+	if fileParseJobID > 0 {
+		notes["lastFileParseJobId"] = fileParseJobID
+	}
+	notes["lastSyncedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+	notes["lastSyncError"] = ""
+	notes["processingStatus"] = "synced"
+	serializedNotes, _ := json.Marshal(notes)
+	caseFile.ProcessingNotesJSON = serializedNotes
 	caseFile.UpdatedBy = operatorID
 	_, _ = service.reportingRepository.UpdateReportCaseFile(caseFile)
 	if caseFile.ParseStatus == model.DocumentParseStatusFailed {

@@ -152,6 +152,23 @@ type EnterpriseProjectFileBlockUpdateResultDTO struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
+type EnterpriseProjectFileMarkdownDTO struct {
+	ProjectID      int64     `json:"projectId"`
+	CaseFileID     int64     `json:"caseFileId"`
+	FileID         int64     `json:"fileId"`
+	VersionNo      int       `json:"versionNo"`
+	FileName       string    `json:"fileName"`
+	ContentMarkdown string   `json:"contentMarkdown"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+type EnterpriseProjectFileMarkdownUpdateResultDTO struct {
+	ProjectID       int64     `json:"projectId"`
+	CaseFileID      int64     `json:"caseFileId"`
+	ContentMarkdown string    `json:"contentMarkdown"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
 type EnterpriseProjectVectorConfirmItemDTO struct {
 	CaseFileID     int64  `json:"caseFileId"`
 	FileID         int64  `json:"fileId"`
@@ -178,6 +195,8 @@ type EnterpriseProjectUploadedFileItem struct {
 	VersionNo       int       `json:"versionNo"`
 	FileName        string    `json:"fileName"`
 	ManualCategory  string    `json:"manualCategory"`
+	FileType        string    `json:"fileType"`
+	SourceType      string    `json:"sourceType"`
 	ParseStatus     string    `json:"parseStatus"`
 	VectorStatus    string    `json:"vectorStatus"`
 	CurrentStage    string    `json:"currentStage"`

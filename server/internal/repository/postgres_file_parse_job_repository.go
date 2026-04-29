@@ -17,7 +17,7 @@ func NewPostgresFileParseJobRepository(db *sql.DB) FileParseJobRepository {
 	return &PostgresFileParseJobRepository{db: db}
 }
 
-func (repository *PostgresFileParseJobRepository) Enqueue(fileID int64, versionNo int, requestedBy int64) (model.FileParseJob, bool, bool) {
+func (repository *PostgresFileParseJobRepository) Enqueue(fileID int64, versionNo int, requestedBy int64, jobContext model.FileParseJobContext) (model.FileParseJob, bool, bool) {
 	if fileID <= 0 || versionNo <= 0 {
 		return model.FileParseJob{}, false, false
 	}
@@ -26,7 +26,8 @@ func (repository *PostgresFileParseJobRepository) Enqueue(fileID int64, versionN
 
 	var existing model.FileParseJob
 	if err := repository.db.QueryRowContext(ctx, `
-SELECT id, file_id, version_no, status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
+SELECT id, file_id, version_no, source_scope, project_id, project_name, case_file_id, manual_category,
+       status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
        ocr_task_status, ocr_pending, ocr_error,
        created_at, updated_at, started_at, finished_at
 FROM file_parse_job
@@ -34,7 +35,8 @@ WHERE file_id = $1 AND version_no = $2 AND status IN ($3, $4)
 ORDER BY id DESC
 LIMIT 1
 `, fileID, versionNo, model.FileParseJobStatusPending, model.FileParseJobStatusRunning).Scan(
-		&existing.ID, &existing.FileID, &existing.VersionNo, &existing.Status, &existing.RetryCount, &existing.ErrorMessage,
+		&existing.ID, &existing.FileID, &existing.VersionNo, &existing.SourceScope, &existing.ProjectID, &existing.ProjectName, &existing.CaseFileID, &existing.ManualCategory,
+		&existing.Status, &existing.RetryCount, &existing.ErrorMessage,
 		&existing.FileType, &existing.SourceType, &existing.ParseStrategy, &existing.ResultJSON, &existing.RequestedBy,
 		&existing.OCRTaskStatus, &existing.OCRPending, &existing.OCRError,
 		&existing.CreatedAt, &existing.UpdatedAt, &existing.StartedAt, &existing.FinishedAt,
@@ -45,19 +47,23 @@ LIMIT 1
 	var job model.FileParseJob
 	err := repository.db.QueryRowContext(ctx, `
 INSERT INTO file_parse_job (
-  file_id, version_no, status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
+  file_id, version_no, source_scope, project_id, project_name, case_file_id, manual_category,
+  status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
   ocr_task_status, ocr_pending, ocr_error,
   started_at, finished_at, created_at, updated_at
 ) VALUES (
-  $1, $2, $3, 0, '', '', '', '', 'null'::jsonb, $4,
+  $1, $2, $3, $4, $5, $6, $7,
+  $8, 0, '', '', '', '', 'null'::jsonb, $9,
   '', false, '',
   NULL, NULL, NOW(), NOW()
 )
-RETURNING id, file_id, version_no, status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
+RETURNING id, file_id, version_no, source_scope, project_id, project_name, case_file_id, manual_category,
+          status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
           ocr_task_status, ocr_pending, ocr_error,
           created_at, updated_at, started_at, finished_at
-`, fileID, versionNo, model.FileParseJobStatusPending, requestedBy).Scan(
-		&job.ID, &job.FileID, &job.VersionNo, &job.Status, &job.RetryCount, &job.ErrorMessage,
+`, fileID, versionNo, strings.TrimSpace(jobContext.SourceScope), jobContext.ProjectID, strings.TrimSpace(jobContext.ProjectName), jobContext.CaseFileID, strings.TrimSpace(jobContext.ManualCategory), model.FileParseJobStatusPending, requestedBy).Scan(
+		&job.ID, &job.FileID, &job.VersionNo, &job.SourceScope, &job.ProjectID, &job.ProjectName, &job.CaseFileID, &job.ManualCategory,
+		&job.Status, &job.RetryCount, &job.ErrorMessage,
 		&job.FileType, &job.SourceType, &job.ParseStrategy, &job.ResultJSON, &job.RequestedBy,
 		&job.OCRTaskStatus, &job.OCRPending, &job.OCRError,
 		&job.CreatedAt, &job.UpdatedAt, &job.StartedAt, &job.FinishedAt,
@@ -74,13 +80,15 @@ func (repository *PostgresFileParseJobRepository) FindByID(jobID int64) (model.F
 
 	var job model.FileParseJob
 	err := repository.db.QueryRowContext(ctx, `
-SELECT id, file_id, version_no, status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
+SELECT id, file_id, version_no, source_scope, project_id, project_name, case_file_id, manual_category,
+       status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
        ocr_task_status, ocr_pending, ocr_error,
        created_at, updated_at, started_at, finished_at
 FROM file_parse_job
 WHERE id = $1
 `, jobID).Scan(
-		&job.ID, &job.FileID, &job.VersionNo, &job.Status, &job.RetryCount, &job.ErrorMessage,
+		&job.ID, &job.FileID, &job.VersionNo, &job.SourceScope, &job.ProjectID, &job.ProjectName, &job.CaseFileID, &job.ManualCategory,
+		&job.Status, &job.RetryCount, &job.ErrorMessage,
 		&job.FileType, &job.SourceType, &job.ParseStrategy, &job.ResultJSON, &job.RequestedBy,
 		&job.OCRTaskStatus, &job.OCRPending, &job.OCRError,
 		&job.CreatedAt, &job.UpdatedAt, &job.StartedAt, &job.FinishedAt,
@@ -99,7 +107,8 @@ func (repository *PostgresFileParseJobRepository) FindLatest(fileID int64, versi
 	defer cancel()
 
 	query := `
-SELECT id, file_id, version_no, status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
+SELECT id, file_id, version_no, source_scope, project_id, project_name, case_file_id, manual_category,
+       status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
        ocr_task_status, ocr_pending, ocr_error,
        created_at, updated_at, started_at, finished_at
 FROM file_parse_job
@@ -115,7 +124,8 @@ WHERE file_id = $1
 
 	var job model.FileParseJob
 	err := repository.db.QueryRowContext(ctx, query, args...).Scan(
-		&job.ID, &job.FileID, &job.VersionNo, &job.Status, &job.RetryCount, &job.ErrorMessage,
+		&job.ID, &job.FileID, &job.VersionNo, &job.SourceScope, &job.ProjectID, &job.ProjectName, &job.CaseFileID, &job.ManualCategory,
+		&job.Status, &job.RetryCount, &job.ErrorMessage,
 		&job.FileType, &job.SourceType, &job.ParseStrategy, &job.ResultJSON, &job.RequestedBy,
 		&job.OCRTaskStatus, &job.OCRPending, &job.OCRError,
 		&job.CreatedAt, &job.UpdatedAt, &job.StartedAt, &job.FinishedAt,
@@ -160,11 +170,13 @@ UPDATE file_parse_job p
 SET status = $4, started_at = COALESCE(started_at, NOW()), finished_at = NULL, updated_at = NOW()
 FROM picked
 WHERE p.id = picked.id
-RETURNING p.id, p.file_id, p.version_no, p.status, p.retry_count, p.error_message, p.file_type, p.source_type, p.parse_strategy, p.result_json, p.requested_by,
+RETURNING p.id, p.file_id, p.version_no, p.source_scope, p.project_id, p.project_name, p.case_file_id, p.manual_category,
+          p.status, p.retry_count, p.error_message, p.file_type, p.source_type, p.parse_strategy, p.result_json, p.requested_by,
           p.ocr_task_status, p.ocr_pending, p.ocr_error,
           p.created_at, p.updated_at, p.started_at, p.finished_at
 `, model.FileParseJobStatusPending, model.FileParseJobStatusFailed, maxRetry, model.FileParseJobStatusRunning, model.FileParseJobStatusRunning, int(runningRetryAfter.Seconds())).Scan(
-		&job.ID, &job.FileID, &job.VersionNo, &job.Status, &job.RetryCount, &job.ErrorMessage,
+		&job.ID, &job.FileID, &job.VersionNo, &job.SourceScope, &job.ProjectID, &job.ProjectName, &job.CaseFileID, &job.ManualCategory,
+		&job.Status, &job.RetryCount, &job.ErrorMessage,
 		&job.FileType, &job.SourceType, &job.ParseStrategy, &job.ResultJSON, &job.RequestedBy,
 		&job.OCRTaskStatus, &job.OCRPending, &job.OCRError,
 		&job.CreatedAt, &job.UpdatedAt, &job.StartedAt, &job.FinishedAt,
@@ -203,11 +215,13 @@ SET status = $2,
     finished_at = NOW(),
     updated_at = NOW()
 WHERE id = $1 AND status <> $9
-RETURNING id, file_id, version_no, status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
+RETURNING id, file_id, version_no, source_scope, project_id, project_name, case_file_id, manual_category,
+          status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
           ocr_task_status, ocr_pending, ocr_error,
           created_at, updated_at, started_at, finished_at
 `, jobID, model.FileParseJobStatusSucceeded, strings.TrimSpace(fileType), strings.TrimSpace(sourceType), strings.TrimSpace(parseStrategy), strings.TrimSpace(ocrTaskStatus), truncateText(strings.TrimSpace(ocrError), 1000), string(resultJSON), model.FileParseJobStatusCancelled).Scan(
-		&job.ID, &job.FileID, &job.VersionNo, &job.Status, &job.RetryCount, &job.ErrorMessage,
+		&job.ID, &job.FileID, &job.VersionNo, &job.SourceScope, &job.ProjectID, &job.ProjectName, &job.CaseFileID, &job.ManualCategory,
+		&job.Status, &job.RetryCount, &job.ErrorMessage,
 		&job.FileType, &job.SourceType, &job.ParseStrategy, &job.ResultJSON, &job.RequestedBy,
 		&job.OCRTaskStatus, &job.OCRPending, &job.OCRError,
 		&job.CreatedAt, &job.UpdatedAt, &job.StartedAt, &job.FinishedAt,
@@ -239,11 +253,13 @@ SET status = $2,
     finished_at = NULL,
     updated_at = NOW()
 WHERE id = $1 AND status <> $10
-RETURNING id, file_id, version_no, status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
+RETURNING id, file_id, version_no, source_scope, project_id, project_name, case_file_id, manual_category,
+          status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
           ocr_task_status, ocr_pending, ocr_error,
           created_at, updated_at, started_at, finished_at
 `, jobID, model.FileParseJobStatusRunning, strings.TrimSpace(fileType), strings.TrimSpace(sourceType), strings.TrimSpace(parseStrategy), strings.TrimSpace(ocrTaskStatus), ocrPending, truncateText(strings.TrimSpace(ocrError), 1000), string(resultJSON), model.FileParseJobStatusCancelled).Scan(
-		&job.ID, &job.FileID, &job.VersionNo, &job.Status, &job.RetryCount, &job.ErrorMessage,
+		&job.ID, &job.FileID, &job.VersionNo, &job.SourceScope, &job.ProjectID, &job.ProjectName, &job.CaseFileID, &job.ManualCategory,
+		&job.Status, &job.RetryCount, &job.ErrorMessage,
 		&job.FileType, &job.SourceType, &job.ParseStrategy, &job.ResultJSON, &job.RequestedBy,
 		&job.OCRTaskStatus, &job.OCRPending, &job.OCRError,
 		&job.CreatedAt, &job.UpdatedAt, &job.StartedAt, &job.FinishedAt,
@@ -268,11 +284,43 @@ SET status = $2,
     finished_at = NOW(),
     updated_at = NOW()
 WHERE id = $1 AND status <> $4
-RETURNING id, file_id, version_no, status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
+RETURNING id, file_id, version_no, source_scope, project_id, project_name, case_file_id, manual_category,
+          status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
           ocr_task_status, ocr_pending, ocr_error,
           created_at, updated_at, started_at, finished_at
 `, jobID, model.FileParseJobStatusFailed, truncateText(strings.TrimSpace(errorMessage), 1000), model.FileParseJobStatusCancelled).Scan(
-		&job.ID, &job.FileID, &job.VersionNo, &job.Status, &job.RetryCount, &job.ErrorMessage,
+		&job.ID, &job.FileID, &job.VersionNo, &job.SourceScope, &job.ProjectID, &job.ProjectName, &job.CaseFileID, &job.ManualCategory,
+		&job.Status, &job.RetryCount, &job.ErrorMessage,
+		&job.FileType, &job.SourceType, &job.ParseStrategy, &job.ResultJSON, &job.RequestedBy,
+		&job.OCRTaskStatus, &job.OCRPending, &job.OCRError,
+		&job.CreatedAt, &job.UpdatedAt, &job.StartedAt, &job.FinishedAt,
+	)
+	if err != nil {
+		return model.FileParseJob{}, false
+	}
+	return job, true
+}
+
+func (repository *PostgresFileParseJobRepository) Cancel(jobID int64, errorMessage string) (model.FileParseJob, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	var job model.FileParseJob
+	err := repository.db.QueryRowContext(ctx, `
+UPDATE file_parse_job
+SET status = $2,
+    error_message = $3,
+    ocr_pending = false,
+    finished_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, file_id, version_no, source_scope, project_id, project_name, case_file_id, manual_category,
+          status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
+          ocr_task_status, ocr_pending, ocr_error,
+          created_at, updated_at, started_at, finished_at
+`, jobID, model.FileParseJobStatusCancelled, truncateText(strings.TrimSpace(errorMessage), 1000)).Scan(
+		&job.ID, &job.FileID, &job.VersionNo, &job.SourceScope, &job.ProjectID, &job.ProjectName, &job.CaseFileID, &job.ManualCategory,
+		&job.Status, &job.RetryCount, &job.ErrorMessage,
 		&job.FileType, &job.SourceType, &job.ParseStrategy, &job.ResultJSON, &job.RequestedBy,
 		&job.OCRTaskStatus, &job.OCRPending, &job.OCRError,
 		&job.CreatedAt, &job.UpdatedAt, &job.StartedAt, &job.FinishedAt,
@@ -291,7 +339,8 @@ func (repository *PostgresFileParseJobRepository) List(limit int) []model.FilePa
 	defer cancel()
 
 	rows, err := repository.db.QueryContext(ctx, `
-SELECT id, file_id, version_no, status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
+SELECT id, file_id, version_no, source_scope, project_id, project_name, case_file_id, manual_category,
+       status, retry_count, error_message, file_type, source_type, parse_strategy, result_json, requested_by,
        ocr_task_status, ocr_pending, ocr_error,
        created_at, updated_at, started_at, finished_at
 FROM file_parse_job
@@ -307,7 +356,8 @@ LIMIT $1
 	for rows.Next() {
 		var item model.FileParseJob
 		if scanErr := rows.Scan(
-			&item.ID, &item.FileID, &item.VersionNo, &item.Status, &item.RetryCount, &item.ErrorMessage,
+			&item.ID, &item.FileID, &item.VersionNo, &item.SourceScope, &item.ProjectID, &item.ProjectName, &item.CaseFileID, &item.ManualCategory,
+			&item.Status, &item.RetryCount, &item.ErrorMessage,
 			&item.FileType, &item.SourceType, &item.ParseStrategy, &item.ResultJSON, &item.RequestedBy,
 			&item.OCRTaskStatus, &item.OCRPending, &item.OCRError,
 			&item.CreatedAt, &item.UpdatedAt, &item.StartedAt, &item.FinishedAt,

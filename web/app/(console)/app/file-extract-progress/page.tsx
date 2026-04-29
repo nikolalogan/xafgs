@@ -17,6 +17,10 @@ type FileParseQueueItemDTO = {
   versionNo: number
   fileName: string
   sourceScope: string
+  projectId?: number
+  projectName?: string
+  caseFileId?: number
+  manualCategory?: string
   fileType: string
   sourceType: string
   parseStrategy: string
@@ -247,7 +251,7 @@ export default function FileExtractProgressPage() {
           items={[
             {
               key: 'file-manage',
-              label: '文件管理解析队列',
+              label: '统一文件解析队列',
               children: (
                 <Table<FileParseQueueItemDTO>
                   rowKey={row => `${row.jobId}`}
@@ -257,6 +261,9 @@ export default function FileExtractProgressPage() {
                   columns={[
                     { title: '任务ID', dataIndex: 'jobId', width: 90 },
                     { title: '文件', dataIndex: 'fileName', width: 220 },
+                    { title: '来源', dataIndex: 'sourceScope', width: 130, render: value => value || '-' },
+                    { title: '项目', dataIndex: 'projectName', width: 180, render: value => value || '-' },
+                    { title: '分类', dataIndex: 'manualCategory', width: 120, render: value => value || '-' },
                     { title: 'fileId/v', width: 120, render: (_, row) => `${row.fileId}/v${row.versionNo}` },
                     { title: '文件类型', dataIndex: 'fileType', width: 100, render: value => value || '-' },
                     { title: '来源类型', dataIndex: 'sourceType', width: 120, render: value => value || '-' },
@@ -284,7 +291,7 @@ export default function FileExtractProgressPage() {
             },
             {
               key: 'enterprise',
-              label: '企业项目解析队列',
+              label: '企业项目文件进度',
               children: (
                 <Table<EnterpriseRow>
                   rowKey={row => `${row.projectId}-${row.jobId}`}

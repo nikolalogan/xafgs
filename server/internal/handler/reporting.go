@@ -59,6 +59,10 @@ type enterpriseProjectFileBlockPathRequest struct {
 	CaseFileID int64 `path:"caseFileId" validate:"required,min=1"`
 }
 
+type enterpriseProjectFileMarkdownUpdateRequest struct {
+	ContentMarkdown string `json:"contentMarkdown"`
+}
+
 type enterpriseProjectFileBlockUpdatePathRequest struct {
 	ProjectID  int64 `path:"projectId" validate:"required,min=1"`
 	CaseFileID int64 `path:"caseFileId" validate:"required,min=1"`
@@ -277,6 +281,20 @@ func (handler *ReportingHandler) Register(router fiber.Router, adminMiddleware f
 		Auth:               "auth",
 		SuccessDataExample: apimeta.ExampleFromType[model.EnterpriseProjectFileManualAdjustResultDTO](),
 	}, handler.UpdateEnterpriseProjectFileManualAdjust)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[enterpriseProjectFileBlockPathRequest]{
+		Method:             fiber.MethodGet,
+		Path:               "/enterprise-projects/:projectId/files/:caseFileId/markdown",
+		Summary:            "获取项目文件 Markdown",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.EnterpriseProjectFileMarkdownDTO](),
+	}, handler.GetEnterpriseProjectFileMarkdown)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[enterpriseProjectFileBlockPathRequest]{
+		Method:             fiber.MethodPatch,
+		Path:               "/enterprise-projects/:projectId/files/:caseFileId/markdown",
+		Summary:            "保存项目文件 Markdown",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.EnterpriseProjectFileMarkdownUpdateResultDTO](),
+	}, handler.UpdateEnterpriseProjectFileMarkdown)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[enterpriseProjectFileBlockPathRequest]{
 		Method:             fiber.MethodGet,
 		Path:               "/enterprise-projects/:projectId/files/:caseFileId/blocks",
@@ -682,6 +700,36 @@ func (handler *ReportingHandler) GetEnterpriseProjectFileBlocks(c *fiber.Ctx, re
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, result, "获取分块成功")
+}
+
+func (handler *ReportingHandler) GetEnterpriseProjectFileMarkdown(c *fiber.Ctx, request *enterpriseProjectFileBlockPathRequest) error {
+	result, apiError := handler.reportingService.GetEnterpriseProjectFileMarkdown(c.UserContext(), request.ProjectID, request.CaseFileID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, result, "获取 Markdown 成功")
+}
+
+func (handler *ReportingHandler) UpdateEnterpriseProjectFileMarkdown(c *fiber.Ctx, request *enterpriseProjectFileBlockPathRequest) error {
+	operatorID, ok := c.Locals(middleware.LocalAuthUserID).(int64)
+	if !ok || operatorID <= 0 {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+	payload := enterpriseProjectFileMarkdownUpdateRequest{}
+	if err := c.BodyParser(&payload); err != nil {
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "请求体格式不合法")
+	}
+	result, apiError := handler.reportingService.UpdateEnterpriseProjectFileMarkdown(
+		c.UserContext(),
+		request.ProjectID,
+		request.CaseFileID,
+		payload.ContentMarkdown,
+		operatorID,
+	)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, result, "Markdown 保存成功")
 }
 
 func (handler *ReportingHandler) UpdateEnterpriseProjectFileBlock(c *fiber.Ctx, request *enterpriseProjectFileBlockUpdatePathRequest) error {

@@ -20,17 +20,24 @@ const (
 
 type FileParseQueueService interface {
 	Enqueue(ctx context.Context, fileID int64, versionNo int, requestedBy int64) (model.FileParseJobDTO, *model.APIError)
+	EnqueueWithContext(ctx context.Context, fileID int64, versionNo int, requestedBy int64, jobContext model.FileParseJobContext) (model.FileParseJobDTO, *model.APIError)
 	GetLatest(ctx context.Context, fileID int64, versionNo int) (model.FileParseJobDTO, *model.APIError)
 	GetByID(ctx context.Context, jobID int64) (model.FileParseJobDTO, *model.APIError)
+	CancelByID(ctx context.Context, jobID int64, reason string) (model.FileParseJobDTO, *model.APIError)
 	List(ctx context.Context, limit int) ([]model.FileParseQueueItemDTO, *model.APIError)
 	RunOnce(ctx context.Context) bool
 	StartWorker(ctx context.Context, interval time.Duration)
+}
+
+type FileParseJobSyncer interface {
+	SyncParsedFileJob(ctx context.Context, job model.FileParseJob, parsed ParsedDocument) *model.APIError
 }
 
 type fileParseQueueService struct {
 	repository           repository.FileParseJobRepository
 	fileService          FileService
 	documentParseService DocumentParseService
+	syncer               FileParseJobSyncer
 }
 
 func NewFileParseQueueService(
@@ -46,6 +53,10 @@ func NewFileParseQueueService(
 }
 
 func (service *fileParseQueueService) Enqueue(ctx context.Context, fileID int64, versionNo int, requestedBy int64) (model.FileParseJobDTO, *model.APIError) {
+	return service.EnqueueWithContext(ctx, fileID, versionNo, requestedBy, model.FileParseJobContext{SourceScope: "file_management"})
+}
+
+func (service *fileParseQueueService) EnqueueWithContext(ctx context.Context, fileID int64, versionNo int, requestedBy int64, jobContext model.FileParseJobContext) (model.FileParseJobDTO, *model.APIError) {
 	if fileID <= 0 {
 		return model.FileParseJobDTO{}, model.NewAPIError(400, response.CodeBadRequest, "fileId 不合法")
 	}
@@ -53,7 +64,10 @@ func (service *fileParseQueueService) Enqueue(ctx context.Context, fileID int64,
 	if apiError != nil {
 		return model.FileParseJobDTO{}, apiError
 	}
-	job, ok, ignored := service.repository.Enqueue(fileID, version.VersionNo, requestedBy)
+	if strings.TrimSpace(jobContext.SourceScope) == "" {
+		jobContext.SourceScope = "file_management"
+	}
+	job, ok, ignored := service.repository.Enqueue(fileID, version.VersionNo, requestedBy, jobContext)
 	if !ok {
 		return model.FileParseJobDTO{}, model.NewAPIError(500, response.CodeInternal, "解析任务入队失败")
 	}
@@ -63,6 +77,10 @@ func (service *fileParseQueueService) Enqueue(ctx context.Context, fileID int64,
 		dto.ResultReady = dto.LatestResult != nil
 	}
 	return dto, nil
+}
+
+func (service *fileParseQueueService) SetSyncer(syncer FileParseJobSyncer) {
+	service.syncer = syncer
 }
 
 func (service *fileParseQueueService) GetLatest(ctx context.Context, fileID int64, versionNo int) (model.FileParseJobDTO, *model.APIError) {
@@ -95,6 +113,17 @@ func (service *fileParseQueueService) GetByID(_ context.Context, jobID int64) (m
 	return service.toJobDTO(job), nil
 }
 
+func (service *fileParseQueueService) CancelByID(_ context.Context, jobID int64, reason string) (model.FileParseJobDTO, *model.APIError) {
+	if jobID <= 0 {
+		return model.FileParseJobDTO{}, model.NewAPIError(400, response.CodeBadRequest, "jobId 不合法")
+	}
+	job, ok := service.repository.Cancel(jobID, reason)
+	if !ok {
+		return model.FileParseJobDTO{}, model.NewAPIError(404, response.CodeNotFound, "解析任务不存在")
+	}
+	return service.toJobDTO(job), nil
+}
+
 func (service *fileParseQueueService) List(ctx context.Context, limit int) ([]model.FileParseQueueItemDTO, *model.APIError) {
 	jobs := service.repository.List(limit)
 	items := make([]model.FileParseQueueItemDTO, 0, len(jobs))
@@ -105,23 +134,27 @@ func (service *fileParseQueueService) List(ctx context.Context, limit int) ([]mo
 			fileName = version.OriginName
 		}
 		items = append(items, model.FileParseQueueItemDTO{
-			JobID:         job.ID,
-			FileID:        job.FileID,
-			VersionNo:     job.VersionNo,
-			FileName:      fileName,
-			SourceScope:   "file_management",
-			FileType:      strings.TrimSpace(job.FileType),
-			SourceType:    strings.TrimSpace(job.SourceType),
-			ParseStrategy: strings.TrimSpace(job.ParseStrategy),
-			OCRTaskStatus: strings.TrimSpace(job.OCRTaskStatus),
-			OCRPending:    job.OCRPending,
-			OCRError:      strings.TrimSpace(job.OCRError),
-			ParseStatus:   strings.TrimSpace(job.Status),
-			CurrentStage:  deriveParseCurrentStage(job.Status, job.OCRPending, job.OCRTaskStatus),
-			ErrorMessage:  strings.TrimSpace(job.ErrorMessage),
-			UpdatedAt:     job.UpdatedAt,
-			StartedAt:     job.StartedAt,
-			FinishedAt:    job.FinishedAt,
+			JobID:          job.ID,
+			FileID:         job.FileID,
+			VersionNo:      job.VersionNo,
+			FileName:       fileName,
+			SourceScope:    normalizeParseSourceScope(job.SourceScope),
+			ProjectID:      job.ProjectID,
+			ProjectName:    strings.TrimSpace(job.ProjectName),
+			CaseFileID:     job.CaseFileID,
+			ManualCategory: strings.TrimSpace(job.ManualCategory),
+			FileType:       strings.TrimSpace(job.FileType),
+			SourceType:     strings.TrimSpace(job.SourceType),
+			ParseStrategy:  strings.TrimSpace(job.ParseStrategy),
+			OCRTaskStatus:  strings.TrimSpace(job.OCRTaskStatus),
+			OCRPending:     job.OCRPending,
+			OCRError:       strings.TrimSpace(job.OCRError),
+			ParseStatus:    strings.TrimSpace(job.Status),
+			CurrentStage:   deriveParseCurrentStage(job.Status, job.OCRPending, job.OCRTaskStatus),
+			ErrorMessage:   strings.TrimSpace(job.ErrorMessage),
+			UpdatedAt:      job.UpdatedAt,
+			StartedAt:      job.StartedAt,
+			FinishedAt:     job.FinishedAt,
 		})
 	}
 	return items, nil
@@ -178,6 +211,13 @@ func (service *fileParseQueueService) RunOnce(ctx context.Context) bool {
 		_, _ = service.repository.MarkFailed(job.ID, ocrError)
 		return true
 	}
+	if service.syncer != nil {
+		if apiError := service.syncer.SyncParsedFileJob(ctx, job, parsed); apiError != nil {
+			_, _ = service.repository.MarkFailed(job.ID, apiError.Message)
+			log.Printf("file-parse sync failed jobId=%d fileId=%d versionNo=%d: %s", job.ID, job.FileID, job.VersionNo, apiError.Message)
+			return true
+		}
+	}
 	_, marked := service.repository.MarkSucceeded(job.ID, raw, parsed.Profile.FileType, parsed.Profile.SourceType, parsed.Profile.ParseStrategy, ocrTaskStatus, ocrError)
 	if !marked {
 		log.Printf("file-parse mark succeeded ignored jobId=%d", job.ID)
@@ -207,23 +247,28 @@ func (service *fileParseQueueService) StartWorker(ctx context.Context, interval 
 func (service *fileParseQueueService) toJobDTO(job model.FileParseJob) model.FileParseJobDTO {
 	result := decodeFileParseResult(job.ResultJSON)
 	return model.FileParseJobDTO{
-		JobID:         job.ID,
-		FileID:        job.FileID,
-		VersionNo:     job.VersionNo,
-		Status:        job.Status,
-		RetryCount:    job.RetryCount,
-		ErrorMessage:  job.ErrorMessage,
-		FileType:      job.FileType,
-		SourceType:    job.SourceType,
-		ParseStrategy: job.ParseStrategy,
-		OCRTaskStatus: job.OCRTaskStatus,
-		OCRPending:    job.OCRPending,
-		OCRError:      job.OCRError,
-		UpdatedAt:     job.UpdatedAt,
-		StartedAt:     job.StartedAt,
-		FinishedAt:    job.FinishedAt,
-		LatestResult:  result,
-		ResultReady:   result != nil,
+		JobID:          job.ID,
+		FileID:         job.FileID,
+		VersionNo:      job.VersionNo,
+		SourceScope:    normalizeParseSourceScope(job.SourceScope),
+		ProjectID:      job.ProjectID,
+		ProjectName:    strings.TrimSpace(job.ProjectName),
+		CaseFileID:     job.CaseFileID,
+		ManualCategory: strings.TrimSpace(job.ManualCategory),
+		Status:         job.Status,
+		RetryCount:     job.RetryCount,
+		ErrorMessage:   job.ErrorMessage,
+		FileType:       job.FileType,
+		SourceType:     job.SourceType,
+		ParseStrategy:  job.ParseStrategy,
+		OCRTaskStatus:  job.OCRTaskStatus,
+		OCRPending:     job.OCRPending,
+		OCRError:       job.OCRError,
+		UpdatedAt:      job.UpdatedAt,
+		StartedAt:      job.StartedAt,
+		FinishedAt:     job.FinishedAt,
+		LatestResult:   result,
+		ResultReady:    result != nil,
 	}
 }
 
@@ -267,4 +312,12 @@ func isParseJobOCRTimeout(job model.FileParseJob, timeout time.Duration) bool {
 		return false
 	}
 	return time.Since(job.StartedAt.UTC()) > timeout
+}
+
+func normalizeParseSourceScope(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "file_management"
+	}
+	return trimmed
 }

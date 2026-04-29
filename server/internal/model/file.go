@@ -206,6 +206,11 @@ type FileParseJob struct {
 	ID            int64           `json:"id"`
 	FileID        int64           `json:"fileId"`
 	VersionNo     int             `json:"versionNo"`
+	SourceScope   string          `json:"sourceScope"`
+	ProjectID     int64           `json:"projectId"`
+	ProjectName   string          `json:"projectName"`
+	CaseFileID    int64           `json:"caseFileId"`
+	ManualCategory string         `json:"manualCategory"`
 	Status        string          `json:"status"`
 	RetryCount    int             `json:"retryCount"`
 	ErrorMessage  string          `json:"errorMessage"`
@@ -227,6 +232,11 @@ type FileParseJobDTO struct {
 	JobID          int64               `json:"jobId"`
 	FileID         int64               `json:"fileId"`
 	VersionNo      int                 `json:"versionNo"`
+	SourceScope    string              `json:"sourceScope"`
+	ProjectID      int64               `json:"projectId"`
+	ProjectName    string              `json:"projectName"`
+	CaseFileID     int64               `json:"caseFileId"`
+	ManualCategory string              `json:"manualCategory"`
 	Status         string              `json:"status"`
 	RetryCount     int                 `json:"retryCount"`
 	ErrorMessage   string              `json:"errorMessage"`
@@ -250,6 +260,10 @@ type FileParseQueueItemDTO struct {
 	VersionNo     int        `json:"versionNo"`
 	FileName      string     `json:"fileName"`
 	SourceScope   string     `json:"sourceScope"`
+	ProjectID     int64      `json:"projectId"`
+	ProjectName   string     `json:"projectName"`
+	CaseFileID    int64      `json:"caseFileId"`
+	ManualCategory string    `json:"manualCategory"`
 	FileType      string     `json:"fileType"`
 	SourceType    string     `json:"sourceType"`
 	ParseStrategy string     `json:"parseStrategy"`
@@ -262,6 +276,14 @@ type FileParseQueueItemDTO struct {
 	UpdatedAt     time.Time  `json:"updatedAt"`
 	StartedAt     *time.Time `json:"startedAt,omitempty"`
 	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
+}
+
+type FileParseJobContext struct {
+	SourceScope    string `json:"sourceScope"`
+	ProjectID      int64  `json:"projectId"`
+	ProjectName    string `json:"projectName"`
+	CaseFileID     int64  `json:"caseFileId"`
+	ManualCategory string `json:"manualCategory"`
 }
 
 func (file File) ToDTO(latest *FileVersion) FileDTO {

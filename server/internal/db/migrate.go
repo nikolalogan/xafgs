@@ -369,6 +369,11 @@ CREATE TABLE IF NOT EXISTS file_parse_job (
   id BIGSERIAL PRIMARY KEY,
   file_id BIGINT NOT NULL REFERENCES file(id) ON DELETE CASCADE,
   version_no INT NOT NULL,
+  source_scope VARCHAR(64) NOT NULL DEFAULT 'file_management',
+  project_id BIGINT NOT NULL DEFAULT 0,
+  project_name VARCHAR(256) NOT NULL DEFAULT '',
+  case_file_id BIGINT NOT NULL DEFAULT 0,
+  manual_category VARCHAR(128) NOT NULL DEFAULT '',
   status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')),
   retry_count INT NOT NULL DEFAULT 0,
   error_message TEXT NOT NULL DEFAULT '',
@@ -1080,6 +1085,16 @@ ALTER TABLE file_parse_job
 ADD COLUMN IF NOT EXISTS ocr_pending BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE file_parse_job
 ADD COLUMN IF NOT EXISTS ocr_error TEXT NOT NULL DEFAULT '';
+ALTER TABLE file_parse_job
+ADD COLUMN IF NOT EXISTS source_scope VARCHAR(64) NOT NULL DEFAULT 'file_management';
+ALTER TABLE file_parse_job
+ADD COLUMN IF NOT EXISTS project_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE file_parse_job
+ADD COLUMN IF NOT EXISTS project_name VARCHAR(256) NOT NULL DEFAULT '';
+ALTER TABLE file_parse_job
+ADD COLUMN IF NOT EXISTS case_file_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE file_parse_job
+ADD COLUMN IF NOT EXISTS manual_category VARCHAR(128) NOT NULL DEFAULT '';
 `); err != nil {
 		return fmt.Errorf("migrate user_config search ai config: %w", err)
 	}

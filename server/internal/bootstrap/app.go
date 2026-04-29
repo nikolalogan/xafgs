@@ -186,6 +186,7 @@ func NewApp() (*fiber.App, Config) {
 		systemConfigService,
 		aiClient,
 		knowledgeService,
+		fileParseQueueService,
 	)
 	webSearchClient := service.NewTavilySearchClient(nil)
 	chatService := service.NewChatService(chatRepository, systemConfigService, userConfigService, fileService, webSearchClient, aiClient, knowledgeService)
@@ -223,9 +224,11 @@ func NewApp() (*fiber.App, Config) {
 	workflowDSLGenerateHandler := handler.NewWorkflowDSLGenerateHandler(workflowDSLGenerateService, apiRegistry)
 	knowledgeHandler := handler.NewKnowledgeHandler(knowledgeService, apiRegistry)
 	ocrPreviewHandler := handler.NewOCRPreviewHandler(tableRepairPreviewService, apiRegistry)
+	if syncerAware, ok := fileParseQueueService.(interface{ SetSyncer(service.FileParseJobSyncer) }); ok {
+		syncerAware.SetSyncer(reportingService)
+	}
 	knowledgeService.StartWorker(context.Background(), 3*time.Second)
 	fileParseQueueService.StartWorker(context.Background(), 2*time.Second)
-	reportingService.StartParseWorker(context.Background(), 2*time.Second)
 
 	traceStore := apimeta.NewTraceStore(300)
 	traceMiddleware := middleware.NewTraceMiddleware(traceStore)

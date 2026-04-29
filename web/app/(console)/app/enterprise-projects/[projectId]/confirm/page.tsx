@@ -5,7 +5,6 @@ import { useParams, useRouter } from 'next/navigation'
 import { Button, Card, Collapse, Descriptions, Space, Tag, message } from 'antd'
 import { formatShanghaiDateTime } from '@/lib/time'
 import ProjectWorkflowSteps from '@/components/enterprise-projects/ProjectWorkflowSteps'
-import CaseFileBlockEditor from '@/components/enterprise-projects/CaseFileBlockEditor'
 
 type ApiResponse<T> = {
   message?: string
@@ -51,37 +50,10 @@ type EnterpriseProjectDetailDTO = {
       currentStage: string
       lastError: string
       lastUpdatedTime: string
+      sourceType?: string
+      fileType?: string
     }>
   }>
-}
-
-type DocumentSliceDTO = {
-  id: number
-  caseFileId: number
-  fileId: number
-  versionNo: number
-  pageStart: number
-  pageEnd: number
-  sliceType: string
-  sourceType: string
-  title: string
-  titleLevel: number
-  cleanText: string
-  rawText: string
-  bbox: unknown
-  createdAt: string
-}
-
-type ReportCaseDetailDTO = {
-  case: { id: number }
-  files: Array<{
-    id: number
-    fileType: string
-    sourceType: string
-    finalSubCategory: string
-    updatedAt: string
-  }>
-  slices: DocumentSliceDTO[]
 }
 
 type EnterpriseProjectVectorConfirmResultDTO = {
@@ -129,9 +101,7 @@ export default function EnterpriseProjectConfirmPage() {
   const [msgApi, contextHolder] = message.useMessage()
   const [loading, setLoading] = useState(false)
   const [confirming, setConfirming] = useState(false)
-  const [editingCaseFileID, setEditingCaseFileID] = useState(0)
   const [detail, setDetail] = useState<EnterpriseProjectDetailDTO | null>(null)
-  const [caseDetail, setCaseDetail] = useState<ReportCaseDetailDTO | null>(null)
   const projectId = Number(params?.projectId || 0)
 
   const request = async <T,>(url: string, init?: RequestInit) => {
@@ -159,12 +129,6 @@ export default function EnterpriseProjectConfirmPage() {
     try {
       const detailData = await request<EnterpriseProjectDetailDTO>(`/api/enterprise-projects/${projectId}`, { method: 'GET' })
       setDetail(detailData)
-      if (detailData?.project?.reportCaseId > 0) {
-        const reportCaseData = await request<ReportCaseDetailDTO>(`/api/report-cases/${detailData.project.reportCaseId}`, { method: 'GET' })
-        setCaseDetail(reportCaseData)
-      } else {
-        setCaseDetail(null)
-      }
     } catch (error) {
       msgApi.error(error instanceof Error ? error.message : '加载文件确认数据失败')
     } finally {
@@ -202,23 +166,9 @@ export default function EnterpriseProjectConfirmPage() {
       .map(([category, items]) => ({ category, items }))
   }, [detail?.categories, detail?.uploadedFilesByCategory])
 
-  const caseFiles = caseDetail?.files || []
-  const caseFileMetaMap = useMemo(() => {
-    const map = new Map<number, { fileType: string, sourceType: string }>()
-    for (const file of caseFiles) {
-      map.set(file.id, {
-        fileType: String(file?.fileType || ''),
-        sourceType: String(file?.sourceType || ''),
-      })
-    }
-    return map
-  }, [caseFiles])
-  const isTextualCaseFile = (caseFileId: number) => {
-    const meta = caseFileMetaMap.get(caseFileId)
-    if (!meta)
-      return false
-    const sourceType = meta.sourceType.trim().toLowerCase()
-    const fileType = meta.fileType.trim().toLowerCase()
+  const isTextualCaseFile = (item: EnterpriseProjectDetailDTO['uploadedFilesByCategory'][number]['items'][number]) => {
+    const sourceType = String(item?.sourceType || '').trim().toLowerCase()
+    const fileType = String(item?.fileType || '').trim().toLowerCase()
     if (sourceType === 'native_text' || sourceType === 'text_layer' || sourceType === 'ocr')
       return true
     return ['txt', 'md', 'markdown', 'doc', 'docx', 'pdf'].includes(fileType)
@@ -227,7 +177,7 @@ export default function EnterpriseProjectConfirmPage() {
     let count = 0
     for (const group of groupedFiles) {
       for (const item of group.items) {
-        if (item.parseStatus !== 'succeeded')
+        if (item.currentStage !== '提取完成')
           continue
         if (item.vectorStatus === 'pending' || item.vectorStatus === 'running' || item.vectorStatus === 'succeeded')
           continue
@@ -295,11 +245,11 @@ export default function EnterpriseProjectConfirmPage() {
                   label: (
                     <div className="flex flex-wrap items-center gap-2">
                       <span
-                        className={item.parseStatus === 'succeeded' && isTextualCaseFile(item.caseFileId) ? 'cursor-pointer font-medium text-blue-600' : 'font-medium'}
+                        className={item.currentStage === '提取完成' && isTextualCaseFile(item) ? 'cursor-pointer font-medium text-blue-600' : 'font-medium'}
                         onClick={() => {
-                          if (item.parseStatus !== 'succeeded' || !isTextualCaseFile(item.caseFileId))
+                          if (item.currentStage !== '提取完成' || !isTextualCaseFile(item))
                             return
-                          setEditingCaseFileID(prev => prev === item.caseFileId ? 0 : item.caseFileId)
+                          router.push(`/app/enterprise-projects/${projectId}/files/${item.caseFileId}/markdown`)
                         }}
                       >
                         {item.fileName}
@@ -316,18 +266,11 @@ export default function EnterpriseProjectConfirmPage() {
                         <Descriptions.Item label="版本">{item.versionNo}</Descriptions.Item>
                         <Descriptions.Item label="解析状态"><Tag color={parseStatusColor(item.parseStatus)}>{item.parseStatus}</Tag></Descriptions.Item>
                         {shouldShowVectorStatus(item.vectorStatus) ? <Descriptions.Item label="向量状态"><Tag color={parseStatusColor(item.vectorStatus)}>{item.vectorStatus}</Tag></Descriptions.Item> : null}
+                        <Descriptions.Item label="文件类型">{item.fileType || '-'}</Descriptions.Item>
+                        <Descriptions.Item label="来源类型">{item.sourceType || '-'}</Descriptions.Item>
                         <Descriptions.Item label="最后更新时间">{formatShanghaiDateTime(item.lastUpdatedTime)}</Descriptions.Item>
                         <Descriptions.Item label="错误信息">{item.lastError || '-'}</Descriptions.Item>
                       </Descriptions>
-
-                      {item.parseStatus === 'succeeded' && isTextualCaseFile(item.caseFileId) && editingCaseFileID === item.caseFileId && (
-                        <CaseFileBlockEditor
-                          projectId={projectId}
-                          caseFileId={item.caseFileId}
-                          fileName={item.fileName}
-                          enabled
-                        />
-                      )}
                     </div>
                   ),
                 }))}
