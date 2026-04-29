@@ -1,6 +1,6 @@
 'use client'
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from 'react'
 import {
   ReactFlowProvider,
   useReactFlow,
@@ -14,8 +14,10 @@ import DSLModals from './dify/components/DSLModals'
 import AINodeGenerateModal from './dify/components/AINodeGenerateModal'
 import NodeConfigPanel from './dify/components/NodeConfigPanel'
 import WorkflowEditor from './dify/components/WorkflowEditor'
+import WorkflowNodeLibrary, { WORKFLOW_NODE_DND_TYPE } from './WorkflowNodeLibrary'
 import WorkflowToolbar from './dify/components/WorkflowToolbar'
 import WorkflowRunModal from './dify/components/WorkflowRunModal'
+import WorkflowWorkbench from './WorkflowWorkbench'
 import { demoDSL, edgeTypes, nodeTypeLabel, nodeTypes } from './dify/config/workflowPreset'
 import { CUSTOM_EDGE, CUSTOM_NODE, ITERATION_CHILDREN_Z_INDEX } from './dify/core/constants'
 import { ensureNodeConfig } from './dify/core/node-config'
@@ -323,6 +325,7 @@ const getToken = () => {
 function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: WorkflowCanvasInnerProps) {
   const [runModalOpen, setRunModalOpen] = useState(false)
   const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ workflowId, nodes: [], edges: [], workflowParameters: [] })
+  const [nodeConfigOpen, setNodeConfigOpen] = useState(false)
   const [nodesForPanel, setNodesForPanel] = useState<DifyNode[]>([])
   const [llmModelOptions, setLLMModelOptions] = useState<Array<{ name: string; label: string }>>([{ name: 'gpt-4o-mini', label: 'GPT-4o mini' }])
   const [defaultLLMModel, setDefaultLLMModel] = useState('gpt-4o-mini')
@@ -366,7 +369,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     setWorkflowParameters,
     setWorkflowVariableScopes,
   } = useWorkflowCanvasState(initialDSL)
-  const { fitView, setViewport, getViewport } = useReactFlow()
+  const { fitView, setViewport, getViewport, project } = useReactFlow()
 
   const { canUndo, canRedo, record, undo, redo, resetHistory } = useWorkflowHistoryStore()
   const {
@@ -381,6 +384,17 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     clearMenus,
   } = useWorkflowMenuStore()
   const { clipboard, setClipboard } = useWorkflowClipboardStore()
+
+  const openNodeConfig = useCallback((node: DifyNode) => {
+    setActiveNode(node)
+    setNodeConfigOpen(true)
+  }, [setActiveNode])
+
+  const closeNodeConfig = useCallback(() => {
+    clearMenus()
+    setNodeConfigOpen(false)
+    setActiveNode(null)
+  }, [clearMenus, setActiveNode])
 
   useEffect(() => {
     resetHistory({ nodes: parsed.nodes, edges: parsed.edges })
@@ -455,6 +469,35 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       return prev
     })
   }, [nodes])
+
+  useEffect(() => {
+    if (!activeNode) {
+      setNodeConfigOpen(false)
+      return
+    }
+
+    const childRef = parseChildNodeId(activeNode.id)
+    if (!childRef) {
+      if (nodes.some(node => node.id === activeNode.id))
+        return
+      setActiveNode(null)
+      setNodeConfigOpen(false)
+      return
+    }
+
+    const parentNode = nodes.find(node => node.id === childRef.parentId)
+    if (parentNode?.data.type !== BlockEnum.Iteration) {
+      setActiveNode(null)
+      setNodeConfigOpen(false)
+      return
+    }
+    const config = ensureNodeConfig(BlockEnum.Iteration, parentNode.data.config)
+    if (config.children.nodes.some(node => node.id === childRef.childId))
+      return
+
+    setActiveNode(null)
+    setNodeConfigOpen(false)
+  }, [activeNode, nodes, setActiveNode])
 
   useEffect(() => {
     const openRunModal = () => {
@@ -544,6 +587,9 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     setClipboard,
     record,
   })
+  const handleDeleteEdge = useCallback((edgeId: string) => {
+    deleteSelection([], [edgeId])
+  }, [deleteSelection])
 
   const { handleNodeContextMenu, handleEdgeContextMenu, handlePaneContextMenu } = useContextMenuInteractions({
     canvasContainerRef,
@@ -563,6 +609,12 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     pasteClipboard: () => pasteClipboard(),
     duplicateSelection: () => duplicateSelection(),
     deleteSelection: () => deleteSelection(),
+    onEscape: () => {
+      if (!nodeConfigOpen)
+        return false
+      closeNodeConfig()
+      return true
+    },
   })
   const issues = useMemo(() => validateWorkflow(nodesForPanel, edges, workflowParameters), [edges, nodesForPanel, workflowParameters])
   const aiVariableOptions = useMemo(
@@ -722,7 +774,13 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
   }, [iterationLayouts, nodes])
 
   const renderEdges = useMemo(() => {
-    const mergedEdges: DifyEdge[] = [...edges]
+    const mergedEdges: DifyEdge[] = edges.map(edge => ({
+      ...edge,
+      data: {
+        ...edge.data,
+        _onDelete: handleDeleteEdge,
+      },
+    }))
     nodes.forEach((node) => {
       if (node.data.type !== BlockEnum.Iteration)
         return
@@ -737,12 +795,13 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
           type: edge.type ?? CUSTOM_EDGE,
           data: {
             _iterationParentId: node.id,
+            _onDelete: handleDeleteEdge,
           },
         })
       })
     })
     return mergedEdges
-  }, [edges, nodes])
+  }, [edges, handleDeleteEdge, nodes])
 
   const updateIterationChildren = useCallback((
     currentNodes: DifyNode[],
@@ -971,12 +1030,12 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     if (!node)
       return
 
-    setActiveNode(node)
+    openNodeConfig(node)
     setChecklistOpen(false)
     fitView({ nodes: [{ id: node.id }], duration: 220, padding: 0.28 })
   }
 
-  const handleAddNode = (type: BlockEnum) => {
+  const handleAddNode = (type: BlockEnum, positionOverride?: { x: number; y: number }) => {
     const iterationParentId = (() => {
       if (!activeNode)
         return null
@@ -1012,17 +1071,17 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       setNodes(nextNodes)
       const nextParentNode = nextNodes.find(node => node.id === iterationParentId) ?? null
       if (nextParentNode)
-        setActiveNode(nextParentNode)
+        openNodeConfig(nextParentNode)
       record({ nodes: nextNodes, edges })
       fitView({ nodes: [{ id: iterationParentId }], duration: 220, padding: 0.28 })
       return
     }
 
-    const createdNode = addNode(type, resolveInsertPosition(nodes, activeNode))
+    const createdNode = addNode(type, positionOverride ?? resolveInsertPosition(nodes, activeNode))
     if (!createdNode)
       return
 
-    setActiveNode(createdNode)
+    openNodeConfig(createdNode)
     if (type === BlockEnum.Iteration)
       fitView({ nodes: [{ id: createdNode.id }], duration: 220, padding: 0.28 })
   }
@@ -1114,9 +1173,9 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
         : null
       const nextParentNode = nextNodes.find(node => node.id === iterationParentId) ?? null
       if (insertedChildNode)
-        setActiveNode(insertedChildNode)
+        openNodeConfig(insertedChildNode)
       else if (nextParentNode)
-        setActiveNode(nextParentNode)
+        openNodeConfig(nextParentNode)
       record({ nodes: nextNodes, edges })
       fitView({ nodes: [{ id: iterationParentId }], duration: 220, padding: 0.28 })
       if (!linked && cannotLink)
@@ -1164,13 +1223,13 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
 
     setNodes(nextNodes)
     setEdges(nextEdges)
-    setActiveNode(nextNode)
+    openNodeConfig(nextNode)
     record({ nodes: nextNodes, edges: nextEdges })
     if (type === BlockEnum.Iteration)
       fitView({ nodes: [{ id: nextNode.id }], duration: 220, padding: 0.28 })
     if (!linked && cannotLink)
       globalThis.alert('节点已插入，但当前选中节点无法自动连线')
-  }, [activeNode, edges, fitView, idRef, nodeTypeLabel, nodes, record, setActiveNode, setEdges, setNodes, updateIterationChildren])
+  }, [activeNode, edges, fitView, idRef, nodeTypeLabel, nodes, openNodeConfig, record, setEdges, setNodes, updateIterationChildren])
 
   const handleSaveActiveNode = () => {
     if (!activeNode)
@@ -1206,7 +1265,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     const node = nodes.find(item => item.id === nodeId && item.data.type === BlockEnum.Iteration)
     if (!node)
       return
-    setActiveNode(node)
+    openNodeConfig(node)
     fitView({ nodes: [{ id: node.id }], duration: 220, padding: 0.28 })
   }
 
@@ -1271,139 +1330,199 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     getDSL,
   }), [activeNode, edges, globalVariables, workflowParameters, workflowVariableScopes])
 
-  return (
-    <div className="space-y-3">
-      <WorkflowToolbar
-        canUndo={canUndo}
-        canRedo={canRedo}
-        issueCount={issues.length}
-        onAddNode={handleAddNode}
-        onUndo={doUndo}
-        onRedo={doRedo}
-        onLayout={handleAutoLayout}
-        onSave={handleSaveActiveNode}
-        onRun={() => {
-          setRunSnapshot({
-            workflowId,
-            nodes: JSON.parse(JSON.stringify(nodes)) as DifyNode[],
-            edges: JSON.parse(JSON.stringify(edges)) as DifyEdge[],
-            workflowParameters: JSON.parse(JSON.stringify(workflowParameters)) as typeof workflowParameters,
-          })
-          setRunModalOpen(true)
-        }}
-        onOpenGlobalParams={() => setGlobalVariableOpen(true)}
-        onOpenChecklist={() => setChecklistOpen(true)}
-        onOpenAINodeGenerate={() => setAINodeGenerateOpen(true)}
-        onExport={exportDSL}
-        onOpenImport={() => setImportOpen(true)}
-        onReset={reset}
-      />
+  const handleCanvasDragOver = useCallback((event: ReactDragEvent) => {
+    if (!Array.from(event.dataTransfer.types).includes(WORKFLOW_NODE_DND_TYPE))
+      return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }, [])
 
-      <div className="grid grid-cols-12 gap-3">
-        <NodeConfigPanel
-          nodes={nodesForPanel}
-          workflowParameters={workflowParameters}
-          globalVariables={globalVariables}
-          workflowVariableScopes={workflowVariableScopes}
-          llmModelOptions={llmModelOptions}
-          defaultLLMModel={defaultLLMModel}
-          defaultCodeModel={defaultCodeModel}
-          activeNode={activeNode}
-          onChange={setActiveNode}
-          onChangeScopes={setWorkflowVariableScopes}
-          onFocusIterationRegion={handleFocusIterationRegion}
-          onSave={handleSaveActiveNode}
-        />
-        <WorkflowEditor
-          canvasContainerRef={canvasContainerRef}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={renderNodes}
-          edges={renderEdges}
-          nodeMenu={nodeMenu}
-          edgeMenu={edgeMenu}
-          panelMenu={panelMenu}
-          selectionMenu={selectionMenu}
-          canPaste={clipboard.nodes.length > 0}
-          connectionLineComponent={CustomConnectionLine}
-          connectionLineZIndex={ITERATION_CHILDREN_Z_INDEX}
-          actions={{
-            flow: {
-              onNodesChange,
-              onEdgesChange,
-              onConnect,
-              onNodeDragStop: handleNodeDragStop,
-              onNodeClick: (_, node) => {
-                setActiveNode(node)
+  const handleCanvasDrop = useCallback((event: ReactDragEvent) => {
+    const rawType = event.dataTransfer.getData(WORKFLOW_NODE_DND_TYPE)
+    if (!rawType)
+      return
+    event.preventDefault()
+    const type = rawType as BlockEnum
+    const bounds = canvasContainerRef.current?.getBoundingClientRect()
+    if (!bounds) {
+      handleAddNode(type)
+      return
+    }
+    const position = project({
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+    })
+    handleAddNode(type, position)
+  }, [canvasContainerRef, handleAddNode, project])
+
+  return (
+    <div className="space-y-4">
+      <WorkflowWorkbench
+        library={(
+          <WorkflowNodeLibrary
+            activeNodeType={activeNode?.data.type}
+            onAddNode={handleAddNode}
+          />
+        )}
+        canvas={(
+          <WorkflowEditor
+            canvasContainerRef={canvasContainerRef}
+            title="工作流工作台"
+            subtitle="保留现有 Dify DSL、右键菜单、运行与保存链路，只重做核心画布工作区。"
+            activeNodeTitle={activeNode?.data.title}
+            statusBadges={[
+              `${nodes.length} 个节点`,
+              `${edges.length} 条连线`,
+              `${issues.length} 个检查项`,
+            ]}
+            nodeConfigOpen={nodeConfigOpen && !!activeNode}
+            nodeConfigPanel={(
+              <NodeConfigPanel
+                nodes={nodesForPanel}
+                workflowParameters={workflowParameters}
+                globalVariables={globalVariables}
+                workflowVariableScopes={workflowVariableScopes}
+                llmModelOptions={llmModelOptions}
+                defaultLLMModel={defaultLLMModel}
+                defaultCodeModel={defaultCodeModel}
+                activeNode={activeNode}
+                onChange={setActiveNode}
+                onChangeScopes={setWorkflowVariableScopes}
+                onFocusIterationRegion={handleFocusIterationRegion}
+                onSave={handleSaveActiveNode}
+              />
+            )}
+            onCloseNodeConfig={closeNodeConfig}
+            toolbar={(
+              <WorkflowToolbar
+                canUndo={canUndo}
+                canRedo={canRedo}
+                issueCount={issues.length}
+                onUndo={doUndo}
+                onRedo={doRedo}
+                onLayout={handleAutoLayout}
+                onSave={handleSaveActiveNode}
+                onRun={() => {
+                  setRunSnapshot({
+                    workflowId,
+                    nodes: JSON.parse(JSON.stringify(nodes)) as DifyNode[],
+                    edges: JSON.parse(JSON.stringify(edges)) as DifyEdge[],
+                    workflowParameters: JSON.parse(JSON.stringify(workflowParameters)) as typeof workflowParameters,
+                  })
+                  setRunModalOpen(true)
+                }}
+                onOpenGlobalParams={() => {
+                  setWorkflowParamsOpen(false)
+                  setChecklistOpen(false)
+                  setGlobalVariableOpen(true)
+                }}
+                onOpenWorkflowParams={() => {
+                  setGlobalVariableOpen(false)
+                  setChecklistOpen(false)
+                  setWorkflowParamsOpen(true)
+                }}
+                onOpenChecklist={() => {
+                  setGlobalVariableOpen(false)
+                  setWorkflowParamsOpen(false)
+                  setChecklistOpen(true)
+                }}
+                onOpenAINodeGenerate={() => setAINodeGenerateOpen(true)}
+                onExport={exportDSL}
+                onOpenImport={() => setImportOpen(true)}
+                onReset={reset}
+              />
+            )}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            nodes={renderNodes}
+            edges={renderEdges}
+            nodeMenu={nodeMenu}
+            edgeMenu={edgeMenu}
+            panelMenu={panelMenu}
+            selectionMenu={selectionMenu}
+            canPaste={clipboard.nodes.length > 0}
+            connectionLineComponent={CustomConnectionLine}
+            connectionLineZIndex={ITERATION_CHILDREN_Z_INDEX}
+            actions={{
+              flow: {
+                onNodesChange,
+                onEdgesChange,
+                onConnect,
+                onNodeDragStop: handleNodeDragStop,
+                onNodeClick: (_, node) => {
+                  openNodeConfig(node)
+                },
+                onPaneClick: closeNodeConfig,
+                onNodeContextMenu: (event, node) => {
+                  if (parseChildNodeId(node.id))
+                    return
+                  handleNodeContextMenu(event, node)
+                },
+                onEdgeContextMenu: (event, edge) => {
+                  if (parseChildEdgeId(edge.id))
+                    return
+                  handleEdgeContextMenu(event, edge)
+                },
+                onPaneContextMenu: handlePaneContextMenu,
+                onDrop: handleCanvasDrop,
+                onDragOver: handleCanvasDragOver,
               },
-              onPaneClick: clearMenus,
-              onNodeContextMenu: (event, node) => {
-                if (parseChildNodeId(node.id))
-                  return
-                handleNodeContextMenu(event, node)
+              nodeMenu: {
+                onClose: () => setNodeMenu(undefined),
+                onCopy: () => copySelection(nodeMenu ? [nodeMenu.nodeId] : []),
+                onDuplicate: () => duplicateSelection(nodeMenu ? [nodeMenu.nodeId] : []),
+                onDelete: () => deleteSelection(nodeMenu ? [nodeMenu.nodeId] : []),
               },
-              onEdgeContextMenu: (event, edge) => {
-                if (parseChildEdgeId(edge.id))
-                  return
-                handleEdgeContextMenu(event, edge)
+              edgeMenu: {
+                onClose: () => setEdgeMenu(undefined),
+                onDelete: () => deleteSelection([], edgeMenu ? [edgeMenu.edgeId] : []),
               },
-              onPaneContextMenu: handlePaneContextMenu,
-            },
-            nodeMenu: {
-              onClose: () => setNodeMenu(undefined),
-              onCopy: () => copySelection(nodeMenu ? [nodeMenu.nodeId] : []),
-              onDuplicate: () => duplicateSelection(nodeMenu ? [nodeMenu.nodeId] : []),
-              onDelete: () => deleteSelection(nodeMenu ? [nodeMenu.nodeId] : []),
-            },
-            edgeMenu: {
-              onClose: () => setEdgeMenu(undefined),
-              onDelete: () => deleteSelection([], edgeMenu ? [edgeMenu.edgeId] : []),
-            },
-            panelMenu: {
-              onClose: () => setPanelMenu(undefined),
-              onPaste: () => pasteClipboard(panelMenu),
-              onExport: exportDSL,
-              onImport: () => setImportOpen(true),
-            },
-            selectionMenu: {
-              onClose: () => setSelectionMenu(undefined),
-              onCopy: () => copySelection(),
-              onDuplicate: () => duplicateSelection(),
-              onDelete: () => deleteSelection(),
-              onAlign: alignSelection,
-            },
-            quickPanel: {
-              globalVariableOpen,
-              workflowParamsOpen,
-              checklistOpen,
-              issueCount: issues.length,
-              globalVariables,
-              workflowParameters,
-              issues,
-              onOpenGlobalVariables: () => {
-                setWorkflowParamsOpen(false)
-                setChecklistOpen(false)
-                setGlobalVariableOpen(true)
+              panelMenu: {
+                onClose: () => setPanelMenu(undefined),
+                onPaste: () => pasteClipboard(panelMenu),
+                onExport: exportDSL,
+                onImport: () => setImportOpen(true),
               },
-              onOpenWorkflowParams: () => {
-                setGlobalVariableOpen(false)
-                setChecklistOpen(false)
-                setWorkflowParamsOpen(true)
+              selectionMenu: {
+                onClose: () => setSelectionMenu(undefined),
+                onCopy: () => copySelection(),
+                onDuplicate: () => duplicateSelection(),
+                onDelete: () => deleteSelection(),
+                onAlign: alignSelection,
               },
-              onOpenChecklist: () => {
-                setGlobalVariableOpen(false)
-                setWorkflowParamsOpen(false)
-                setChecklistOpen(true)
+              quickPanel: {
+                globalVariableOpen,
+                workflowParamsOpen,
+                checklistOpen,
+                issueCount: issues.length,
+                globalVariables,
+                workflowParameters,
+                issues,
+                onOpenGlobalVariables: () => {
+                  setWorkflowParamsOpen(false)
+                  setChecklistOpen(false)
+                  setGlobalVariableOpen(true)
+                },
+                onOpenWorkflowParams: () => {
+                  setGlobalVariableOpen(false)
+                  setChecklistOpen(false)
+                  setWorkflowParamsOpen(true)
+                },
+                onOpenChecklist: () => {
+                  setGlobalVariableOpen(false)
+                  setWorkflowParamsOpen(false)
+                  setChecklistOpen(true)
+                },
+                onCloseGlobalVariables: () => setGlobalVariableOpen(false),
+                onCloseWorkflowParams: () => setWorkflowParamsOpen(false),
+                onChangeWorkflowParams: setWorkflowParameters,
+                onCloseChecklist: () => setChecklistOpen(false),
+                onLocateIssueNode: handleLocateNode,
               },
-              onCloseGlobalVariables: () => setGlobalVariableOpen(false),
-              onCloseWorkflowParams: () => setWorkflowParamsOpen(false),
-              onChangeWorkflowParams: setWorkflowParameters,
-              onCloseChecklist: () => setChecklistOpen(false),
-              onLocateIssueNode: handleLocateNode,
-            },
-          }}
-        />
-      </div>
+            }}
+          />
+        )}
+      />
 
       <AINodeGenerateModal
         open={aiNodeGenerateOpen}

@@ -1,4 +1,4 @@
-FROM node:22-alpine AS builder
+FROM docker.1panel.live/library/node:22-alpine AS builder
 WORKDIR /app
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 RUN npm config set registry ${NPM_REGISTRY}
@@ -7,7 +7,7 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine AS runner
+FROM docker.1panel.live/library/node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /app/.next/standalone ./

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Form, Input, InputNumber, Select, message } from 'antd'
 import WorkflowCanvas from '../WorkflowCanvas'
+import WorkflowEditorFrame from '../module/WorkflowEditorFrame'
+import WorkflowModuleShell from '../module/WorkflowModuleShell'
 import { parseDifyWorkflowDSL, toDifyWorkflowDSL } from '../dify/core/dsl'
 import type { DifyWorkflowDSL } from '../dify/core/types'
 import { BlockEnum } from '../dify/core/types'
@@ -77,6 +79,17 @@ const getToken = () => {
     || ''
 }
 
+const menuOptions = [
+  { label: '储备', value: 'reserve' },
+  { label: '评审', value: 'review' },
+  { label: '保后', value: 'postloan' },
+]
+
+const statusOptions = [
+  { label: '启用', value: 'active' },
+  { label: '停用', value: 'disabled' },
+]
+
 type WorkflowConfigPageProps = {
   workflowId?: number
 }
@@ -144,7 +157,6 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
       form.setFieldsValue({
         workflowKey: '',
         name: '',
-        description: '',
         menuKey: 'reserve',
         status: 'active',
         breakerWindowMinutes: 1,
@@ -164,7 +176,6 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
         form.setFieldsValue({
           workflowKey: detail.workflowKey,
           name: detail.name,
-          description: detail.description,
           menuKey: detail.menuKey || 'reserve',
           status: detail.status,
           breakerWindowMinutes: detail.breakerWindowMinutes || 1,
@@ -202,7 +213,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
           body: JSON.stringify({
             workflowKey: values.workflowKey,
             name: values.name,
-            description: values.description,
+            description: '',
             menuKey: values.menuKey,
             status: values.status,
             breakerWindowMinutes: Number(values.breakerWindowMinutes),
@@ -219,7 +230,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
         method: 'PUT',
         body: JSON.stringify({
           name: values.name,
-          description: values.description,
+          description: '',
           menuKey: values.menuKey,
           status: values.status,
           breakerWindowMinutes: Number(values.breakerWindowMinutes),
@@ -304,114 +315,112 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
   }
 
   return (
-    <div className="space-y-3">
+    <WorkflowModuleShell
+      title={isCreate ? '新建工作流' : '编辑工作流'}
+      description="保留当前工作流 DSL 与运行接口，只替换工作流模块的编辑器页面组织方式。"
+      actions={(
+        <>
+          <Button onClick={() => router.push('/app/workflows')}>返回列表</Button>
+          <Button type="primary" loading={submitting} onClick={save}>保存</Button>
+        </>
+      )}
+    >
       {contextHolder}
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm font-semibold text-gray-900">
-            {isCreate ? '新建工作流配置' : '编辑工作流配置'}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button onClick={() => router.push('/app/workflows')}>返回列表</Button>
-            <Button type="primary" loading={submitting} onClick={save}>保存</Button>
-          </div>
-        </div>
-        <Form form={form} layout="vertical" disabled={loading}>
-          <Form.Item
-            label="Workflow Key"
-            name="workflowKey"
-            rules={[{ required: true, message: '请输入 workflowKey' }]}
-          >
-            <Input placeholder="例如：order_risk_check" disabled={!isCreate} />
-          </Form.Item>
-          <Form.Item
-            label="上级菜单"
-            name="menuKey"
-            rules={[{ required: true, message: '请选择上级菜单' }]}
-          >
-            <Select
-              options={[
-                { label: '储备', value: 'reserve' },
-                { label: '评审', value: 'review' },
-                { label: '保后', value: 'postloan' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item
-            label="名称"
-            name="name"
-            rules={[{ required: true, message: '请输入名称' }]}
-          >
-            <Input placeholder="请输入工作流名称" />
-          </Form.Item>
-          <Form.Item label="描述" name="description">
-            <Input.TextArea rows={3} placeholder="请输入工作流描述" />
-          </Form.Item>
-          <Form.Item
-            label="状态"
-            name="status"
-            rules={[{ required: true, message: '请选择状态' }]}
-          >
-            <Select
-              options={[
-                { label: '启用', value: 'active' },
-                { label: '停用', value: 'disabled' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item label="熔断频率" required>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-500">每</span>
-              <Form.Item
-                name="breakerWindowMinutes"
-                noStyle
-                rules={[{ required: true, message: '请输入分钟' }]}
-              >
-                <InputNumber min={1} precision={0} className="!w-[120px]" placeholder="分钟" />
-              </Form.Item>
-              <span className="text-sm text-gray-500">分钟</span>
-              <Form.Item
-                name="breakerMaxRequests"
-                noStyle
-                rules={[{ required: true, message: '请输入次数' }]}
-              >
-                <InputNumber min={1} precision={0} className="!w-[120px]" placeholder="次数" />
-              </Form.Item>
-              <span className="text-sm text-gray-500">次</span>
-            </div>
-          </Form.Item>
-        </Form>
-        <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-xs font-semibold text-gray-700">可视化编排</div>
-            <Button
-              size="small"
-              onClick={() => setShowAdvancedJSON(prev => !prev)}
-            >
-              {showAdvancedJSON ? '收起高级 JSON' : '高级 JSON'}
-            </Button>
-          </div>
-          <WorkflowCanvas
-            ref={canvasRef}
-            initialDSL={initialCanvasDSL}
-            workflowId={workflowId}
-            onDSLChange={showAdvancedJSON ? handleDSLChange : undefined}
-          />
-          {showAdvancedJSON && (
-            <div className="mt-3 space-y-2">
-              <Input.TextArea
-                value={advancedDSLText}
-                onChange={event => setAdvancedDSLText(event.target.value)}
-                rows={12}
-                placeholder="请输入 DSL JSON"
-              />
-              <div className="flex justify-end">
-                <Button size="small" onClick={applyAdvancedJSON}>应用到画布</Button>
+      <Form form={form} layout="vertical" disabled={loading}>
+        <WorkflowEditorFrame
+          header={(
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div className="space-y-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    {isCreate ? 'Create Mode' : 'Edit Mode'}
+                  </div>
+                  <div className="mt-1 text-xl font-semibold text-slate-950">
+                    {isCreate ? '配置新的工作流骨架' : '维护现有工作流定义'}
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <Form.Item
+                    label="Workflow Key"
+                    name="workflowKey"
+                    rules={[{ required: true, message: '请输入 workflowKey' }]}
+                    className="mb-0"
+                  >
+                    <Input placeholder="例如：order_risk_check" disabled={!isCreate} />
+                  </Form.Item>
+                  <Form.Item
+                    label="工作流名称"
+                    name="name"
+                    rules={[{ required: true, message: '请输入名称' }]}
+                    className="mb-0"
+                  >
+                    <Input placeholder="请输入工作流名称" />
+                  </Form.Item>
+                  <Form.Item
+                    label="上级菜单"
+                    name="menuKey"
+                    rules={[{ required: true, message: '请选择上级菜单' }]}
+                    className="mb-0"
+                  >
+                    <Select options={menuOptions} />
+                  </Form.Item>
+                  <Form.Item
+                    label="状态"
+                    name="status"
+                    rules={[{ required: true, message: '请选择状态' }]}
+                    className="mb-0"
+                  >
+                    <Select options={statusOptions} />
+                  </Form.Item>
+                </div>
+              </div>
+              <div className="grid min-w-[260px] gap-3 rounded-2xl bg-slate-50 p-4 sm:grid-cols-2 xl:w-[320px] xl:grid-cols-1">
+                <Form.Item label="熔断窗口（分钟）" name="breakerWindowMinutes" rules={[{ required: true, message: '请输入分钟' }]} className="mb-0">
+                  <InputNumber min={1} precision={0} className="!w-full" placeholder="分钟" />
+                </Form.Item>
+                <Form.Item label="熔断阈值（次数）" name="breakerMaxRequests" rules={[{ required: true, message: '请输入次数' }]} className="mb-0">
+                  <InputNumber min={1} precision={0} className="!w-full" placeholder="次数" />
+                </Form.Item>
               </div>
             </div>
           )}
-        </div>
-      </div>
-    </div>
+          canvas={(
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Workflow Canvas</div>
+                  <div className="mt-1 text-lg font-semibold text-slate-950">可视化编排</div>
+                </div>
+                <Button size="small" onClick={() => setShowAdvancedJSON(prev => !prev)}>
+                  {showAdvancedJSON ? '收起高级 JSON' : '高级 JSON'}
+                </Button>
+              </div>
+              <WorkflowCanvas
+                ref={canvasRef}
+                initialDSL={initialCanvasDSL}
+                workflowId={workflowId}
+                onDSLChange={showAdvancedJSON ? handleDSLChange : undefined}
+              />
+            </div>
+          )}
+          sidebar={showAdvancedJSON
+            ? (
+                <div className="space-y-2">
+                  <div className="text-sm font-semibold text-slate-900">高级 JSON</div>
+                  <Input.TextArea
+                    value={advancedDSLText}
+                    onChange={event => setAdvancedDSLText(event.target.value)}
+                    rows={16}
+                    placeholder="请输入 DSL JSON"
+                  />
+                  <div className="flex justify-end">
+                    <Button size="small" onClick={applyAdvancedJSON}>应用到画布</Button>
+                  </div>
+                </div>
+              )
+            : undefined}
+        />
+      </Form>
+    </WorkflowModuleShell>
   )
 }

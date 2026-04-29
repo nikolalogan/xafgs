@@ -276,6 +276,7 @@ export type DifyEdgeData = {
   _forceStroke?: string
   _connectedNodeIsHovering?: boolean
   _waitingRun?: boolean
+  _onDelete?: (edgeId: string) => void
 }
 
 export type DifyNode = ReactFlowNode<DifyNodeData>

@@ -1,5 +1,6 @@
 import CustomEdge from '../components/CustomEdge'
 import CustomNode from '../components/CustomNode'
+import { workflowNodeTypeLabel } from '../components/nodeVisuals'
 import { CUSTOM_EDGE, CUSTOM_NODE } from '../core/constants'
 import { defaultGlobalVariables } from '../core/global-variables'
 import { defaultWorkflowParameters } from '../core/workflow-parameters'
@@ -243,17 +244,7 @@ export const demoDSL: DifyWorkflowDSL = {
   viewport: { x: -40, y: -40, zoom: 0.68 },
 }
 
-export const nodeTypeLabel: Record<BlockEnum, string> = {
-  [BlockEnum.Start]: '开始',
-  [BlockEnum.End]: '结束',
-  [BlockEnum.LLM]: 'LLM',
-  [BlockEnum.IfElse]: '条件分支',
-  [BlockEnum.Iteration]: '迭代',
-  [BlockEnum.Code]: '代码',
-  [BlockEnum.HttpRequest]: 'HTTP',
-  [BlockEnum.ApiRequest]: 'API 请求',
-  [BlockEnum.Input]: '输入',
-}
+export const nodeTypeLabel: Record<BlockEnum, string> = workflowNodeTypeLabel
 
 export const nodeTypes = {
   [CUSTOM_NODE]: CustomNode,

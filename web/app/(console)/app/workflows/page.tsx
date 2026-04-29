@@ -3,9 +3,11 @@
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { UploadOutlined } from '@ant-design/icons'
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Upload, message } from 'antd'
+import { Button, Form, Input, Modal, Select, Space, Upload, message } from 'antd'
 import { parseDifyWorkflowDSL } from '@/components/workflow/dify/core/dsl'
 import { validateWorkflow } from '@/components/workflow/dify/core/validation'
+import WorkflowModuleShell from '@/components/workflow/module/WorkflowModuleShell'
+import WorkflowsListView from '@/components/workflow/module/WorkflowsListView'
 
 type WorkflowStatus = 'active' | 'disabled'
 type WorkflowMenuKey = '' | 'reserve' | 'review' | 'postloan'
@@ -60,16 +62,6 @@ type SystemConfigDTO = {
 type ApiResponse<T> = {
   message?: string
   data?: T
-}
-
-const statusColorMap: Record<WorkflowStatus, string> = {
-  active: 'green',
-  disabled: 'default',
-}
-
-const statusLabelMap: Record<WorkflowStatus, string> = {
-  active: '启用',
-  disabled: '停用',
 }
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -441,84 +433,55 @@ function WorkflowsPageInner() {
   }
 
   return (
-    <div className="space-y-3">
+    <WorkflowModuleShell
+      title={`工作流配置列表${menuKeyLabel ? ` · ${menuKeyLabel}` : ''}`}
+      description="沿用当前工作流接口与版本管理逻辑，替换列表页的展示结构与操作编排。"
+      actions={(
+        <Space wrap>
+          <Button onClick={openAICreate}>AI生成</Button>
+          <Button type="primary" onClick={() => router.push('/app/workflows/new')}>新增工作流</Button>
+        </Space>
+      )}
+    >
       {contextHolder}
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm font-semibold text-gray-900">
-            工作流配置列表{menuKeyLabel ? `（${menuKeyLabel}）` : ''}
+      <div className="space-y-4">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Overview</div>
+            <div className="mt-2 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl bg-white px-4 py-3">
+                <div className="text-xs uppercase tracking-[0.14em] text-slate-400">工作流总数</div>
+                <div className="mt-1 text-2xl font-semibold text-slate-950">{workflows.length}</div>
+              </div>
+              <div className="rounded-2xl bg-white px-4 py-3">
+                <div className="text-xs uppercase tracking-[0.14em] text-slate-400">当前筛选</div>
+                <div className="mt-1 text-lg font-semibold text-slate-950">{menuKeyLabel || '全部'}</div>
+              </div>
+              <div className="rounded-2xl bg-white px-4 py-3">
+                <div className="text-xs uppercase tracking-[0.14em] text-slate-400">已发布数量</div>
+                <div className="mt-1 text-2xl font-semibold text-slate-950">
+                  {filteredWorkflows.filter(item => item.currentPublishedVersionNo > 0).length}
+                </div>
+              </div>
+            </div>
           </div>
-          <Space>
-            <Button onClick={openAICreate}>AI生成</Button>
-            <Button type="primary" onClick={() => router.push('/app/workflows/new')}>新增工作流</Button>
-          </Space>
+          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Current Contract</div>
+            <div className="mt-2 text-sm leading-6 text-slate-600">
+              列表页只替换视觉层，继续使用现有 `/api/workflows`、版本回滚、发布/下线与 AI 生成链路。
+            </div>
+          </div>
         </div>
-        <Table<WorkflowDTO>
-          rowKey="id"
-          loading={loading}
-          dataSource={filteredWorkflows}
-          pagination={{ pageSize: 8, showSizeChanger: false }}
-          columns={[
-            { title: 'ID', dataIndex: 'id', width: 90 },
-            { title: 'Key', dataIndex: 'workflowKey', width: 220 },
-            { title: '名称', dataIndex: 'name', width: 180 },
-            {
-              title: '菜单',
-              dataIndex: 'menuKey',
-              width: 110,
-              render: (value: WorkflowMenuKey) => {
-                if (value === 'reserve')
-                  return '储备'
-                if (value === 'review')
-                  return '评审'
-                if (value === 'postloan')
-                  return '保后'
-                return value
-              },
-            },
-            {
-              title: '状态',
-              dataIndex: 'status',
-              width: 120,
-              render: (status: WorkflowStatus) => (
-                <Tag color={statusColorMap[status]}>
-                  {statusLabelMap[status]}
-                </Tag>
-              ),
-            },
-            { title: '草稿版本', dataIndex: 'currentDraftVersionNo', width: 110 },
-            { title: '发布版本', dataIndex: 'currentPublishedVersionNo', width: 110 },
-            {
-              title: '更新时间',
-              dataIndex: 'updatedAt',
-              width: 200,
-              render: (value: string) => new Date(value).toLocaleString(),
-            },
-            {
-              title: '操作',
-              key: 'actions',
-              render: (_, record) => (
-                <Space>
-                  <Button size="small" onClick={() => router.push(`/app/workflows/${record.id}`)}>修改</Button>
-                  <Button size="small" onClick={() => router.push(`/app/workflows/${record.id}/run`)}>运行</Button>
-                  {record.currentPublishedVersionNo > 0
-                    ? <Button size="small" onClick={() => offline(record)}>下线</Button>
-                    : <Button size="small" onClick={() => publish(record)}>发布</Button>}
-                  <Button size="small" onClick={() => openRollback(record)}>回滚</Button>
-                  <Popconfirm
-                    title="确认删除该工作流？"
-                    okText="删除"
-                    cancelText="取消"
-                    onConfirm={() => remove(record)}
-                  >
-                    <Button size="small" danger>删除</Button>
-                  </Popconfirm>
-                </Space>
-              ),
-            },
-          ]}
-        />
       </div>
+      <WorkflowsListView
+        items={filteredWorkflows}
+        loading={loading}
+        onEdit={item => router.push(`/app/workflows/${item.id}`)}
+        onRun={item => router.push(`/app/workflows/${item.id}/run`)}
+        onPublishToggle={item => (item.currentPublishedVersionNo > 0 ? offline(item) : publish(item))}
+        onRollback={openRollback}
+        onDelete={remove}
+      />
 
       <Modal
         title="回滚工作流"
@@ -645,7 +608,7 @@ function WorkflowsPageInner() {
           </Form.Item>
         </Form>
       </Modal>
-    </div>
+    </WorkflowModuleShell>
   )
 }
 

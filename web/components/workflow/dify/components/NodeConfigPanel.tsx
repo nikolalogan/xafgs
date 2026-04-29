@@ -953,7 +953,7 @@ export default function NodeConfigPanel({
 
   if (!activeNode) {
     return (
-      <div className="col-span-3 rounded-xl border border-gray-200 bg-white p-3">
+      <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.35)]">
         <div className="mb-2 text-sm font-semibold">节点配置</div>
         <p className="text-xs text-gray-500">点击画布中的节点后可编辑</p>
       </div>
@@ -3137,7 +3137,7 @@ export default function NodeConfigPanel({
   }
 
   return (
-    <div className="col-span-3 rounded-xl border border-gray-200 bg-white p-3">
+    <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.35)]">
       <div className="mb-2 text-sm font-semibold">节点配置</div>
       <div className="space-y-2">
         <label className={labelClass}>标题</label>

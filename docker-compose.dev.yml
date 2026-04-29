@@ -2,10 +2,11 @@ name: sxfgssever-dev
 
 services:
   frontend:
-    image: node:22-alpine
+    image: docker.1panel.live/library/node:22-alpine
     working_dir: /app
     environment:
       CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
       NPM_CONFIG_REGISTRY: "https://registry.npmmirror.com"
     volumes:
       - ./web:/app
@@ -51,7 +52,7 @@ services:
     restart: unless-stopped
 
   gateway:
-    image: nginx:1.27-alpine
+    image: docker.1panel.live/library/nginx:1.27-alpine
     container_name: sxfgssever-dev-gateway
     ports:
       - "325:80"
@@ -63,7 +64,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:17-alpine
+    image: docker.1panel.live/library/postgres:17-alpine
     ports:
       - "5432:5432"
     environment:
@@ -82,7 +83,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:8-alpine
+    image: docker.1panel.live/library/redis:8-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
