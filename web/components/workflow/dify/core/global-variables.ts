@@ -59,6 +59,7 @@ export const normalizeGlobalVariables = (input?: unknown): WorkflowGlobalVariabl
           : typeof (item as { jsonSchema?: unknown }).jsonSchema === 'string'
             ? String((item as { jsonSchema?: unknown }).jsonSchema)
             : '',
+        objectTypeId: typeof item.objectTypeId === 'string' ? item.objectTypeId : '',
         description: typeof item.description === 'string' ? item.description : '',
       } satisfies WorkflowGlobalVariable
     })

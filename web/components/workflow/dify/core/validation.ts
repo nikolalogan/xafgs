@@ -1,5 +1,6 @@
 import { ensureNodeConfig } from './node-config'
-import { BlockEnum, type DifyEdge, type DifyNode, type WorkflowParameter } from './types'
+import { validateWorkflowObjectType } from './object-types'
+import { BlockEnum, type DifyEdge, type DifyNode, type WorkflowGlobalVariable, type WorkflowParameter } from './types'
 import { buildIfElseBranchHandleId, IF_ELSE_FALLBACK_HANDLE } from '@/lib/workflow-ifelse'
 import { validateParameterJsonDefault } from './json-schema'
 
@@ -166,10 +167,40 @@ export const validateWorkflow = (
   nodes: DifyNode[],
   edges: DifyEdge[],
   workflowParameters: WorkflowParameter[] = [],
+  globalVariables: WorkflowGlobalVariable[] = [],
+  objectTypes: Array<{ id: string; name: string; schemaJson: string; sampleJson?: string; description?: string }> = [],
 ): WorkflowIssue[] => {
   const issues: WorkflowIssue[] = []
   const nodeIdSet = new Set(nodes.map(node => node.id))
   const nodeById = new Map(nodes.map(node => [node.id, node]))
+  const objectTypeIds = objectTypes.map(item => trim(item.id))
+  const objectTypeIdSet = new Set(objectTypeIds.filter(Boolean))
+
+  if (hasDuplicate(objectTypeIds)) {
+    issues.push({
+      id: 'workflow-object-types-dup',
+      level: 'error',
+      title: '对象类型重复',
+      message: '对象类型 ID 不能重复。',
+    })
+  }
+  objectTypes.forEach((item, index) => {
+    const result = validateWorkflowObjectType({
+      id: item.id,
+      name: item.name,
+      description: item.description ?? '',
+      schemaJson: item.schemaJson,
+      sampleJson: item.sampleJson ?? '',
+    })
+    if (!result.valid) {
+      issues.push({
+        id: `workflow-object-type-${index}`,
+        level: 'error',
+        title: `对象类型 ${item.name || item.id || index + 1} 配置非法`,
+        message: result.error,
+      })
+    }
+  })
 
   const workflowParamNames = workflowParameters.map(item => item.name)
   if (workflowParameters.some(item => !trim(item.name) || !trim(item.label))) {
@@ -189,6 +220,14 @@ export const validateWorkflow = (
     })
   }
   workflowParameters.forEach((item, index) => {
+    if (trim(item.objectTypeId || '') && !objectTypeIdSet.has(trim(item.objectTypeId || ''))) {
+      issues.push({
+        id: `workflow-params-object-type-${index}`,
+        level: 'error',
+        title: `流程参数 ${item.name || item.label || index + 1} 对象类型不存在`,
+        message: `objectTypeId=${item.objectTypeId} 未定义。`,
+      })
+    }
     const valueType = item.valueType
     if (valueType !== 'array' && valueType !== 'object')
       return
@@ -199,6 +238,16 @@ export const validateWorkflow = (
         level: 'error',
         title: `流程参数 ${item.name || item.label || index + 1} JSON 配置非法`,
         message: check.error,
+      })
+    }
+  })
+  globalVariables.forEach((item, index) => {
+    if (trim(item.objectTypeId || '') && !objectTypeIdSet.has(trim(item.objectTypeId || ''))) {
+      issues.push({
+        id: `global-vars-object-type-${index}`,
+        level: 'error',
+        title: `全局变量 ${item.name || index + 1} 对象类型不存在`,
+        message: `objectTypeId=${item.objectTypeId} 未定义。`,
       })
     }
   })
@@ -489,6 +538,17 @@ export const validateWorkflow = (
           message: '开始节点下拉参数编码不能重复。',
         })
       }
+      config.variables.forEach((item, index) => {
+        if (trim(item.objectTypeId || '') && !objectTypeIdSet.has(trim(item.objectTypeId || ''))) {
+          issues.push({
+            id: `${prefix}-start-object-type-${index}`,
+            nodeId: node.id,
+            level: 'error',
+            title: `${node.data.title} 对象类型不存在`,
+            message: `参数 ${item.name || index + 1} 的 objectTypeId=${item.objectTypeId} 未定义。`,
+          })
+        }
+      })
     }
 
     if (node.data.type === BlockEnum.Input) {

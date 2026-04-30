@@ -1,6 +1,7 @@
 import { ensureNodeConfig } from './node-config'
 import { extractJsonLeafPaths } from './json-schema'
-import { BlockEnum, type DifyNode, type WorkflowGlobalVariable, type WorkflowParameter, type WorkflowVariableScope } from './types'
+import { buildObjectTypeMap } from './object-types'
+import { BlockEnum, type DifyNode, type WorkflowGlobalVariable, type WorkflowObjectType, type WorkflowParameter, type WorkflowVariableScope } from './types'
 
 export type VariableScope = WorkflowVariableScope
 
@@ -102,9 +103,11 @@ export const buildWorkflowVariableOptions = (
   nodes: DifyNode[],
   workflowParameters: WorkflowParameter[],
   globalVariables: WorkflowGlobalVariable[],
+  objectTypes: WorkflowObjectType[] = [],
   activeNode?: DifyNode | null,
 ): WorkflowVariableOption[] => {
   const options: WorkflowVariableOption[] = []
+  const objectTypeMap = buildObjectTypeMap(objectTypes)
   const pushVariableOption = (
     nodeId: string,
     nodeTitle: string,
@@ -142,7 +145,8 @@ export const buildWorkflowVariableOptions = (
     pushVariableOption(nodeId, nodeTitle, baseParam, rootScope)
 
     if (parameter.valueType === 'object') {
-      const jsonPaths = parseObjectLeafPathsFromJson(parameter.json)
+      const objectType = parameter.objectTypeId ? objectTypeMap.get(parameter.objectTypeId) : undefined
+      const jsonPaths = objectType ? parseObjectLeafPathsFromJson(objectType.schemaJson) : parseObjectLeafPathsFromJson(parameter.json)
       const childPaths = jsonPaths.length ? jsonPaths : parseObjectLeafPathsFromDefault(parameter.defaultValue)
       childPaths.forEach((childPath) => {
         pushVariableOption(nodeId, nodeTitle, `${baseParam}.${childPath}`, 'all')
@@ -161,7 +165,8 @@ export const buildWorkflowVariableOptions = (
     pushVariableOption(nodeId, nodeTitle, baseParam, rootScope)
 
     if (variable.valueType === 'object') {
-      const jsonPaths = parseObjectLeafPathsFromJson(variable.json)
+      const objectType = variable.objectTypeId ? objectTypeMap.get(variable.objectTypeId) : undefined
+      const jsonPaths = objectType ? parseObjectLeafPathsFromJson(objectType.schemaJson) : parseObjectLeafPathsFromJson(variable.json)
       const childPaths = jsonPaths.length ? jsonPaths : parseObjectLeafPathsFromDefault(variable.defaultValue)
       childPaths.forEach((childPath) => {
         pushVariableOption(nodeId, nodeTitle, `${baseParam}.${childPath}`, 'all')
@@ -179,15 +184,17 @@ export const buildWorkflowVariableOptions = (
       config.variables.forEach((item) => {
         if (!item.name)
           return
-        options.push({
-          key: `${nodeId}.${item.name}`,
-          nodeId,
-          nodeTitle,
-          param: item.name,
-          valueType: normalizeScopeFromString(item.type),
-          placeholder: `{{${nodeId}.${item.name}}}`,
-          displayLabel: `${nodeTitle}.${item.name}`,
-        })
+        const rootScope = normalizeScopeFromString(item.type)
+        pushVariableOption(nodeId, nodeTitle, item.name, rootScope)
+        if (item.type === 'json_object') {
+          const objectType = item.objectTypeId ? objectTypeMap.get(item.objectTypeId) : undefined
+          const childPaths = objectType
+            ? parseObjectLeafPathsFromJson(objectType.schemaJson)
+            : parseObjectLeafPathsFromJson(item.jsonSchema)
+          childPaths.forEach((childPath) => {
+            pushVariableOption(nodeId, nodeTitle, `${item.name}.${childPath}`, 'all')
+          })
+        }
       })
       return
     }

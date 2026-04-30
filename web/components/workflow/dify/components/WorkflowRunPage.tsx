@@ -10,7 +10,7 @@ import { buildExternalRuleInputs, buildLocalRuleInputs, buildPreparedFields, eva
 import { ensureNodeConfig } from '../core/node-config'
 import { edgeTypes, nodeTypes } from '../config/workflowPreset'
 import { validateWorkflow } from '../core/validation'
-import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowGlobalVariable, type WorkflowParameter } from '../core/types'
+import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowGlobalVariable, type WorkflowObjectType, type WorkflowParameter } from '../core/types'
 
 type RuntimeNodeStatus = 'pending' | 'running' | 'waiting_input' | 'succeeded' | 'failed' | 'skipped'
 
@@ -52,6 +52,7 @@ type WorkflowRunPageProps = {
   workflowId?: number
   nodes: DifyNode[]
   edges: DifyEdge[]
+  objectTypes?: WorkflowObjectType[]
   globalVariables?: WorkflowGlobalVariable[]
   workflowParameters?: WorkflowParameter[]
   autoRun?: boolean
@@ -461,11 +462,11 @@ const detectRequiredUserConfigKeys = (dsl: unknown): UserConfigFieldKey[] => {
   return [...required]
 }
 
-export default function WorkflowRunPage({ workflowId, nodes, edges, globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
-  return <WorkflowRunPageInner workflowId={workflowId} nodes={nodes} edges={edges} globalVariables={globalVariables} workflowParameters={workflowParameters} autoRun={autoRun} />
+export default function WorkflowRunPage({ workflowId, nodes, edges, objectTypes = [], globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
+  return <WorkflowRunPageInner workflowId={workflowId} nodes={nodes} edges={edges} objectTypes={objectTypes} globalVariables={globalVariables} workflowParameters={workflowParameters} autoRun={autoRun} />
 }
 
-function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
+function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
   const router = useRouter()
   const [execution, setExecution] = useState<WorkflowExecution | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1367,11 +1368,12 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         sourceHandle: edge.sourceHandle,
         targetHandle: edge.targetHandle,
       })),
+      objectTypes,
       globalVariables,
       workflowParameters,
       viewport: { x: 0, y: 0, zoom: 1 },
     }
-  }, [edges, globalVariables, nodes, workflowParameters])
+  }, [edges, globalVariables, nodes, objectTypes, workflowParameters])
 
   const renderPreviewGraph = useMemo(() => {
     const mergedNodes: DifyNode[] = []
@@ -1544,7 +1546,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   }), [previewEdges, previewNodes])
 
   const validateBeforeRun = () => {
-    const issues = validateWorkflow(nodes, edges, workflowParameters)
+    const issues = validateWorkflow(nodes, edges, workflowParameters, globalVariables, objectTypes)
     const errors = issues.filter(item => item.level === 'error')
     if (errors.length === 0)
       return true

@@ -46,7 +46,7 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
 
   if (isIterationContainer) {
     return (
-      <div className={`relative h-full w-full overflow-hidden rounded-[28px] border bg-white/96 shadow-[0_22px_48px_-34px_rgba(76,29,149,0.35)] ${selected ? 'border-violet-400 shadow-[0_0_0_4px_rgba(139,92,246,0.12),0_26px_52px_-34px_rgba(76,29,149,0.34)]' : 'border-slate-200/90 hover:border-violet-200'}`}>
+      <div className={`group relative h-full w-full overflow-hidden rounded-[28px] border bg-white/96 shadow-[0_22px_48px_-34px_rgba(76,29,149,0.35)] ${selected ? 'border-violet-400 shadow-[0_0_0_4px_rgba(139,92,246,0.12),0_26px_52px_-34px_rgba(76,29,149,0.34)]' : 'border-slate-200/90 hover:border-violet-200'}`}>
         <Handle id="target" type="target" position={Position.Left} style={{ left: -5, backgroundColor: '#94a3b8' }} className={targetHandleClassName} />
         <div className="border-b border-slate-200/90 bg-[linear-gradient(180deg,#ffffff_0%,#faf5ff_100%)]">
           {renderHeader({ badge: '迭代容器' })}
@@ -64,7 +64,7 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
             <div className="mt-2 text-xs text-slate-500">迭代子流程区域（主画布内编辑）</div>
           </div>
         </div>
-        <div className={`absolute inset-x-0 bottom-0 h-1.5 ${visual.iconBg}`} />
+        <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-1.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 ${visual.iconBg}`} />
         <Handle id="source" type="source" position={Position.Right} style={{ right: -5, backgroundColor: visual.solidColor }} className={sourceHandleClassName} />
       </div>
     )
@@ -105,7 +105,7 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
             )
           })}
         </div>
-        <div className={`absolute inset-x-0 bottom-0 h-1.5 ${visual.iconBg}`} />
+        <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-1.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 ${visual.iconBg}`} />
       </div>
     )
   }
@@ -114,12 +114,7 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
     <div className={`${isIterationChild ? 'w-[224px]' : 'w-[248px]'} ${baseCardClassName} ${selected ? selectedCardClassName : ''}`}>
       {!isStart && <Handle id="target" type="target" position={Position.Left} style={{ left: -5, backgroundColor: '#94a3b8' }} className={targetHandleClassName} />}
       {renderHeader({ compact: isIterationChild, badge: isIterationChild ? '子流程' : workflowNodeTypeLabel[data.type] })}
-      <div className="px-3.5 pb-3.5">
-        <div className={`rounded-2xl border px-3 py-2 text-[11px] font-medium ${visual.accentBg} ${visual.accentBorder} ${visual.accentText}`}>
-          {subtitle}
-        </div>
-      </div>
-      <div className={`absolute inset-x-0 bottom-0 h-1.5 ${visual.iconBg}`} />
+      <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-1.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 ${visual.iconBg}`} />
       {!isEnd && <Handle id="source" type="source" position={Position.Right} style={{ right: -5, backgroundColor: visual.solidColor }} className={sourceHandleClassName} />}
     </div>
   )

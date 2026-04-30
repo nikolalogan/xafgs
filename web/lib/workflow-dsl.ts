@@ -24,6 +24,7 @@ export const parseWorkflowDSL = (input: string | WorkflowDSL): WorkflowDSL => {
   return {
     nodes,
     edges,
+    objectTypes: Array.isArray(value.objectTypes) ? value.objectTypes.filter(isObject) as Array<Record<string, unknown>> : undefined,
     globalVariables: Array.isArray(value.globalVariables) ? value.globalVariables.filter(isObject) as Array<Record<string, unknown>> : undefined,
     workflowParameters: Array.isArray(value.workflowParameters) ? value.workflowParameters.filter(isObject) as Array<Record<string, unknown>> : undefined,
     workflowVariableScopes: isObject(value.workflowVariableScopes) ? (value.workflowVariableScopes as Record<string, unknown>) : undefined,

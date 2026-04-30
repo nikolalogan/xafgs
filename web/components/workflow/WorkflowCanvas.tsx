@@ -17,11 +17,12 @@ import WorkflowEditor from './dify/components/WorkflowEditor'
 import WorkflowNodeLibrary, { WORKFLOW_NODE_DND_TYPE } from './WorkflowNodeLibrary'
 import WorkflowToolbar from './dify/components/WorkflowToolbar'
 import WorkflowRunModal from './dify/components/WorkflowRunModal'
+import WorkflowDebugModal from './dify/components/WorkflowDebugModal'
 import WorkflowWorkbench from './WorkflowWorkbench'
 import { demoDSL, edgeTypes, nodeTypeLabel, nodeTypes } from './dify/config/workflowPreset'
 import { CUSTOM_EDGE, CUSTOM_NODE, ITERATION_CHILDREN_Z_INDEX } from './dify/core/constants'
 import { ensureNodeConfig } from './dify/core/node-config'
-import { BlockEnum, type DifyEdge, type DifyNode, type DifyNodeConfig, type IterationNodeConfig, type WorkflowParameter } from './dify/core/types'
+import { BlockEnum, type DifyEdge, type DifyNode, type DifyNodeConfig, type IterationNodeConfig, type WorkflowGlobalVariable, type WorkflowObjectType, type WorkflowParameter } from './dify/core/types'
 import { validateWorkflow } from './dify/core/validation'
 import { buildWorkflowVariableOptions } from './dify/core/variables'
 import { useClipboardInteractions } from './dify/hooks/useClipboardInteractions'
@@ -293,7 +294,15 @@ type WorkflowRunSnapshot = {
   workflowId?: number
   nodes: DifyNode[]
   edges: DifyEdge[]
+  objectTypes: WorkflowObjectType[]
+  globalVariables: WorkflowGlobalVariable[]
   workflowParameters: WorkflowParameter[]
+}
+
+type WorkflowDebugSnapshot = {
+  workflowId?: number
+  dsl: DifyWorkflowDSL
+  targetNode: DifyNode | null
 }
 
 type SystemModelOption = {
@@ -324,7 +333,9 @@ const getToken = () => {
 
 function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: WorkflowCanvasInnerProps) {
   const [runModalOpen, setRunModalOpen] = useState(false)
-  const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ workflowId, nodes: [], edges: [], workflowParameters: [] })
+  const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ workflowId, nodes: [], edges: [], objectTypes: [], globalVariables: [], workflowParameters: [] })
+  const [debugModalOpen, setDebugModalOpen] = useState(false)
+  const [debugSnapshot, setDebugSnapshot] = useState<WorkflowDebugSnapshot>({ workflowId, dsl: initialDSL, targetNode: null })
   const [nodeConfigOpen, setNodeConfigOpen] = useState(false)
   const [nodesForPanel, setNodesForPanel] = useState<DifyNode[]>([])
   const [llmModelOptions, setLLMModelOptions] = useState<Array<{ name: string; label: string }>>([{ name: 'gpt-4o-mini', label: 'GPT-4o mini' }])
@@ -350,6 +361,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     checklistOpen,
     importText,
     exportText,
+    objectTypes,
     globalVariables,
     workflowParameters,
     workflowVariableScopes,
@@ -365,6 +377,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     setChecklistOpen,
     setImportText,
     setExportText,
+    setObjectTypes,
     setGlobalVariables,
     setWorkflowParameters,
     setWorkflowVariableScopes,
@@ -395,6 +408,27 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     setNodeConfigOpen(false)
     setActiveNode(null)
   }, [clearMenus, setActiveNode])
+
+  const openDebugModal = useCallback((node: DifyNode | null) => {
+    if (!node)
+      return
+    if (node.data._iterationRole === 'child')
+      return
+    setDebugSnapshot({
+      workflowId,
+      dsl: {
+        nodes: JSON.parse(JSON.stringify(getEffectiveNodes())) as DifyNode[],
+        edges: JSON.parse(JSON.stringify(edges)) as DifyEdge[],
+        objectTypes: JSON.parse(JSON.stringify(objectTypes)) as WorkflowObjectType[],
+        globalVariables: JSON.parse(JSON.stringify(globalVariables)) as WorkflowGlobalVariable[],
+        workflowParameters: JSON.parse(JSON.stringify(workflowParameters)) as WorkflowParameter[],
+        workflowVariableScopes: JSON.parse(JSON.stringify(workflowVariableScopes)),
+        viewport: getViewport(),
+      },
+      targetNode: JSON.parse(JSON.stringify(node)) as DifyNode,
+    })
+    setDebugModalOpen(true)
+  }, [edges, getViewport, globalVariables, objectTypes, workflowId, workflowParameters, workflowVariableScopes])
 
   useEffect(() => {
     resetHistory({ nodes: parsed.nodes, edges: parsed.edges })
@@ -505,6 +539,8 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
         workflowId,
         nodes: JSON.parse(JSON.stringify(latestNodesRef.current)) as DifyNode[],
         edges: JSON.parse(JSON.stringify(latestEdgesRef.current)) as DifyEdge[],
+        objectTypes: JSON.parse(JSON.stringify(objectTypes)) as WorkflowObjectType[],
+        globalVariables: JSON.parse(JSON.stringify(globalVariables)) as WorkflowGlobalVariable[],
         workflowParameters: JSON.parse(JSON.stringify(latestWorkflowParametersRef.current)) as WorkflowParameter[],
       })
       setRunModalOpen(true)
@@ -517,6 +553,8 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
         workflowId,
         nodes: JSON.parse(JSON.stringify(latestNodesRef.current)) as DifyNode[],
         edges: JSON.parse(JSON.stringify(latestEdgesRef.current)) as DifyEdge[],
+        objectTypes: JSON.parse(JSON.stringify(objectTypes)) as WorkflowObjectType[],
+        globalVariables: JSON.parse(JSON.stringify(globalVariables)) as WorkflowGlobalVariable[],
         workflowParameters: JSON.parse(JSON.stringify(latestWorkflowParametersRef.current)) as WorkflowParameter[],
       })
       setRunModalOpen(true)
@@ -553,12 +591,14 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     nodes,
     edges,
     importText,
+    objectTypes,
     globalVariables,
     workflowParameters,
     workflowVariableScopes,
     demoDSL: initialDSL,
     setNodes,
     setEdges,
+    setObjectTypes,
     setGlobalVariables,
     setWorkflowParameters,
     setWorkflowVariableScopes,
@@ -616,10 +656,10 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       return true
     },
   })
-  const issues = useMemo(() => validateWorkflow(nodesForPanel, edges, workflowParameters), [edges, nodesForPanel, workflowParameters])
+  const issues = useMemo(() => validateWorkflow(nodesForPanel, edges, workflowParameters, globalVariables, objectTypes), [edges, globalVariables, nodesForPanel, objectTypes, workflowParameters])
   const aiVariableOptions = useMemo(
-    () => buildWorkflowVariableOptions(nodesForPanel, workflowParameters, globalVariables, activeNode),
-    [activeNode, globalVariables, nodesForPanel, workflowParameters],
+    () => buildWorkflowVariableOptions(nodesForPanel, workflowParameters, globalVariables, objectTypes, activeNode),
+    [activeNode, globalVariables, nodesForPanel, objectTypes, workflowParameters],
   )
 
   useEffect(() => {
@@ -700,6 +740,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     const nextDSL: DifyWorkflowDSL = {
       nodes,
       edges,
+      objectTypes,
       globalVariables,
       workflowParameters,
       workflowVariableScopes,
@@ -710,7 +751,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       return
     lastReportedDSLRef.current = serializedDSL
     onDSLChange(nextDSL)
-  }, [edges, getViewport, globalVariables, nodes, onDSLChange, workflowParameters, workflowVariableScopes])
+  }, [edges, getViewport, globalVariables, nodes, objectTypes, onDSLChange, workflowParameters, workflowVariableScopes])
 
   const iterationLayouts = useMemo(() => {
     const layoutMap: Record<string, ReturnType<typeof buildIterationContainerLayout>> = {}
@@ -1318,6 +1359,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
     return {
       nodes: getEffectiveNodes(),
       edges,
+      objectTypes,
       globalVariables,
       workflowParameters,
       workflowVariableScopes,
@@ -1328,14 +1370,14 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
   useImperativeHandle(apiRef, () => ({
     flushActiveNode: () => handleSaveActiveNode(),
     getDSL,
-  }), [activeNode, edges, globalVariables, workflowParameters, workflowVariableScopes])
+  }), [activeNode, edges, globalVariables, objectTypes, workflowParameters, workflowVariableScopes])
 
   const handleCanvasDragOver = useCallback((event: ReactDragEvent) => {
     if (!Array.from(event.dataTransfer.types).includes(WORKFLOW_NODE_DND_TYPE))
       return
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
-  }, [])
+  }, [globalVariables, objectTypes, workflowId])
 
   const handleCanvasDrop = useCallback((event: ReactDragEvent) => {
     const rawType = event.dataTransfer.getData(WORKFLOW_NODE_DND_TYPE)
@@ -1379,6 +1421,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
             nodeConfigPanel={(
               <NodeConfigPanel
                 nodes={nodesForPanel}
+                objectTypes={objectTypes}
                 workflowParameters={workflowParameters}
                 globalVariables={globalVariables}
                 workflowVariableScopes={workflowVariableScopes}
@@ -1389,6 +1432,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
                 onChange={setActiveNode}
                 onChangeScopes={setWorkflowVariableScopes}
                 onFocusIterationRegion={handleFocusIterationRegion}
+                onDebugNode={openDebugModal}
                 onSave={handleSaveActiveNode}
               />
             )}
@@ -1407,6 +1451,8 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
                     workflowId,
                     nodes: JSON.parse(JSON.stringify(nodes)) as DifyNode[],
                     edges: JSON.parse(JSON.stringify(edges)) as DifyEdge[],
+                    objectTypes: JSON.parse(JSON.stringify(objectTypes)) as WorkflowObjectType[],
+                    globalVariables: JSON.parse(JSON.stringify(globalVariables)) as WorkflowGlobalVariable[],
                     workflowParameters: JSON.parse(JSON.stringify(workflowParameters)) as typeof workflowParameters,
                   })
                   setRunModalOpen(true)
@@ -1469,6 +1515,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
               },
               nodeMenu: {
                 onClose: () => setNodeMenu(undefined),
+                onDebug: () => openDebugModal(nodeMenu ? nodes.find(item => item.id === nodeMenu.nodeId) ?? null : null),
                 onCopy: () => copySelection(nodeMenu ? [nodeMenu.nodeId] : []),
                 onDuplicate: () => duplicateSelection(nodeMenu ? [nodeMenu.nodeId] : []),
                 onDelete: () => deleteSelection(nodeMenu ? [nodeMenu.nodeId] : []),
@@ -1495,6 +1542,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
                 workflowParamsOpen,
                 checklistOpen,
                 issueCount: issues.length,
+                objectTypes,
                 globalVariables,
                 workflowParameters,
                 issues,
@@ -1515,6 +1563,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
                 },
                 onCloseGlobalVariables: () => setGlobalVariableOpen(false),
                 onCloseWorkflowParams: () => setWorkflowParamsOpen(false),
+                onChangeObjectTypes: setObjectTypes,
                 onChangeWorkflowParams: setWorkflowParameters,
                 onCloseChecklist: () => setChecklistOpen(false),
                 onLocateIssueNode: handleLocateNode,
@@ -1549,8 +1598,17 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
         workflowId={runSnapshot.workflowId}
         nodes={runSnapshot.nodes}
         edges={runSnapshot.edges}
+        objectTypes={runSnapshot.objectTypes}
+        globalVariables={runSnapshot.globalVariables}
         workflowParameters={runSnapshot.workflowParameters}
         onClose={() => setRunModalOpen(false)}
+      />
+      <WorkflowDebugModal
+        open={debugModalOpen}
+        workflowId={debugSnapshot.workflowId}
+        dsl={debugSnapshot.dsl}
+        targetNode={debugSnapshot.targetNode}
+        onClose={() => setDebugModalOpen(false)}
       />
     </div>
   )

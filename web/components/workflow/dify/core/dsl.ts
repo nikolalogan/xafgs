@@ -1,4 +1,5 @@
 import { normalizeGlobalVariables } from './global-variables'
+import { normalizeWorkflowObjectTypes } from './object-types'
 import { normalizeWorkflowParameters } from './workflow-parameters'
 import { normalizeWorkflowVariableScopes } from './workflow-variable-scopes'
 import type { DifyEdge, DifyNode, DifyWorkflowDSL } from './types'
@@ -27,6 +28,7 @@ export const parseDifyWorkflowDSL = (input: string | DifyWorkflowDSL): DifyWorkf
   return {
     nodes,
     edges,
+    objectTypes: normalizeWorkflowObjectTypes(value.objectTypes),
     globalVariables: normalizeGlobalVariables(value.globalVariables),
     workflowParameters: normalizeWorkflowParameters(value.workflowParameters),
     workflowVariableScopes: normalizeWorkflowVariableScopes(value.workflowVariableScopes),

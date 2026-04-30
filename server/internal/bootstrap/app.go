@@ -152,6 +152,8 @@ func NewApp() (*fiber.App, Config) {
 	}
 	executionRuntime := workflowruntime.NewRuntime(executionStore, workflowruntime.WithAIClient(aiClient))
 	workflowExecutionService := service.NewWorkflowExecutionService(executionRuntime)
+	debugSessionStore := workflowruntime.DebugSessionStorePort(workflowruntime.NewInMemoryDebugSessionStore())
+	workflowDebugService := service.NewWorkflowDebugService(executionRuntime, debugSessionStore)
 	workflowExecutionRateLimiter := service.NewWorkflowExecutionRateLimiter()
 	authService := service.NewAuthService(authRepository, userRepository)
 	authMiddleware := middleware.NewAuthMiddleware(authService)
@@ -165,6 +167,7 @@ func NewApp() (*fiber.App, Config) {
 	enterpriseHandler := handler.NewEnterpriseHandler(enterpriseService, apiRegistry)
 	regionHandler := handler.NewRegionHandler(regionService, apiRegistry)
 	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, workflowService, workflowExecutionRateLimiter, userConfigService, apiRegistry)
+	workflowDebugHandler := handler.NewWorkflowDebugHandler(workflowDebugService, workflowService, userConfigService, apiRegistry)
 	fileHandler := handler.NewFileHandler(fileService, apiRegistry)
 	templateHandler := handler.NewTemplateHandler(templateService, apiRegistry)
 	chatHandler := handler.NewChatHandler(chatService, apiRegistry)
@@ -177,7 +180,7 @@ func NewApp() (*fiber.App, Config) {
 	app.Use(traceMiddleware.Handler())
 
 	apiMetaHandler := handler.NewAPIMetaHandler(apiRegistry, traceStore)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, enterpriseHandler, regionHandler, apiMetaHandler, userConfigHandler, chatHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, workflowDebugHandler, fileHandler, templateHandler, enterpriseHandler, regionHandler, apiMetaHandler, userConfigHandler, chatHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

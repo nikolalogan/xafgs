@@ -21,6 +21,7 @@ import {
   type LLMNodeConfig,
   type StartNodeConfig,
   type WorkflowGlobalVariable,
+  type WorkflowObjectType,
   type WorkflowParameter,
   type WorkflowVariableScope,
   type WritebackMapping,
@@ -28,6 +29,7 @@ import {
 
 type NodeConfigPanelProps = {
   nodes: DifyNode[]
+  objectTypes: WorkflowObjectType[]
   workflowParameters: WorkflowParameter[]
   globalVariables: WorkflowGlobalVariable[]
   workflowVariableScopes: Record<string, WorkflowVariableScope>
@@ -38,6 +40,7 @@ type NodeConfigPanelProps = {
   onChange: (node: DifyNode) => void
   onChangeScopes: (scopes: Record<string, WorkflowVariableScope>) => void
   onFocusIterationRegion: (nodeId: string) => void
+  onDebugNode?: (node: DifyNode) => void
   onSave: () => void
 }
 
@@ -669,6 +672,7 @@ const setValueByTargetPath = (target: Record<string, unknown>, rawPath: string, 
 
 export default function NodeConfigPanel({
   nodes,
+  objectTypes,
   workflowParameters,
   globalVariables,
   workflowVariableScopes,
@@ -679,6 +683,7 @@ export default function NodeConfigPanel({
   onChange,
   onChangeScopes,
   onFocusIterationRegion,
+  onDebugNode,
   onSave,
 }: NodeConfigPanelProps) {
   const [templateOptions, setTemplateOptions] = useState<TemplateOption[]>([])
@@ -701,8 +706,8 @@ export default function NodeConfigPanel({
   const [mappingTestErrorByOwner, setMappingTestErrorByOwner] = useState<Record<string, string>>({})
   const apiJsonTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
   const variableOptions = useMemo(
-    () => buildWorkflowVariableOptions(nodes, workflowParameters, globalVariables, activeNode),
-    [activeNode, globalVariables, nodes, workflowParameters],
+    () => buildWorkflowVariableOptions(nodes, workflowParameters, globalVariables, objectTypes, activeNode),
+    [activeNode, globalVariables, nodes, objectTypes, workflowParameters],
   )
   const mappingTargetOptions = useMemo(
     () => variableOptions.filter(option => option.nodeId === 'workflow' || option.nodeId === 'global'),
@@ -1340,6 +1345,7 @@ export default function NodeConfigPanel({
         nodeId={activeNode.id}
         config={config}
         onChange={nextConfig => updateBase({ config: nextConfig })}
+        objectTypes={objectTypes}
         variableOptions={variableOptions}
         getScope={getScope}
         onScopeChange={setScope}
@@ -1380,6 +1386,7 @@ export default function NodeConfigPanel({
           allowedTypes={['text-input', 'paragraph', 'number', 'select', 'checkbox']}
           config={adaptedStartConfig}
           onChange={handleChange}
+          objectTypes={objectTypes}
           variableOptions={variableOptions}
           getScope={getScope}
           onScopeChange={setScope}
@@ -3155,6 +3162,9 @@ export default function NodeConfigPanel({
         {renderJoinModeConfig()}
         {renderFanOutModeConfig()}
         {renderNodeSpecificConfig()}
+        {activeNode.data._iterationRole !== 'child' && (
+          <button type="button" onClick={() => activeNode && onDebugNode?.(activeNode)} className="w-full rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 hover:bg-amber-100">调试当前节点</button>
+        )}
         <button type="button" onClick={onSave} className="w-full rounded bg-blue-600 px-3 py-2 text-xs text-white hover:bg-blue-700">保存节点配置</button>
       </div>
     </div>

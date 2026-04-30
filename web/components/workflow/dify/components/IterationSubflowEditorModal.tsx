@@ -133,6 +133,7 @@ function IterationSubflowEditorInner({
       nodes as unknown as DifyNode[],
       [],
       [],
+      [],
       activeNode as unknown as DifyNode | null,
     ),
     [activeNode, nodes],

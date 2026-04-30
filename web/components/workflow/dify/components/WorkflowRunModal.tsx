@@ -1,7 +1,6 @@
 'use client'
 
-import type { DifyEdge, DifyNode } from '../core/types'
-import type { WorkflowParameter } from '../core/types'
+import type { DifyEdge, DifyNode, WorkflowGlobalVariable, WorkflowObjectType, WorkflowParameter } from '../core/types'
 import { createPortal } from 'react-dom'
 import WorkflowRunPage from './WorkflowRunPage'
 
@@ -10,6 +9,8 @@ type WorkflowRunModalProps = {
   workflowId?: number
   nodes: DifyNode[]
   edges: DifyEdge[]
+  objectTypes?: WorkflowObjectType[]
+  globalVariables?: WorkflowGlobalVariable[]
   workflowParameters?: WorkflowParameter[]
   onClose: () => void
 }
@@ -19,6 +20,8 @@ export default function WorkflowRunModal({
   workflowId,
   nodes,
   edges,
+  objectTypes = [],
+  globalVariables = [],
   workflowParameters = [],
   onClose,
 }: WorkflowRunModalProps) {
@@ -42,7 +45,7 @@ export default function WorkflowRunModal({
           </button>
         </div>
         <div className="h-[calc(92vh-64px)] p-3">
-          <WorkflowRunPage workflowId={workflowId} nodes={nodes} edges={edges} workflowParameters={workflowParameters} />
+          <WorkflowRunPage workflowId={workflowId} nodes={nodes} edges={edges} objectTypes={objectTypes} globalVariables={globalVariables} workflowParameters={workflowParameters} />
         </div>
       </div>
     </div>

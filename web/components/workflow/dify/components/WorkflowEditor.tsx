@@ -21,7 +21,7 @@ import WorkflowChecklistPanel from './WorkflowChecklistPanel'
 import WorkflowParamsPanel from './WorkflowParamsPanel'
 import type { EdgeMenuState, NodeMenuState, PanelMenuState, SelectionMenuState } from '../core/store'
 import type { WorkflowIssue } from '../core/validation'
-import type { DifyEdge, DifyNode, WorkflowGlobalVariable, WorkflowParameter } from '../core/types'
+import type { DifyEdge, DifyNode, WorkflowGlobalVariable, WorkflowObjectType, WorkflowParameter } from '../core/types'
 import type { AlignDirection } from '../hooks/useSelectionLayout'
 
 type WorkflowEditorProps = {
@@ -61,6 +61,7 @@ type WorkflowEditorProps = {
     }
     nodeMenu: {
       onClose: () => void
+      onDebug: () => void
       onCopy: () => void
       onDuplicate: () => void
       onDelete: () => void
@@ -87,6 +88,7 @@ type WorkflowEditorProps = {
       workflowParamsOpen: boolean
       checklistOpen: boolean
       issueCount: number
+      objectTypes: WorkflowObjectType[]
       globalVariables: WorkflowGlobalVariable[]
       workflowParameters: WorkflowParameter[]
       issues: WorkflowIssue[]
@@ -95,6 +97,7 @@ type WorkflowEditorProps = {
       onOpenChecklist: () => void
       onCloseGlobalVariables: () => void
       onCloseWorkflowParams: () => void
+      onChangeObjectTypes: (objectTypes: WorkflowObjectType[]) => void
       onChangeWorkflowParams: (params: WorkflowParameter[]) => void
       onCloseChecklist: () => void
       onLocateIssueNode: (nodeId: string) => void
@@ -219,7 +222,9 @@ export default function WorkflowEditor({
           <WorkflowParamsPanel
             open={quickPanel.workflowParamsOpen}
             params={quickPanel.workflowParameters}
+            objectTypes={quickPanel.objectTypes}
             onClose={quickPanel.onCloseWorkflowParams}
+            onChangeObjectTypes={quickPanel.onChangeObjectTypes}
             onChange={quickPanel.onChangeWorkflowParams}
           />
           <WorkflowChecklistPanel
@@ -302,6 +307,7 @@ export default function WorkflowEditor({
       <NodeContextMenu
         menu={nodeMenu}
         onClose={actions.nodeMenu.onClose}
+        onDebug={actions.nodeMenu.onDebug}
         onCopy={actions.nodeMenu.onCopy}
         onDuplicate={actions.nodeMenu.onDuplicate}
         onDelete={actions.nodeMenu.onDelete}

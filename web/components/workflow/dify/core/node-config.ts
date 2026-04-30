@@ -402,6 +402,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
             fileTypes: normalizeStartVariableFileTypes(item?.fileTypes),
             maxFiles: typeof item?.maxFiles === 'number' ? item.maxFiles : undefined,
             jsonSchema: typeof item?.jsonSchema === 'string' ? item.jsonSchema : undefined,
+            objectTypeId: typeof item?.objectTypeId === 'string' ? item.objectTypeId : undefined,
           }
         })
       : fallback.variables

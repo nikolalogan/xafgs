@@ -2,6 +2,7 @@ package workflowruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"sort"
@@ -150,6 +151,13 @@ func applyDSLDefaults(target map[string]any, dsl WorkflowDSL) {
 	if target == nil {
 		return
 	}
+	objectTypeMap := map[string]WorkflowObjectType{}
+	for _, item := range dsl.ObjectTypes {
+		if strings.TrimSpace(item.ID) == "" {
+			continue
+		}
+		objectTypeMap[item.ID] = item
+	}
 
 	ensureMap := func(key string) map[string]any {
 		if existing, ok := target[key].(map[string]any); ok && existing != nil {
@@ -169,7 +177,7 @@ func applyDSLDefaults(target map[string]any, dsl WorkflowDSL) {
 		if existing, exists := workflow[name]; exists && hasValue(existing) {
 			continue
 		}
-		workflow[name] = parseScalar(strings.TrimSpace(param.DefaultValue))
+		workflow[name] = resolveDSLDefaultValue(param.ValueType, param.DefaultValue, param.ObjectTypeID, objectTypeMap)
 	}
 
 	global := ensureMap("global")
@@ -181,12 +189,34 @@ func applyDSLDefaults(target map[string]any, dsl WorkflowDSL) {
 		if existing, exists := global[name]; exists && hasValue(existing) {
 			continue
 		}
-		global[name] = parseScalar(strings.TrimSpace(variable.DefaultValue))
+		global[name] = resolveDSLDefaultValue(variable.ValueType, variable.DefaultValue, variable.ObjectTypeID, objectTypeMap)
 	}
 
 	if _, exists := global["timestamp"]; !exists {
 		global["timestamp"] = float64(time.Now().Unix())
 	}
+}
+
+func resolveDSLDefaultValue(valueType string, rawDefault string, objectTypeID string, objectTypeMap map[string]WorkflowObjectType) any {
+	defaultValue := parseScalar(strings.TrimSpace(rawDefault))
+	if strings.TrimSpace(valueType) != "object" {
+		return defaultValue
+	}
+	if strings.TrimSpace(rawDefault) != "" {
+		return defaultValue
+	}
+	objectType, ok := objectTypeMap[strings.TrimSpace(objectTypeID)]
+	if !ok {
+		return defaultValue
+	}
+	if strings.TrimSpace(objectType.SampleJSON) == "" {
+		return defaultValue
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(objectType.SampleJSON), &parsed); err != nil {
+		return defaultValue
+	}
+	return parsed
 }
 
 func (runtime *Runtime) Resume(ctx context.Context, input ResumeExecutionInput) (WorkflowExecution, error) {
