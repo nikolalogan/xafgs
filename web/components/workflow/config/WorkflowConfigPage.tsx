@@ -20,6 +20,7 @@ type WorkflowDetailDTO = {
   description: string
   menuKey: string
   status: WorkflowStatus
+  currentPublishedVersionNo: number
   breakerWindowMinutes: number
   breakerMaxRequests: number
   dsl: Record<string, unknown>
@@ -102,6 +103,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
   const canvasRef = useRef<WorkflowCanvasHandle | null>(null)
   const [initialCanvasDSL, setInitialCanvasDSL] = useState<DifyWorkflowDSL>(parseDifyWorkflowDSL(defaultDSL))
   const [editedCanvasDSL, setEditedCanvasDSL] = useState<DifyWorkflowDSL>(parseDifyWorkflowDSL(defaultDSL))
+  const [currentPublishedVersionNo, setCurrentPublishedVersionNo] = useState(0)
   const [showAdvancedJSON, setShowAdvancedJSON] = useState(false)
   const [advancedDSLText, setAdvancedDSLText] = useState(toDifyWorkflowDSL(parseDifyWorkflowDSL(defaultDSL)))
   const [form] = Form.useForm()
@@ -165,6 +167,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
       const dsl = parseDifyWorkflowDSL(defaultDSL)
       setInitialCanvasDSL(dsl)
       setEditedCanvasDSL(dsl)
+      setCurrentPublishedVersionNo(0)
       setAdvancedDSLText(toDifyWorkflowDSL(dsl))
       return
     }
@@ -184,6 +187,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
         const dsl = parseDifyWorkflowDSL((detail.dsl as unknown as DifyWorkflowDSL) ?? defaultDSL)
         setInitialCanvasDSL(dsl)
         setEditedCanvasDSL(dsl)
+        setCurrentPublishedVersionNo(Number(detail.currentPublishedVersionNo || 0))
         setAdvancedDSLText(toDifyWorkflowDSL(dsl))
       }
       catch (error) {
@@ -399,6 +403,7 @@ export default function WorkflowConfigPage({ workflowId }: WorkflowConfigPagePro
                 ref={canvasRef}
                 initialDSL={initialCanvasDSL}
                 workflowId={workflowId}
+                currentPublishedVersionNo={currentPublishedVersionNo}
                 onDSLChange={showAdvancedJSON ? handleDSLChange : undefined}
               />
             </div>

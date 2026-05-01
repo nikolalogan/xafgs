@@ -286,6 +286,7 @@ const buildIterationChildRenderNode = (
 type WorkflowCanvasInnerProps = {
   initialDSL: DifyWorkflowDSL
   workflowId?: number
+  currentPublishedVersionNo?: number
   onDSLChange?: (dsl: DifyWorkflowDSL) => void
   apiRef?: React.Ref<WorkflowCanvasHandle>
 }
@@ -301,7 +302,7 @@ type WorkflowRunSnapshot = {
 
 type WorkflowDebugSnapshot = {
   workflowId?: number
-  dsl: DifyWorkflowDSL
+  workflowDsl?: DifyWorkflowDSL | null
   targetNode: DifyNode | null
 }
 
@@ -331,11 +332,11 @@ const getToken = () => {
     || ''
 }
 
-function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: WorkflowCanvasInnerProps) {
+function WorkflowCanvasInner({ initialDSL, workflowId, currentPublishedVersionNo = 0, onDSLChange, apiRef }: WorkflowCanvasInnerProps) {
   const [runModalOpen, setRunModalOpen] = useState(false)
   const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ workflowId, nodes: [], edges: [], objectTypes: [], globalVariables: [], workflowParameters: [] })
   const [debugModalOpen, setDebugModalOpen] = useState(false)
-  const [debugSnapshot, setDebugSnapshot] = useState<WorkflowDebugSnapshot>({ workflowId, dsl: initialDSL, targetNode: null })
+  const [debugSnapshot, setDebugSnapshot] = useState<WorkflowDebugSnapshot>({ workflowId, workflowDsl: null, targetNode: null })
   const [nodeConfigOpen, setNodeConfigOpen] = useState(false)
   const [nodesForPanel, setNodesForPanel] = useState<DifyNode[]>([])
   const [llmModelOptions, setLLMModelOptions] = useState<Array<{ name: string; label: string }>>([{ name: 'gpt-4o-mini', label: 'GPT-4o mini' }])
@@ -416,19 +417,15 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       return
     setDebugSnapshot({
       workflowId,
-      dsl: {
-        nodes: JSON.parse(JSON.stringify(getEffectiveNodes())) as DifyNode[],
-        edges: JSON.parse(JSON.stringify(edges)) as DifyEdge[],
-        objectTypes: JSON.parse(JSON.stringify(objectTypes)) as WorkflowObjectType[],
-        globalVariables: JSON.parse(JSON.stringify(globalVariables)) as WorkflowGlobalVariable[],
-        workflowParameters: JSON.parse(JSON.stringify(workflowParameters)) as WorkflowParameter[],
-        workflowVariableScopes: JSON.parse(JSON.stringify(workflowVariableScopes)),
-        viewport: getViewport(),
-      },
+      workflowDsl: getDSL(),
       targetNode: JSON.parse(JSON.stringify(node)) as DifyNode,
     })
     setDebugModalOpen(true)
-  }, [edges, getViewport, globalVariables, objectTypes, workflowId, workflowParameters, workflowVariableScopes])
+  }, [workflowId, activeNode, edges, globalVariables, objectTypes, workflowParameters, workflowVariableScopes])
+
+  const debugTargetNode = activeNode && !activeNode.data._iterationRole
+    ? JSON.parse(JSON.stringify(activeNode)) as DifyNode
+    : null
 
   useEffect(() => {
     resetHistory({ nodes: parsed.nodes, edges: parsed.edges })
@@ -1596,17 +1593,23 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
       <WorkflowRunModal
         open={runModalOpen}
         workflowId={runSnapshot.workflowId}
+        publishedVersionNo={currentPublishedVersionNo}
         nodes={runSnapshot.nodes}
         edges={runSnapshot.edges}
         objectTypes={runSnapshot.objectTypes}
         globalVariables={runSnapshot.globalVariables}
         workflowParameters={runSnapshot.workflowParameters}
+        debugTargetNode={debugTargetNode}
+        onOpenDebug={(node) => {
+          setRunModalOpen(false)
+          openDebugModal(node)
+        }}
         onClose={() => setRunModalOpen(false)}
       />
       <WorkflowDebugModal
         open={debugModalOpen}
         workflowId={debugSnapshot.workflowId}
-        dsl={debugSnapshot.dsl}
+        workflowDsl={debugSnapshot.workflowDsl}
         targetNode={debugSnapshot.targetNode}
         onClose={() => setDebugModalOpen(false)}
       />
@@ -1617,10 +1620,11 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, apiRef }: Wo
 type WorkflowCanvasProps = {
   initialDSL?: DifyWorkflowDSL
   workflowId?: number
+  currentPublishedVersionNo?: number
   onDSLChange?: (dsl: DifyWorkflowDSL) => void
 }
 
-const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasProps>(({ initialDSL, workflowId, onDSLChange }, ref) => {
+const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasProps>(({ initialDSL, workflowId, currentPublishedVersionNo = 0, onDSLChange }, ref) => {
   const safeInitialDSL = useMemo(() => {
     try {
       return parseDifyWorkflowDSL(initialDSL ?? demoDSL)
@@ -1632,7 +1636,7 @@ const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasProps>(({ 
 
   return (
     <ReactFlowProvider>
-      <WorkflowCanvasInner initialDSL={safeInitialDSL} workflowId={workflowId} onDSLChange={onDSLChange} apiRef={ref} />
+      <WorkflowCanvasInner initialDSL={safeInitialDSL} workflowId={workflowId} currentPublishedVersionNo={currentPublishedVersionNo} onDSLChange={onDSLChange} apiRef={ref} />
     </ReactFlowProvider>
   )
 })

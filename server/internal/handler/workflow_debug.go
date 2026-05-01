@@ -12,10 +12,11 @@ import (
 )
 
 type createWorkflowDebugSessionRequest struct {
-	WorkflowID  int64          `json:"workflowId" validate:"required,min=1"`
-	WorkflowDSL any            `json:"workflowDsl" validate:"required"`
-	TargetNodeID string        `json:"targetNodeId" validate:"required"`
-	Input       map[string]any `json:"input"`
+	WorkflowID   int64          `json:"workflowId" validate:"required,min=1"`
+	WorkflowDSL  any            `json:"workflowDsl"`
+	DSL          any            `json:"dsl"`
+	TargetNodeID string         `json:"targetNodeId" validate:"required"`
+	Input        map[string]any `json:"input"`
 }
 
 type workflowDebugSessionIDPathRequest struct {
@@ -26,6 +27,11 @@ type continueWorkflowDebugSessionRequest struct {
 	ID     string         `path:"id" validate:"required"`
 	NodeID string         `json:"nodeId" validate:"required"`
 	Input  map[string]any `json:"input"`
+}
+
+type rebuildWorkflowDebugSessionRequest struct {
+	ID    string         `path:"id" validate:"required"`
+	Input map[string]any `json:"input"`
 }
 
 type WorkflowDebugHandler struct {
@@ -74,6 +80,13 @@ func (handler *WorkflowDebugHandler) Register(router fiber.Router) {
 		Auth:               "login",
 		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowDebugSession](),
 	}, handler.RerunTarget)
+	apimeta.Register(group, handler.registry, apimeta.RouteSpec[rebuildWorkflowDebugSessionRequest]{
+		Method:             fiber.MethodPost,
+		Path:               "/workflow/debug-sessions/:id/rebuild",
+		Summary:            "重建调试会话并从开始补跑",
+		Auth:               "login",
+		SuccessDataExample: apimeta.ExampleFromType[workflowruntime.WorkflowDebugSession](),
+	}, handler.Rebuild)
 }
 
 func (handler *WorkflowDebugHandler) Create(c *fiber.Ctx, request *createWorkflowDebugSessionRequest) error {
@@ -81,41 +94,50 @@ func (handler *WorkflowDebugHandler) Create(c *fiber.Ctx, request *createWorkflo
 	if !ok {
 		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
 	}
-	_ = role
-	dsl, err := workflowruntime.ParseWorkflowDSL(request.WorkflowDSL)
-	if err != nil {
-		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, err.Error())
+	if request.WorkflowID <= 0 {
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "workflowId 必须为正整数")
 	}
-	if request.Input == nil {
-		request.Input = map[string]any{}
+	rawDSL := request.WorkflowDSL
+	if rawDSL == nil {
+		rawDSL = request.DSL
+	}
+	if rawDSL == nil {
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "workflowDsl 不能为空")
 	}
 	workflow, apiError := handler.workflowService.GetByID(c.UserContext(), request.WorkflowID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
-	startNode, ok := findStartNode(dsl.Nodes)
-	if ok {
+	dsl, err := workflowruntime.ParseWorkflowDSL(rawDSL)
+	if err != nil {
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "workflowDsl 非法："+err.Error())
+	}
+	startInput := request.Input
+	if startInput == nil {
+		startInput = map[string]any{}
+	}
+	if startNode, ok := findStartNode(dsl.Nodes); ok {
 		fields := workflowruntime.ParseStartFields(startNode.Data.Config)
 		if len(fields) > 0 {
-			normalized, validateErr := workflowruntime.ValidateAndNormalizeDynamicInput(fields, request.Input)
+			normalized, validateErr := workflowruntime.ValidateAndNormalizeDynamicInput(fields, startInput)
 			if validateErr != nil {
 				return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, validateErr.Error())
 			}
-			request.Input = normalized
+			startInput = normalized
 		}
 	}
 	userConfig, apiError := handler.userConfigService.GetByUserID(c.UserContext(), userID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
-	if missing := detectMissingRequiredUserConfig(request.WorkflowDSL, dsl, userConfig); len(missing) > 0 {
+	if missing := detectMissingRequiredUserConfig(rawDSL, dsl, userConfig); len(missing) > 0 {
 		labels := make([]string, 0, len(missing))
 		for _, item := range missing {
 			labels = append(labels, item.label)
 		}
 		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "缺少用户配置："+strings.Join(labels, "、"))
 	}
-	request.Input["user"] = map[string]any{
+	startInput["user"] = map[string]any{
 		"warningAccount":  userConfig.WarningAccount,
 		"warningPassword": userConfig.WarningPassword,
 		"aiBaseUrl":       userConfig.AIBaseURL,
@@ -125,11 +147,11 @@ func (handler *WorkflowDebugHandler) Create(c *fiber.Ctx, request *createWorkflo
 	ctx = workflowruntime.WithAuthHeader(ctx, strings.TrimSpace(c.Get(fiber.HeaderAuthorization)))
 	data, apiError := handler.service.Create(ctx, workflowruntime.StartDebugSessionInput{
 		WorkflowID:    workflow.ID,
-		CreatorUserID: userID,
 		WorkflowDSL:   dsl,
-		TargetNodeID:  request.TargetNodeID,
-		Input:         request.Input,
-	})
+		Input:         startInput,
+		CreatorUserID: userID,
+		TargetNodeID:  strings.TrimSpace(request.TargetNodeID),
+	}, userID, role)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
@@ -179,4 +201,57 @@ func (handler *WorkflowDebugHandler) RerunTarget(c *fiber.Ctx, request *workflow
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
 	}
 	return response.Success(c, fiber.StatusOK, data, "重跑调试节点成功")
+}
+
+func (handler *WorkflowDebugHandler) Rebuild(c *fiber.Ctx, request *rebuildWorkflowDebugSessionRequest) error {
+	userID, role, ok := currentAuthIdentity(c)
+	if !ok {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+	input := request.Input
+	if input == nil {
+		input = map[string]any{}
+	}
+	session, apiError := handler.service.Get(c.UserContext(), request.ID, userID, role)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	if session == nil {
+		return response.Error(c, fiber.StatusNotFound, response.CodeNotFound, "debug session 不存在")
+	}
+	if startNode, ok := findStartNode(session.WorkflowDSL.Nodes); ok {
+		fields := workflowruntime.ParseStartFields(startNode.Data.Config)
+		if len(fields) > 0 {
+			normalized, validateErr := workflowruntime.ValidateAndNormalizeDynamicInput(fields, input)
+			if validateErr != nil {
+				return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, validateErr.Error())
+			}
+			input = normalized
+		}
+	}
+	userConfig, apiError := handler.userConfigService.GetByUserID(c.UserContext(), userID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	if missing := detectMissingRequiredUserConfig(session.WorkflowDSL, session.WorkflowDSL, userConfig); len(missing) > 0 {
+		labels := make([]string, 0, len(missing))
+		for _, item := range missing {
+			labels = append(labels, item.label)
+		}
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "缺少用户配置："+strings.Join(labels, "、"))
+	}
+	input["user"] = map[string]any{
+		"warningAccount":  userConfig.WarningAccount,
+		"warningPassword": userConfig.WarningPassword,
+		"aiBaseUrl":       userConfig.AIBaseURL,
+		"aiApiKey":        userConfig.AIApiKey,
+	}
+	data, apiError := handler.service.Rebuild(c.UserContext(), workflowruntime.RebuildDebugSessionInput{
+		SessionID: request.ID,
+		Input:     input,
+	}, userID, role)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, data, "重建调试会话成功")
 }

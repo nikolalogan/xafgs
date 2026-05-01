@@ -9,10 +9,11 @@ import (
 )
 
 type WorkflowDebugService interface {
-	Create(ctx context.Context, input workflowruntime.StartDebugSessionInput) (workflowruntime.WorkflowDebugSession, *model.APIError)
+	Create(ctx context.Context, input workflowruntime.StartDebugSessionInput, requesterID int64, role string) (workflowruntime.WorkflowDebugSession, *model.APIError)
 	Get(ctx context.Context, sessionID string, requesterID int64, role string) (*workflowruntime.WorkflowDebugSession, *model.APIError)
 	Continue(ctx context.Context, input workflowruntime.ContinueDebugSessionInput, requesterID int64, role string) (workflowruntime.WorkflowDebugSession, *model.APIError)
 	RerunTarget(ctx context.Context, input workflowruntime.RerunDebugTargetInput, requesterID int64, role string) (workflowruntime.WorkflowDebugSession, *model.APIError)
+	Rebuild(ctx context.Context, input workflowruntime.RebuildDebugSessionInput, requesterID int64, role string) (workflowruntime.WorkflowDebugSession, *model.APIError)
 }
 
 type workflowDebugService struct {
@@ -24,7 +25,10 @@ func NewWorkflowDebugService(runtime *workflowruntime.Runtime, store workflowrun
 	return &workflowDebugService{runtime: runtime, store: store}
 }
 
-func (service *workflowDebugService) Create(ctx context.Context, input workflowruntime.StartDebugSessionInput) (workflowruntime.WorkflowDebugSession, *model.APIError) {
+func (service *workflowDebugService) Create(ctx context.Context, input workflowruntime.StartDebugSessionInput, requesterID int64, role string) (workflowruntime.WorkflowDebugSession, *model.APIError) {
+	if requesterID <= 0 && !isAdminRole(role) {
+		return workflowruntime.WorkflowDebugSession{}, model.NewAPIError(403, response.CodeForbidden, "无权限创建调试会话")
+	}
 	session, err := service.runtime.StartDebugSession(ctx, service.store, input)
 	if err != nil {
 		return workflowruntime.WorkflowDebugSession{}, model.NewAPIError(400, response.CodeBadRequest, err.Error())
@@ -68,6 +72,17 @@ func (service *workflowDebugService) RerunTarget(ctx context.Context, input work
 	return session, nil
 }
 
+func (service *workflowDebugService) Rebuild(ctx context.Context, input workflowruntime.RebuildDebugSessionInput, requesterID int64, role string) (workflowruntime.WorkflowDebugSession, *model.APIError) {
+	if _, apiError := service.Get(ctx, input.SessionID, requesterID, role); apiError != nil {
+		return workflowruntime.WorkflowDebugSession{}, apiError
+	}
+	session, err := service.runtime.RebuildDebugSession(ctx, service.store, input)
+	if err != nil {
+		return workflowruntime.WorkflowDebugSession{}, model.NewAPIError(400, response.CodeBadRequest, err.Error())
+	}
+	return session, nil
+}
+
 func canAccessDebugSession(session *workflowruntime.WorkflowDebugSession, requesterID int64, role string) bool {
 	if session == nil {
 		return false
@@ -77,4 +92,3 @@ func canAccessDebugSession(session *workflowruntime.WorkflowDebugSession, reques
 	}
 	return requesterID > 0 && session.CreatorUserID == requesterID
 }
-

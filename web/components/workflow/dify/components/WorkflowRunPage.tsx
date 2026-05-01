@@ -2,15 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Checkbox, Collapse, Empty, Form, Input, InputNumber, Modal, Select, Tabs, message } from 'antd'
+import { Collapse, Modal, Tabs, message } from 'antd'
 import ReactFlow, { Background, Controls, MiniMap } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { CUSTOM_EDGE, CUSTOM_NODE } from '../core/constants'
-import { buildExternalRuleInputs, buildLocalRuleInputs, buildPreparedFields, evaluateDynamicFieldStates, evaluateDynamicFieldValidations, type DynamicField, type DynamicFieldState, validateDynamicInput } from '../core/dynamic-form-rules'
+import { type DynamicField } from '../core/dynamic-form-rules'
 import { ensureNodeConfig } from '../core/node-config'
 import { edgeTypes, nodeTypes } from '../config/workflowPreset'
 import { validateWorkflow } from '../core/validation'
 import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowGlobalVariable, type WorkflowObjectType, type WorkflowParameter } from '../core/types'
+import WorkflowDynamicForm, { computeDynamicFormState, validateDynamicFormValues } from './WorkflowDynamicForm'
 
 type RuntimeNodeStatus = 'pending' | 'running' | 'waiting_input' | 'succeeded' | 'failed' | 'skipped'
 
@@ -56,6 +57,7 @@ type WorkflowRunPageProps = {
   globalVariables?: WorkflowGlobalVariable[]
   workflowParameters?: WorkflowParameter[]
   autoRun?: boolean
+  onOpenDebug?: (node: DifyNode) => void
 }
 
 type TemplateDetailDTO = {
@@ -462,11 +464,11 @@ const detectRequiredUserConfigKeys = (dsl: unknown): UserConfigFieldKey[] => {
   return [...required]
 }
 
-export default function WorkflowRunPage({ workflowId, nodes, edges, objectTypes = [], globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
-  return <WorkflowRunPageInner workflowId={workflowId} nodes={nodes} edges={edges} objectTypes={objectTypes} globalVariables={globalVariables} workflowParameters={workflowParameters} autoRun={autoRun} />
+export default function WorkflowRunPage({ workflowId, nodes, edges, objectTypes = [], globalVariables = [], workflowParameters = [], autoRun = false, onOpenDebug }: WorkflowRunPageProps) {
+  return <WorkflowRunPageInner workflowId={workflowId} nodes={nodes} edges={edges} objectTypes={objectTypes} globalVariables={globalVariables} workflowParameters={workflowParameters} autoRun={autoRun} onOpenDebug={onOpenDebug} />
 }
 
-function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
+function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], globalVariables = [], workflowParameters = [], autoRun = false, onOpenDebug }: WorkflowRunPageProps) {
   const router = useRouter()
   const [execution, setExecution] = useState<WorkflowExecution | null>(null)
   const [loading, setLoading] = useState(false)
@@ -505,26 +507,21 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], glob
   const [startInput, setStartInput] = useState<Record<string, unknown>>({})
   const waitingFields = useMemo(() => normalizeWaitingFields(execution?.waitingInput?.schema), [execution?.waitingInput?.schema])
   const [waitingInput, setWaitingInput] = useState<Record<string, unknown>>({})
-  const waitingPreparedFields = useMemo(() => {
-    if (!execution?.waitingInput?.nodeId)
-      return []
-    return buildPreparedFields(waitingFields, execution.waitingInput.nodeId)
-  }, [execution?.waitingInput?.nodeId, waitingFields])
-  const waitingExternalRuleInputs = useMemo(() => {
-    return buildExternalRuleInputs(waitingPreparedFields, (execution?.variables ?? {}) as Record<string, unknown>)
-  }, [execution?.variables, waitingPreparedFields])
-  const waitingLocalRuleInputs = useMemo(() => {
-    if (!execution?.waitingInput?.nodeId)
-      return {}
-    return buildLocalRuleInputs(execution.waitingInput.nodeId, waitingInput)
-  }, [execution?.waitingInput?.nodeId, waitingInput])
-  const waitingFieldStates = useMemo(() => {
-    const mergedRuleInputs = {
-      ...waitingExternalRuleInputs,
-      ...waitingLocalRuleInputs,
+  const waitingDynamicFormState = useMemo(() => {
+    if (!execution?.waitingInput?.nodeId) {
+      return {
+        fieldStates: [],
+        validateErrors: {},
+      }
     }
-    return evaluateDynamicFieldStates(waitingPreparedFields, mergedRuleInputs)
-  }, [waitingExternalRuleInputs, waitingLocalRuleInputs, waitingPreparedFields])
+    return computeDynamicFormState(
+      execution.waitingInput.nodeId,
+      waitingFields,
+      waitingInput,
+      (execution.variables ?? {}) as Record<string, unknown>,
+    )
+  }, [execution?.variables, execution?.waitingInput?.nodeId, waitingFields, waitingInput])
+  const waitingFieldStates = waitingDynamicFormState.fieldStates
   const [autoRunTriggered, setAutoRunTriggered] = useState(false)
   const [endRendered, setEndRendered] = useState<Record<string, { html: string; outputType: 'text' | 'html'; templateName: string; executionId: string }>>({})
   const [endRenderLoading, setEndRenderLoading] = useState<Record<string, boolean>>({})
@@ -1725,7 +1722,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], glob
         return
       }
     }
-    const startValidation = validateDynamicInput(startFields, startInput)
+    const startValidation = validateDynamicFormValues(startFields, startInput)
     if (!startValidation.ok) {
       setError(startValidation.message)
       return
@@ -2091,12 +2088,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], glob
       return
     if (!validateBeforeRun())
       return
-    const waitingRuleInputs = {
-      ...waitingExternalRuleInputs,
-      ...buildLocalRuleInputs(execution.waitingInput.nodeId, waitingInput),
-    }
-    const waitingValidateErrors = evaluateDynamicFieldValidations(waitingPreparedFields, waitingRuleInputs)
-    const waitingValidation = validateDynamicInput(waitingFields, waitingInput, waitingFieldStates, waitingValidateErrors)
+    const waitingValidation = validateDynamicFormValues(waitingFields, waitingInput, waitingFieldStates, waitingDynamicFormState.validateErrors)
     if (!waitingValidation.ok) {
       setError(waitingValidation.message)
       return
@@ -2268,7 +2260,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], glob
                     {waitingPrompt}
                   </div>
                 )}
-                <DynamicForm fieldStates={waitingFieldStates} values={waitingInput} onChange={setWaitingInput} />
+                <WorkflowDynamicForm fieldStates={waitingFieldStates} values={waitingInput} onChange={setWaitingInput} />
                 <div className="flex justify-end pt-1">
                   <button
                     type="button"
@@ -2279,6 +2271,18 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], glob
                     {getWaitingSubmitButtonText()}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {execution && onOpenDebug && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => onOpenDebug(node)}
+                  className="rounded border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 hover:bg-amber-100"
+                >
+                  调试当前节点
+                </button>
               </div>
             )}
 
@@ -2543,7 +2547,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], glob
                 {submitPhase === 'checking_user_config' ? '正在检查运行配置，请稍候。' : '正在提交开始节点并启动流程，请稍候。'}
               </div>
             )}
-            <DynamicForm fields={startFields} values={startInput} onChange={setStartInput} />
+            <WorkflowDynamicForm fields={startFields} values={startInput} onChange={setStartInput} />
             <div className="flex justify-end pt-1">
               <button
                 type="button"
@@ -2615,90 +2619,5 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], glob
       </div>
 
     </div>
-  )
-}
-
-function DynamicForm({
-  fields,
-  fieldStates,
-  values,
-  onChange,
-}: {
-  fields?: DynamicField[]
-  fieldStates?: DynamicFieldState[]
-  values: Record<string, unknown>
-  onChange: (nextValues: Record<string, unknown>) => void
-}) {
-  const normalizedStates = fieldStates ?? (fields ?? []).map(item => ({
-    item,
-    visible: true,
-    visibleError: null,
-    validateError: null,
-  }))
-  const visibleStates = normalizedStates.filter(state => state.visible)
-
-  if (!visibleStates.length)
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前无可配置字段" />
-
-  const [form] = Form.useForm()
-  useEffect(() => {
-    form.setFieldsValue(values)
-  }, [form, values])
-
-  return (
-    <Form
-      form={form}
-      layout="vertical"
-      requiredMark={false}
-      onValuesChange={(_changed, allValues) => onChange(allValues)}
-      className="m-0"
-    >
-      {visibleStates.map((state) => {
-        const field = state.item
-        const label = `${field.label || field.name}${field.required ? ' *' : ''}`
-        const help = state.visibleError || state.validateError || undefined
-        const validateStatus = help ? 'error' : undefined
-        if (field.type === 'checkbox') {
-          return (
-            <Form.Item key={field.name} name={field.name} label={label} valuePropName="checked" help={help} validateStatus={validateStatus}>
-              <Checkbox>勾选</Checkbox>
-            </Form.Item>
-          )
-        }
-        if (field.type === 'paragraph') {
-          return (
-            <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-              <Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} />
-            </Form.Item>
-          )
-        }
-        if (field.type === 'number') {
-          return (
-            <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-              <InputNumber style={{ width: '100%' }} />
-            </Form.Item>
-          )
-        }
-        if (field.type === 'select') {
-          return (
-            <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-              <Select
-                allowClear
-                placeholder="请选择"
-                options={field.options.map(option => ({
-                  label: option.label || option.value,
-                  value: option.value,
-                }))}
-              />
-            </Form.Item>
-          )
-        }
-        return (
-          <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-            <Input />
-          </Form.Item>
-        )
-      })}
-    </Form>
   )
 }

@@ -10,11 +10,11 @@ import (
 )
 
 type StartDebugSessionInput struct {
-	WorkflowID    int64
-	CreatorUserID int64
-	WorkflowDSL   WorkflowDSL
-	TargetNodeID  string
-	Input         map[string]any
+	WorkflowID     int64
+	WorkflowDSL    WorkflowDSL
+	Input          map[string]any
+	CreatorUserID  int64
+	TargetNodeID   string
 }
 
 type ContinueDebugSessionInput struct {
@@ -25,6 +25,16 @@ type ContinueDebugSessionInput struct {
 
 type RerunDebugTargetInput struct {
 	SessionID string
+}
+
+type RebuildDebugSessionInput struct {
+	SessionID string
+	Input     map[string]any
+}
+
+type debugRunOptions struct {
+	ResumedNodeID string
+	ResumedInput  map[string]any
 }
 
 func (runtime *Runtime) StartDebugSession(ctx context.Context, store DebugSessionStorePort, input StartDebugSessionInput) (WorkflowDebugSession, error) {
@@ -53,6 +63,7 @@ func (runtime *Runtime) ContinueDebugSession(ctx context.Context, store DebugSes
 	if strings.TrimSpace(session.WaitingInput.NodeID) != strings.TrimSpace(input.NodeID) {
 		return WorkflowDebugSession{}, errors.New("continue 节点不匹配")
 	}
+
 	resumeInput := cloneMap(input.Input)
 	if resumeInput == nil {
 		resumeInput = map[string]any{}
@@ -68,13 +79,13 @@ func (runtime *Runtime) ContinueDebugSession(ctx context.Context, store DebugSes
 		}
 		resumeInput = normalized
 	}
+
 	next := cloneDebugSessionSnapshot(*session)
 	next.WaitingInput = nil
 	next.Error = ""
 	result := runtime.runDebugSession(ctx, next, debugRunOptions{
 		ResumedNodeID: input.NodeID,
 		ResumedInput:  resumeInput,
-		ExecuteTarget: strings.TrimSpace(input.NodeID) == strings.TrimSpace(next.TargetNodeID),
 	})
 	if err := store.Save(result); err != nil {
 		return WorkflowDebugSession{}, err
@@ -95,9 +106,34 @@ func (runtime *Runtime) RerunDebugTarget(ctx context.Context, store DebugSession
 	}
 	next := cloneDebugSessionSnapshot(*session)
 	next.Error = ""
-	result := runtime.runDebugSession(ctx, next, debugRunOptions{
-		ExecuteTarget: true,
+	result := runtime.runDebugSession(ctx, next, debugRunOptions{})
+	if err := store.Save(result); err != nil {
+		return WorkflowDebugSession{}, err
+	}
+	return result, nil
+}
+
+func (runtime *Runtime) RebuildDebugSession(ctx context.Context, store DebugSessionStorePort, input RebuildDebugSessionInput) (WorkflowDebugSession, error) {
+	session, err := store.Get(strings.TrimSpace(input.SessionID))
+	if err != nil {
+		return WorkflowDebugSession{}, err
+	}
+	if session == nil {
+		return WorkflowDebugSession{}, errors.New("debug session 不存在")
+	}
+	next, err := runtime.buildDebugSession(StartDebugSessionInput{
+		WorkflowID:    session.WorkflowID,
+		WorkflowDSL:   session.WorkflowDSL,
+		Input:         input.Input,
+		CreatorUserID: session.CreatorUserID,
+		TargetNodeID:  session.TargetNodeID,
 	})
+	if err != nil {
+		return WorkflowDebugSession{}, err
+	}
+	next.ID = session.ID
+	next.CreatedAt = session.CreatedAt
+	result := runtime.runDebugSession(ctx, next, debugRunOptions{})
 	if err := store.Save(result); err != nil {
 		return WorkflowDebugSession{}, err
 	}
@@ -105,13 +141,21 @@ func (runtime *Runtime) RerunDebugTarget(ctx context.Context, store DebugSession
 }
 
 func (runtime *Runtime) buildDebugSession(input StartDebugSessionInput) (WorkflowDebugSession, error) {
+	if input.WorkflowID <= 0 {
+		return WorkflowDebugSession{}, errors.New("workflowId 不能为空")
+	}
 	targetNodeID := strings.TrimSpace(input.TargetNodeID)
 	if targetNodeID == "" {
 		return WorkflowDebugSession{}, errors.New("targetNodeId 不能为空")
 	}
+	if len(input.WorkflowDSL.Nodes) == 0 {
+		return WorkflowDebugSession{}, errors.New("workflowDsl 不能为空")
+	}
 	if _, ok := findNodeByID(input.WorkflowDSL.Nodes, targetNodeID); !ok {
 		return WorkflowDebugSession{}, errors.New("targetNodeId 不存在")
 	}
+
+	now := NowISO()
 	plan := BuildExecutionPlan(input.WorkflowDSL)
 	nodeStates := map[string]ExecutionNodeState{}
 	for _, nodeID := range plan {
@@ -123,25 +167,21 @@ func (runtime *Runtime) buildDebugSession(input StartDebugSessionInput) (Workflo
 	}
 	applyDSLDefaults(variables, input.WorkflowDSL)
 	ensureReservedVariableRoots(variables, input.WorkflowDSL)
-	now := NowISO()
-	return WorkflowDebugSession{
-		ID:            uuid.NewString(),
-		WorkflowID:    input.WorkflowID,
-		CreatorUserID: input.CreatorUserID,
-		TargetNodeID:  targetNodeID,
-		Status:        DebugSessionStatusReady,
-		WorkflowDSL:   input.WorkflowDSL,
-		Variables:     variables,
-		NodeStates:    nodeStates,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-	}, nil
-}
 
-type debugRunOptions struct {
-	ResumedNodeID string
-	ResumedInput  map[string]any
-	ExecuteTarget bool
+	session := WorkflowDebugSession{
+		ID:                         uuid.NewString(),
+		WorkflowID:                 input.WorkflowID,
+		CreatorUserID:              input.CreatorUserID,
+		TargetNodeID:               targetNodeID,
+		Status:                     DebugSessionStatusReady,
+		WorkflowDSL:                input.WorkflowDSL,
+		WorkflowParametersSnapshot: append([]WorkflowParameter{}, input.WorkflowDSL.WorkflowParameters...),
+		Variables:                  variables,
+		NodeStates:                 nodeStates,
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
+	}
+	return session, nil
 }
 
 func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDebugSession, options debugRunOptions) WorkflowDebugSession {
@@ -149,6 +189,7 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 	for _, node := range session.WorkflowDSL.Nodes {
 		nodeMap[node.ID] = node
 	}
+
 	outgoingEdgesMap := map[string][]WorkflowEdge{}
 	incomingSourcesMap := map[string]map[string]bool{}
 	for _, edge := range session.WorkflowDSL.Edges {
@@ -164,15 +205,26 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 		set[edge.Source] = true
 	}
 
+	requiredNodes := collectDebugRequiredNodes(session.TargetNodeID, session.WorkflowDSL.Edges)
+	plan := BuildExecutionPlan(session.WorkflowDSL)
+	maxSteps := int(math.Max(float64(len(plan)*8), 32))
+
 	next := cloneDebugSessionSnapshot(session)
 	next.NodeStates = cloneNodeStates(session.NodeStates)
 	next.Variables = cloneMap(session.Variables)
+	next.WaitingInput = nil
+	next.LastTargetInput = nil
+	next.LastTargetOutput = nil
+	next.LastWritebacks = nil
+	next.Error = ""
 	next.UpdatedAt = NowISO()
 	ensureReservedVariableRoots(next.Variables, next.WorkflowDSL)
+	resetDebugTargetState(&next)
 
 	queue := []string{}
 	pushed := map[string]bool{}
 	arrivedSources := map[string]map[string]bool{}
+
 	markArrived := func(targetID string, sourceID string) {
 		set := arrivedSources[targetID]
 		if set == nil {
@@ -181,34 +233,67 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 		}
 		set[sourceID] = true
 	}
+
 	seedArrivedFromStates := func() {
 		for nodeID, state := range next.NodeStates {
 			if state.Status != NodeRunStatusSucceeded {
 				continue
 			}
-			for _, edge := range outgoingEdgesMap[nodeID] {
-				markArrived(edge.Target, nodeID)
+			if !requiredNodes[nodeID] {
+				continue
+			}
+			node, ok := nodeMap[nodeID]
+			if !ok {
+				continue
+			}
+			outgoing := outgoingEdgesMap[nodeID]
+			if node.Data.Type == "if-else" {
+				handleID := inferDebugBranchHandle(nodeID, next.Variables, outgoing)
+				if strings.TrimSpace(handleID) == "" {
+					continue
+				}
+				for _, edge := range selectIfElseNextEdges(outgoing, handleID) {
+					if requiredNodes[edge.Target] {
+						markArrived(edge.Target, nodeID)
+					}
+				}
+				continue
+			}
+			for _, edge := range outgoing {
+				if requiredNodes[edge.Target] {
+					markArrived(edge.Target, nodeID)
+				}
 			}
 		}
 	}
 	seedArrivedFromStates()
 
-	enqueue := func(nodeID string) {
-		if strings.TrimSpace(nodeID) == "" || pushed[nodeID] {
-			return
-		}
+	isReadyToRun := func(nodeID string) bool {
 		node, ok := nodeMap[nodeID]
 		if !ok {
-			return
+			return false
 		}
-		if shouldWaitAllIncoming(node, len(incomingSourcesMap[nodeID])) {
-			expected := incomingSourcesMap[nodeID]
-			if len(expected) > 0 {
-				arrived := arrivedSources[nodeID]
-				if len(arrived) < len(expected) {
-					return
+		expected := incomingSourcesMap[nodeID]
+		if len(expected) == 0 {
+			return true
+		}
+		if !shouldWaitAllIncoming(node, len(expected)) {
+			for sourceID := range expected {
+				if arrivedSources[nodeID][sourceID] {
+					return true
 				}
 			}
+			return false
+		}
+		return len(arrivedSources[nodeID]) >= len(expected)
+	}
+
+	enqueue := func(nodeID string) {
+		if strings.TrimSpace(nodeID) == "" || pushed[nodeID] || !requiredNodes[nodeID] {
+			return
+		}
+		if !isReadyToRun(nodeID) {
+			return
 		}
 		queue = append(queue, nodeID)
 		pushed[nodeID] = true
@@ -217,14 +302,16 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 	if options.ResumedNodeID != "" {
 		queue = append(queue, options.ResumedNodeID)
 		pushed[options.ResumedNodeID] = true
-	} else if options.ExecuteTarget {
-		enqueue(next.TargetNodeID)
 	} else {
-		enqueue(getStartNodeID(next.WorkflowDSL.Nodes))
+		for _, nodeID := range plan {
+			state := next.NodeStates[nodeID]
+			if !requiredNodes[nodeID] || state.Status == NodeRunStatusSucceeded || state.Status == NodeRunStatusSkipped {
+				continue
+			}
+			enqueue(nodeID)
+		}
 	}
 
-	plan := BuildExecutionPlan(next.WorkflowDSL)
-	maxSteps := int(math.Max(float64(len(plan)*8), 32))
 	stepCount := 0
 	for len(queue) > 0 {
 		stepCount++
@@ -240,20 +327,17 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 			next.UpdatedAt = NowISO()
 			return next
 		}
+
 		nodeID := queue[0]
 		queue = queue[1:]
 		node, ok := nodeMap[nodeID]
-		if !ok {
+		if !ok || !requiredNodes[nodeID] {
 			continue
 		}
+
 		state := next.NodeStates[nodeID]
-		if state.Status == NodeRunStatusSucceeded || state.Status == NodeRunStatusSkipped {
+		if nodeID != next.TargetNodeID && (state.Status == NodeRunStatusSucceeded || state.Status == NodeRunStatusSkipped) {
 			continue
-		}
-		if nodeID == next.TargetNodeID && !options.ExecuteTarget {
-			next.Status = DebugSessionStatusReady
-			next.UpdatedAt = NowISO()
-			return next
 		}
 
 		executor := runtime.executors[node.Data.Type]
@@ -303,6 +387,7 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 			next.Status = DebugSessionStatusWaitingInput
 			next.UpdatedAt = NowISO()
 			return next
+
 		case NodeExecutorResultFailed:
 			failedState := next.NodeStates[nodeID]
 			failedState.Status = NodeRunStatusFailed
@@ -313,6 +398,7 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 			next.Error = result.Error
 			next.UpdatedAt = NowISO()
 			return next
+
 		case NodeExecutorResultBranch:
 			succeededState := next.NodeStates[nodeID]
 			succeededState.Status = NodeRunStatusSucceeded
@@ -320,10 +406,13 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 			next.NodeStates[nodeID] = succeededState
 			next.Variables[nodeID] = defaultMap(result.Output)
 			for _, edge := range orderFanOutEdges(node, selectIfElseNextEdges(outgoingEdgesMap[nodeID], result.HandleID), nodeMap) {
+				if !requiredNodes[edge.Target] {
+					continue
+				}
 				markArrived(edge.Target, nodeID)
 				enqueue(edge.Target)
 			}
-			continue
+
 		default:
 			succeededState := next.NodeStates[nodeID]
 			succeededState.Status = NodeRunStatusSucceeded
@@ -337,11 +426,13 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 				next.LastTargetOutput = cloneMap(output)
 				next.LastWritebacks = append([]Writeback{}, result.Writebacks...)
 				next.Status = DebugSessionStatusTargetSucceeded
-				next.Error = ""
 				next.UpdatedAt = NowISO()
 				return next
 			}
 			for _, edge := range orderFanOutEdges(node, outgoingEdgesMap[nodeID], nodeMap) {
+				if !requiredNodes[edge.Target] {
+					continue
+				}
 				markArrived(edge.Target, nodeID)
 				enqueue(edge.Target)
 			}
@@ -351,6 +442,71 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 	next.Status = DebugSessionStatusReady
 	next.UpdatedAt = NowISO()
 	return next
+}
+
+func collectDebugRequiredNodes(targetNodeID string, edges []WorkflowEdge) map[string]bool {
+	required := map[string]bool{}
+	if strings.TrimSpace(targetNodeID) == "" {
+		return required
+	}
+	incoming := map[string][]string{}
+	for _, edge := range edges {
+		if strings.TrimSpace(edge.Source) == "" || strings.TrimSpace(edge.Target) == "" {
+			continue
+		}
+		incoming[edge.Target] = append(incoming[edge.Target], edge.Source)
+	}
+
+	queue := []string{targetNodeID}
+	for len(queue) > 0 {
+		nodeID := queue[0]
+		queue = queue[1:]
+		if required[nodeID] {
+			continue
+		}
+		required[nodeID] = true
+		queue = append(queue, incoming[nodeID]...)
+	}
+	return required
+}
+
+func inferDebugBranchHandle(nodeID string, variables map[string]any, outgoing []WorkflowEdge) string {
+	raw, ok := variables[nodeID]
+	if !ok {
+		return ""
+	}
+	output, ok := raw.(map[string]any)
+	if !ok {
+		return ""
+	}
+	handleID := strings.TrimSpace(toString(output["handleId"]))
+	if handleID == "" {
+		handleID = strings.TrimSpace(toString(output["branchHandleId"]))
+	}
+	if handleID == "" {
+		handleID = strings.TrimSpace(toString(output["branchHandle"]))
+	}
+	if handleID == "" {
+		return ""
+	}
+	for _, edge := range outgoing {
+		if strings.TrimSpace(edge.SourceHandle) == handleID {
+			return handleID
+		}
+	}
+	return ""
+}
+
+func resetDebugTargetState(session *WorkflowDebugSession) {
+	if session == nil {
+		return
+	}
+	state := session.NodeStates[session.TargetNodeID]
+	state.Status = NodeRunStatusPending
+	state.StartedAt = ""
+	state.EndedAt = ""
+	state.Error = ""
+	session.NodeStates[session.TargetNodeID] = state
 }
 
 func (session *WorkflowDebugSession) applyDebugWritebacks(writebacks []Writeback) {
@@ -382,4 +538,3 @@ func (session *WorkflowDebugSession) applyDebugWritebacks(writebacks []Writeback
 		setByPath(session.Variables, targetPath, mapping.Value)
 	}
 }
-

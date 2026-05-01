@@ -45,6 +45,7 @@ func (store *InMemoryDebugSessionStore) Get(sessionID string) (*WorkflowDebugSes
 func cloneDebugSessionSnapshot(source WorkflowDebugSession) WorkflowDebugSession {
 	cloned := source
 	cloned.NodeStates = cloneNodeStates(source.NodeStates)
+	cloned.WorkflowParametersSnapshot = append([]WorkflowParameter{}, source.WorkflowParametersSnapshot...)
 	if variables, cycle := cloneMapForRuntimeJSON(source.Variables, map[uintptr]struct{}{}, map[uintptr]struct{}{}); !cycle && variables != nil {
 		cloned.Variables = variables
 	} else {
@@ -70,4 +71,3 @@ func cloneDebugSessionSnapshot(source WorkflowDebugSession) WorkflowDebugSession
 	}
 	return cloned
 }
-
