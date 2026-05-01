@@ -20,3 +20,6 @@ server/tmp
 /ocr-service/model_cache
 /ocr-service/tests
 /ocr-service/app/providers/__pycache__
+/server/.cache
+/server/.gocache
+/server/.gomodcache
