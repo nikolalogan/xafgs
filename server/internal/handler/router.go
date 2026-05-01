@@ -13,6 +13,7 @@ func RegisterRoutes(
 	workflowDSLGenerateHandler *WorkflowDSLGenerateHandler,
 	workflowHandler *WorkflowHandler,
 	workflowExecutionHandler *WorkflowExecutionHandler,
+	workflowDebugHandler *WorkflowDebugHandler,
 	fileHandler *FileHandler,
 	templateHandler *TemplateHandler,
 	reportingHandler *ReportingHandler,
@@ -42,6 +43,7 @@ func RegisterRoutes(
 	workflowDSLGenerateHandler.Register(protectedGroup)
 	workflowHandler.Register(protectedGroup)
 	workflowExecutionHandler.Register(protectedGroup, nil)
+	workflowDebugHandler.Register(protectedGroup)
 	fileHandler.Register(protectedGroup)
 	templateHandler.Register(protectedGroup, adminMiddleware)
 	reportingHandler.Register(protectedGroup, adminMiddleware)

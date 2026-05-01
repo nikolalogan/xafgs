@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { message } from 'antd'
+import { Button, message } from 'antd'
 import WorkflowRunPage from '@/components/workflow/dify/components/WorkflowRunPage'
+import WorkflowRunFrame from '@/components/workflow/module/WorkflowRunFrame'
 import { parseDifyWorkflowDSL } from '@/components/workflow/dify/core/dsl'
 import type { DifyWorkflowDSL } from '@/components/workflow/dify/core/types'
 import { useConsoleRole } from '@/lib/useConsoleRole'
@@ -129,16 +130,25 @@ export default function WorkflowRunRoutePage() {
   }
 
   return (
-    <div className="space-y-3">
+    <WorkflowRunFrame
+      title={detail?.name || '工作流运行'}
+      description="运行态继续使用现有 Dify 工作流执行与 SSE 回放能力，仅统一页面壳层。"
+      toolbar={<Button onClick={() => router.push(`/app/workflows/${workflowIDValue}`)}>返回编辑页</Button>}
+    >
       {contextHolder}
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="text-sm font-semibold text-gray-900">{detail?.name || '工作流运行'}</div>
+      <div className="mb-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Execution</div>
+          <div className="mt-2 text-sm leading-6 text-slate-600">
+            运行时数据直接读取当前工作流 DSL，并沿用既有 `/api/workflow/executions` 执行链路。
+          </div>
         </div>
-        {loading && <div className="text-xs text-gray-500">加载中...</div>}
-        {!loading && !parsed && <div className="text-xs text-rose-600">DSL 解析失败或为空。</div>}
+        <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Status</div>
+          <div className="mt-2 text-sm text-slate-600">{loading ? '加载中...' : parsed ? '已就绪' : 'DSL 解析失败或为空。'}</div>
+        </div>
       </div>
       {parsed && <WorkflowRunPage workflowId={workflowIDValue} nodes={parsed.nodes} edges={parsed.edges} globalVariables={parsed.globalVariables ?? []} workflowParameters={parsed.workflowParameters ?? []} autoRun={autoRun} />}
-    </div>
+    </WorkflowRunFrame>
   )
 }

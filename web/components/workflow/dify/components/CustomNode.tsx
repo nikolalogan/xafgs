@@ -1,123 +1,71 @@
-import { memo, useCallback, useRef } from 'react'
+import { memo } from 'react'
 import type { NodeProps } from 'reactflow'
 import { Handle, Position } from 'reactflow'
 import { buildIfElseBranchHandleId, IF_ELSE_FALLBACK_HANDLE } from '@/lib/workflow-ifelse'
 import { ensureNodeConfig } from '../core/node-config'
 import { BlockEnum, type DifyNodeData } from '../core/types'
+import { getWorkflowNodeSubtitle, getWorkflowNodeVisual, workflowNodeTypeLabel } from './nodeVisuals'
 
-const typeColorMap: Record<BlockEnum, string> = {
-  [BlockEnum.Start]: 'bg-green-100 text-green-700',
-  [BlockEnum.End]: 'bg-red-100 text-red-700',
-  [BlockEnum.LLM]: 'bg-blue-100 text-blue-700',
-  [BlockEnum.IfElse]: 'bg-amber-100 text-amber-700',
-  [BlockEnum.Iteration]: 'bg-teal-100 text-teal-700',
-  [BlockEnum.Code]: 'bg-purple-100 text-purple-700',
-  [BlockEnum.HttpRequest]: 'bg-cyan-100 text-cyan-700',
-  [BlockEnum.ApiRequest]: 'bg-slate-100 text-slate-700',
-  [BlockEnum.Input]: 'bg-indigo-100 text-indigo-700',
+const handleBaseClassName = '!h-2.5 !w-2.5 !rounded-full !border-[1.5px] !border-white !transition-all'
+
+const getHandleClassName = (emphasize = false) => {
+  return `${handleBaseClassName} ${emphasize ? '!scale-110 !shadow-[0_0_0_4px_rgba(255,255,255,0.92)]' : ''}`
 }
 
-const typeLabelMap: Record<BlockEnum, string> = {
-  [BlockEnum.Start]: '开始',
-  [BlockEnum.End]: '结束',
-  [BlockEnum.LLM]: 'LLM',
-  [BlockEnum.IfElse]: '条件分支',
-  [BlockEnum.Iteration]: '迭代',
-  [BlockEnum.Code]: '代码',
-  [BlockEnum.HttpRequest]: 'HTTP',
-  [BlockEnum.ApiRequest]: 'API 请求',
-  [BlockEnum.Input]: '输入',
-}
+const baseCardClassName = 'group relative overflow-visible rounded-[22px] border border-slate-200/90 bg-white/96 shadow-[0_14px_32px_-24px_rgba(15,23,42,0.45)] transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_24px_44px_-28px_rgba(15,23,42,0.35)]'
+const selectedCardClassName = 'border-sky-400 shadow-[0_0_0_4px_rgba(56,189,248,0.14),0_24px_44px_-28px_rgba(14,116,144,0.36)]'
 
 const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
   const isStart = data.type === BlockEnum.Start
   const isEnd = data.type === BlockEnum.End
-  const isIterationContainer = data.type === BlockEnum.Iteration && !data.parentIterationId
-  const isIterationChild = Boolean(data.parentIterationId)
-  const isIterationCollapsed = Boolean(data._iterationCollapsed)
-  const resizeStateRef = useRef<{ startX: number; startY: number; startWidth: number; startHeight: number } | null>(null)
+  const isIterationContainer = data.type === BlockEnum.Iteration && data._iterationRole !== 'child'
+  const isIterationChild = data._iterationRole === 'child'
+  const visual = getWorkflowNodeVisual(data.type)
+  const subtitle = getWorkflowNodeSubtitle(data)
+  const sourceConnected = Boolean(data._connectedSourceHandleIds?.length)
+  const targetConnected = Boolean(data._connectedTargetHandleIds?.length)
+  const sourceHandleClassName = getHandleClassName(selected || sourceConnected)
+  const targetHandleClassName = getHandleClassName(selected || targetConnected)
 
-  const handleResizeStart = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    if (!data._onResizeIterationCanvas)
-      return
-    event.preventDefault()
-    event.stopPropagation()
-    resizeStateRef.current = {
-      startX: event.clientX,
-      startY: event.clientY,
-      startWidth: data._iterationCanvasWidth || 760,
-      startHeight: data._iterationCanvasHeight || 420,
-    }
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const state = resizeStateRef.current
-      if (!state)
-        return
-      data._onResizeIterationCanvas?.({
-        width: state.startWidth + (moveEvent.clientX - state.startX),
-        height: state.startHeight + (moveEvent.clientY - state.startY),
-      }, false)
-    }
-
-    const handleMouseUp = (upEvent: MouseEvent) => {
-      const state = resizeStateRef.current
-      resizeStateRef.current = null
-      window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('mouseup', handleMouseUp)
-      if (!state)
-        return
-      data._onResizeIterationCanvas?.({
-        width: state.startWidth + (upEvent.clientX - state.startX),
-        height: state.startHeight + (upEvent.clientY - state.startY),
-      }, true)
-    }
-
-    window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('mouseup', handleMouseUp)
-  }, [data])
+  const renderHeader = (options?: { compact?: boolean; badge?: string }) => (
+    <div className={`flex items-center gap-3 ${options?.compact ? 'px-3 py-3' : 'px-3.5 py-3.5'}`}>
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${visual.iconBg} ${visual.iconFg} shadow-[0_10px_20px_-14px_rgba(15,23,42,0.55)]`}>
+        {visual.icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-semibold text-slate-900">{data.title}</div>
+        <div className="mt-0.5 truncate text-xs text-slate-500">{subtitle}</div>
+      </div>
+      {options?.badge && (
+        <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${visual.accentBg} ${visual.accentBorder} ${visual.accentText}`}>
+          {options.badge}
+        </span>
+      )}
+    </div>
+  )
 
   if (isIterationContainer) {
     return (
-      <div className={`relative h-full w-full overflow-hidden rounded-2xl border bg-teal-50/70 ${selected ? 'border-teal-500 ring-2 ring-teal-200' : 'border-teal-200'}`}>
-        <Handle id="target" type="target" position={Position.Left} className="!h-2 !w-2 !bg-teal-500" />
-        <div className="flex h-10 items-center justify-between border-b border-teal-200 bg-white/80 px-3">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-gray-900">{data.title}</div>
-            <div className="text-[11px] text-teal-700">
-              {isIterationCollapsed ? '已收起 · 点击右侧展开' : '循环区域 · 主画布内编辑'}
+      <div className={`group relative h-full w-full overflow-hidden rounded-[28px] border bg-white/96 shadow-[0_22px_48px_-34px_rgba(76,29,149,0.35)] ${selected ? 'border-violet-400 shadow-[0_0_0_4px_rgba(139,92,246,0.12),0_26px_52px_-34px_rgba(76,29,149,0.34)]' : 'border-slate-200/90 hover:border-violet-200'}`}>
+        <Handle id="target" type="target" position={Position.Left} style={{ left: -5, backgroundColor: '#94a3b8' }} className={targetHandleClassName} />
+        <div className="border-b border-slate-200/90 bg-[linear-gradient(180deg,#ffffff_0%,#faf5ff_100%)]">
+          {renderHeader({ badge: '迭代容器' })}
+          <div className="flex items-center justify-between px-3.5 pb-3 text-xs">
+            <span className="text-slate-500">保留子流程结构与句柄逻辑</span>
+            <span className={`rounded-full border px-2 py-1 font-medium ${visual.accentBg} ${visual.accentBorder} ${visual.accentText}`}>主画布模块</span>
+          </div>
+        </div>
+        <div className="h-[calc(100%-82px)] bg-[linear-gradient(180deg,rgba(248,250,252,0.96)_0%,rgba(245,243,255,0.9)_100%)] p-3">
+          <div className="flex h-full flex-col rounded-[22px] border border-dashed border-violet-200 bg-white/65 p-3 shadow-inner">
+            <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-500">
+              <span>Subflow Region</span>
+              <span className="rounded-full bg-white/90 px-2 py-1 text-[10px] tracking-[0.08em] text-slate-500">缩放 / 拖拽 / fitView 保持可用</span>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation()
-                data._onToggleIterationCollapse?.()
-              }}
-              className="rounded border border-teal-200 bg-white px-2 py-1 text-[11px] font-medium text-teal-700 hover:bg-teal-50"
-            >
-              {isIterationCollapsed ? '展开' : '收起'}
-            </button>
-            <span className={`rounded px-2 py-0.5 text-xs ${typeColorMap[data.type]}`}>{typeLabelMap[data.type]}</span>
+            <div className="mt-2 text-xs text-slate-500">迭代子流程区域（主画布内编辑）</div>
           </div>
         </div>
-        <div className="px-3 py-2 text-xs text-teal-700">
-          {isIterationCollapsed ? '当前仅显示循环摘要，内部节点与连线已隐藏。' : '迭代子流程区域（主画布内编辑）'}
-        </div>
-        {!isIterationCollapsed && (
-          <button
-            type="button"
-            aria-label="调整迭代区域大小"
-            title="拖拽调整迭代区域大小"
-            onMouseDown={handleResizeStart}
-            className="nodrag nopan absolute bottom-2 right-2 h-4 w-4 cursor-se-resize rounded border border-teal-300 bg-white/90 text-teal-600 shadow-sm hover:bg-teal-50"
-          >
-            <svg viewBox="0 0 16 16" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.4">
-              <path d="M6 14 14 6M10 14l4-4M14 10l-4 4" />
-            </svg>
-          </button>
-        )}
-        <Handle id="source" type="source" position={Position.Right} className="!h-2 !w-2 !bg-teal-500" />
+        <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-1.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 ${visual.iconBg}`} />
+        <Handle id="source" type="source" position={Position.Right} style={{ right: -5, backgroundColor: visual.solidColor }} className={sourceHandleClassName} />
       </div>
     )
   }
@@ -136,57 +84,40 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
     ]
 
     return (
-      <div className={`${isIterationChild ? 'w-56' : 'w-64'} rounded-2xl border bg-white p-3 shadow-sm ${selected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}`}>
-        <Handle id="target" type="target" position={Position.Left} style={{ left: -3 }} className="!h-2 !w-2 !bg-gray-400" />
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-gray-900">{data.title}</div>
-          <span className={`rounded px-2 py-0.5 text-xs ${typeColorMap[data.type]}`}>{typeLabelMap[data.type]}</span>
-        </div>
-        <div className="space-y-1 text-xs text-gray-600">
+      <div className={`${isIterationChild ? 'w-[250px]' : 'w-[282px]'} ${baseCardClassName} ${selected ? selectedCardClassName : ''}`}>
+        <Handle id="target" type="target" position={Position.Left} style={{ left: -5, backgroundColor: '#94a3b8' }} className={targetHandleClassName} />
+        {renderHeader({ compact: isIterationChild, badge: `${branchItems.length} 路输出` })}
+        <div className="space-y-2 px-3.5 pb-3.5 text-xs text-slate-600">
           {branchItems.map((item, index) => {
+            const branchHandleClassName = getHandleClassName(selected)
             return (
-              <div key={item.handleId} className="relative rounded bg-gray-50 px-2 py-1 pr-5">
-                <span>{item.name}</span>
+              <div key={item.handleId} className="relative rounded-2xl border border-slate-200/90 bg-slate-50/88 px-3 py-2.5 pr-7 transition-colors hover:border-slate-300 hover:bg-white">
+                <div className="font-medium text-slate-700">{item.name}</div>
+                <div className="mt-1 text-[11px] text-slate-400">{index === branchItems.length - 1 ? '兜底输出' : `条件分支 ${index + 1}`}</div>
                 <Handle
                   id={item.handleId}
                   type="source"
                   position={Position.Right}
-                  style={{ top: '50%', right: -3, transform: 'translateY(-50%)' }}
-                  className="!h-2 !w-2 !bg-gray-500"
+                  style={{ top: '50%', right: -5, transform: 'translateY(-50%)', backgroundColor: index === branchItems.length - 1 ? '#94a3b8' : visual.solidColor }}
+                  className={branchHandleClassName}
                 />
               </div>
             )
           })}
         </div>
+        <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-1.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 ${visual.iconBg}`} />
       </div>
     )
   }
 
   return (
-    <div className={`${isIterationChild ? 'w-52' : 'w-60'} rounded-2xl border bg-white p-3 shadow-sm ${selected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}`}>
-      {!isStart && <Handle id="target" type="target" position={Position.Left} className="!h-2 !w-2 !bg-gray-400" />}
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="text-sm font-semibold text-gray-900">{data.title}</div>
-        <span className={`rounded px-2 py-0.5 text-xs ${typeColorMap[data.type]}`}>{typeLabelMap[data.type]}</span>
-      </div>
-      <div className="text-xs text-gray-500">{data.desc || '-'}</div>
-      {!isEnd && <Handle id="source" type="source" position={Position.Right} className="!h-2 !w-2 !bg-gray-400" />}
+    <div className={`${isIterationChild ? 'w-[224px]' : 'w-[248px]'} ${baseCardClassName} ${selected ? selectedCardClassName : ''}`}>
+      {!isStart && <Handle id="target" type="target" position={Position.Left} style={{ left: -5, backgroundColor: '#94a3b8' }} className={targetHandleClassName} />}
+      {renderHeader({ compact: isIterationChild, badge: isIterationChild ? '子流程' : workflowNodeTypeLabel[data.type] })}
+      <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-1.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 ${visual.iconBg}`} />
+      {!isEnd && <Handle id="source" type="source" position={Position.Right} style={{ right: -5, backgroundColor: visual.solidColor }} className={sourceHandleClassName} />}
     </div>
   )
 }
 
-const areEqual = (prev: Readonly<NodeProps<DifyNodeData>>, next: Readonly<NodeProps<DifyNodeData>>) => {
-  return prev.selected === next.selected
-    && prev.data.type === next.data.type
-    && prev.data.title === next.data.title
-    && prev.data.desc === next.data.desc
-    && prev.data.config === next.data.config
-    && prev.data.parentIterationId === next.data.parentIterationId
-    && prev.data._iterationCollapsed === next.data._iterationCollapsed
-    && prev.data._iterationCanvasWidth === next.data._iterationCanvasWidth
-    && prev.data._iterationCanvasHeight === next.data._iterationCanvasHeight
-    && prev.data._onToggleIterationCollapse === next.data._onToggleIterationCollapse
-    && prev.data._onResizeIterationCanvas === next.data._onResizeIterationCanvas
-}
-
-export default memo(CustomNode, areEqual)
+export default memo(CustomNode)

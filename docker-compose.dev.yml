@@ -2,20 +2,17 @@ name: sxfgssever-dev
 
 services:
   frontend:
-    image: ${BASE_REGISTRY:-docker.m.daocloud.io}/library/node:22-alpine
+    image: docker.1panel.live/library/node:22-alpine
     working_dir: /app
     environment:
-      TZ: "Asia/Shanghai"
       CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
       NPM_CONFIG_REGISTRY: "https://registry.npmmirror.com"
-      APK_MIRROR: "${APK_MIRROR:-mirrors.aliyun.com}"
     volumes:
       - ./web:/app
       - frontend_node_modules:/app/node_modules
     command: >
-      sh -c "sed -i \"s|dl-cdn.alpinelinux.org|$${APK_MIRROR}|g\" /etc/apk/repositories
-      && apk add --no-cache tzdata
-      && npm install --no-audit --no-fund
+      sh -c "npm install --no-audit --no-fund
       && npm run dev -- --hostname 0.0.0.0 --port 5173"
     expose:
       - "5173"
@@ -27,29 +24,16 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile.dev
-      args:
-        BASE_REGISTRY: "${BASE_REGISTRY:-docker.m.daocloud.io}"
-        APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
-        APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
-        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-        GOPROXY: "${GOPROXY:-https://goproxy.cn,direct}"
-        GOSUMDB: "${GOSUMDB:-sum.golang.google.cn}"
     image: sxfgssever-backend-dev:latest
     working_dir: /app
     volumes:
       - ./server:/app
-      - /Users/logan/Documents/code/pgfile:/data/uploads
       - go_pkg_mod:/go/pkg/mod
       - go_build_cache:/root/.cache/go-build
     environment:
-      TZ: "Asia/Shanghai"
       PORT: "8080"
       APP_NAME: "sxfgssever-api"
       API_TOKEN: "dev-token"
-      FILE_STORAGE_ROOT: "/data/uploads"
-      OCR_SERVICE_BASE_URL: "http://ocr-service:8090"
-      PDF_DEBUG_LOG: "1"
       GOPROXY: "https://goproxy.cn,direct"
       GOSUMDB: "sum.golang.google.cn"
       DATABASE_URL: "postgres://sxfg:sxfg_password@postgres:5432/sxfg?sslmode=disable"
@@ -65,44 +49,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-      ocr-service:
-        condition: service_started
-    restart: unless-stopped
-
-  ocr-service:
-    platform: linux/amd64
-    build:
-      context: ./ocr-service
-      dockerfile: Dockerfile
-      args:
-        BASE_REGISTRY: "${BASE_REGISTRY:-docker.m.daocloud.io}"
-        APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
-        APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
-        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-        PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
-        PIP_RETRIES: "${PIP_RETRIES:-10}"
-        OCR_WHEELS_ONLY: "${OCR_WHEELS_ONLY:-0}"
-    image: sxfgssever-ocr-service-dev:latest
-    environment:
-      TZ: "Asia/Shanghai"
-      OCR_LOCAL_PPSTRUCTURE_ENABLED: "1"
-      OCR_PPSTRUCTURE_DEVICE: "cpu"
-      OCR_PPSTRUCTURE_LANG: "ch"
-      OCR_PPSTRUCTURE_ENABLE_TABLES: "1"
-      OCR_PPSTRUCTURE_USE_REGION_DETECTION: "1"
-      OCR_PPSTRUCTURE_MODEL_ROOT: "/models/paddleocr"
-    expose:
-      - "8090"
-    ports:
-      - "8090:8090"
     restart: unless-stopped
 
   gateway:
-    image: ${BASE_REGISTRY:-docker.m.daocloud.io}/library/nginx:1.27-alpine
+    image: docker.1panel.live/library/nginx:1.27-alpine
     container_name: sxfgssever-dev-gateway
-    environment:
-      TZ: "Asia/Shanghai"
     ports:
       - "325:80"
     volumes:
@@ -113,19 +64,17 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: ${BASE_REGISTRY:-docker.m.daocloud.io}/library/postgres:17-alpine
+    image: docker.1panel.live/library/postgres:17-alpine
     ports:
       - "5432:5432"
     environment:
-      TZ: "Asia/Shanghai"
-      PGTZ: "Asia/Shanghai"
       POSTGRES_DB: sxfg
       POSTGRES_USER: sxfg
       POSTGRES_PASSWORD: sxfg_password
     volumes:
       - /Users/logan/Documents/code/pgsql:/var/lib/postgresql/data
       - ./deploy/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
-    command: ["postgres", "-c", "listen_addresses=*", "-c", "hba_file=/etc/postgresql/pg_hba.conf", "-c", "timezone=Asia/Shanghai"]
+    command: ["postgres", "-c", "listen_addresses=*", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sxfg -d sxfg"]
       interval: 5s
@@ -134,9 +83,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: ${BASE_REGISTRY:-docker.m.daocloud.io}/library/redis:8-alpine
-    environment:
-      TZ: "Asia/Shanghai"
+    image: docker.1panel.live/library/redis:8-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data

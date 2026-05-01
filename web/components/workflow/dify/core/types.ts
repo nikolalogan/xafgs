@@ -41,6 +41,14 @@ export type WritebackMapping = {
   }
 }
 
+export type WorkflowObjectType = {
+  id: string
+  name: string
+  description: string
+  schemaJson: string
+  sampleJson?: string
+}
+
 export type StartNodeConfig = {
   fanOutMode?: FanOutMode
   variables: Array<{
@@ -57,6 +65,7 @@ export type StartNodeConfig = {
     fileTypes?: string[]
     maxFiles?: number
     jsonSchema?: string
+    objectTypeId?: string
     multiSelect?: boolean
     visibleWhen?: string
     validateWhen?: string
@@ -244,6 +253,7 @@ export type WorkflowGlobalVariable = {
   valueType: 'string' | 'number' | 'boolean' | 'array' | 'object'
   defaultValue?: string
   json?: string
+  objectTypeId?: string
   description: string
 }
 
@@ -254,6 +264,7 @@ export type WorkflowParameter = {
   required: boolean
   defaultValue: string
   json?: string
+  objectTypeId?: string
   description: string
 }
 
@@ -288,6 +299,7 @@ export type DifyEdgeData = {
   _forceStroke?: string
   _connectedNodeIsHovering?: boolean
   _waitingRun?: boolean
+  _onDelete?: (edgeId: string) => void
 }
 
 export type DifyNode = ReactFlowNode<DifyNodeData>
@@ -296,6 +308,7 @@ export type DifyEdge = ReactFlowEdge<DifyEdgeData>
 export type DifyWorkflowDSL = {
   nodes: DifyNode[]
   edges: DifyEdge[]
+  objectTypes?: WorkflowObjectType[]
   globalVariables?: WorkflowGlobalVariable[]
   workflowParameters?: WorkflowParameter[]
   workflowVariableScopes?: Record<string, WorkflowVariableScope>

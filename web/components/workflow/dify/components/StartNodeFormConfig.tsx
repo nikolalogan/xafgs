@@ -7,12 +7,13 @@ import VariableValueInput from './VariableValueInput'
 import type { AICodeGenerateTargetType } from '../core/ai-code-generate'
 import { checkRuleSyntax } from '../core/rule-engine'
 import type { VariableScope, WorkflowVariableOption } from '../core/variables'
-import type { StartNodeConfig } from '../core/types'
+import type { StartNodeConfig, WorkflowObjectType } from '../core/types'
 
 type StartNodeFormConfigProps = {
   nodeId: string
   config: StartNodeConfig
   onChange: (nextConfig: StartNodeConfig) => void
+  objectTypes?: WorkflowObjectType[]
   title?: string
   addButtonLabel?: string
   allowedTypes?: StartNodeConfig['variables'][number]['type'][]
@@ -31,6 +32,7 @@ export default function StartNodeFormConfig({
   nodeId,
   config,
   onChange,
+  objectTypes = [],
   title = '开始节点参数',
   addButtonLabel = '新增参数',
   allowedTypes,
@@ -265,7 +267,20 @@ export default function StartNodeFormConfig({
                 )}
 
                 {item.type === 'json_object' && (
-                  <textarea className="h-20 w-full rounded border border-gray-300 px-2 py-1.5 text-sm font-mono" placeholder="JSON Schema（可选）" value={item.jsonSchema ?? ''} onChange={event => updateVariable(index, { jsonSchema: event.target.value })} />
+                  <div className="space-y-2">
+                    <Select
+                      className="w-full"
+                      value={item.objectTypeId || undefined}
+                      placeholder="绑定对象类型（可选）"
+                      allowClear
+                      options={objectTypes.map(objectType => ({ value: objectType.id, label: `${objectType.name} (${objectType.id})` }))}
+                      onChange={value => updateVariable(index, {
+                        objectTypeId: value || undefined,
+                        jsonSchema: value ? (objectTypes.find(item => item.id === value)?.schemaJson ?? item.jsonSchema) : item.jsonSchema,
+                      })}
+                    />
+                    <textarea className="h-20 w-full rounded border border-gray-300 px-2 py-1.5 text-sm font-mono" placeholder="JSON Schema（兼容旧配置，可选）" value={item.jsonSchema ?? ''} onChange={event => updateVariable(index, { jsonSchema: event.target.value })} />
+                  </div>
                 )}
 
                 <VariableValueInput

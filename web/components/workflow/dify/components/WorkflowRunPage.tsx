@@ -2,16 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Checkbox, Collapse, Empty, Form, Input, InputNumber, Modal, Select, Tabs, message } from 'antd'
+import { Collapse, Modal, Tabs, message } from 'antd'
 import ReactFlow, { Background, Controls, MiniMap } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { CUSTOM_EDGE, CUSTOM_NODE } from '../core/constants'
-import { buildExternalRuleInputs, buildLocalRuleInputs, buildPreparedFields, evaluateDynamicFieldStates, evaluateDynamicFieldValidations, type DynamicField, type DynamicFieldState, validateDynamicInput } from '../core/dynamic-form-rules'
+import { type DynamicField } from '../core/dynamic-form-rules'
 import { ensureNodeConfig } from '../core/node-config'
 import { edgeTypes, nodeTypes } from '../config/workflowPreset'
 import { validateWorkflow } from '../core/validation'
-import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowGlobalVariable, type WorkflowParameter } from '../core/types'
-import { formatShanghaiDateTime, formatShanghaiFilenameTimestamp } from '@/lib/time'
+import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowGlobalVariable, type WorkflowObjectType, type WorkflowParameter } from '../core/types'
+import WorkflowDynamicForm, { computeDynamicFormState, validateDynamicFormValues } from './WorkflowDynamicForm'
 
 type RuntimeNodeStatus = 'pending' | 'running' | 'waiting_input' | 'succeeded' | 'failed' | 'skipped'
 
@@ -29,45 +29,11 @@ type ExecutionWaitingInput = {
   schema: Record<string, unknown>
 }
 
-type IterationChildNodeTrace = {
-  nodeId: string
-  nodeTitle: string
-  nodeType: string
-  status: RuntimeNodeStatus
-  startedAt?: string
-  endedAt?: string
-  error?: string
-  output?: Record<string, unknown>
-}
-
-type IterationItemTrace = {
-  index: number
-  itemSnapshot?: unknown
-  status: RuntimeNodeStatus
-  startedAt?: string
-  endedAt?: string
-  error?: string
-  childNodes?: IterationChildNodeTrace[]
-  events?: Array<{
-    id: string
-    type: string
-    at: string
-    payload?: Record<string, unknown>
-  }>
-}
-
-type IterationTrace = {
-  itemVar: string
-  indexVar: string
-  items?: IterationItemTrace[]
-}
-
 type WorkflowExecution = {
   id: string
   status: 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled'
   nodeStates: Record<string, ExecutionNodeState>
   variables: Record<string, unknown>
-  outputs?: Record<string, unknown>
   events?: Array<{
     id: string
     type: string
@@ -76,7 +42,6 @@ type WorkflowExecution = {
   }>
   waitingInput?: ExecutionWaitingInput
   error?: string
-  iterationTraces?: Record<string, IterationTrace>
   updatedAt: string
 }
 
@@ -88,9 +53,11 @@ type WorkflowRunPageProps = {
   workflowId?: number
   nodes: DifyNode[]
   edges: DifyEdge[]
+  objectTypes?: WorkflowObjectType[]
   globalVariables?: WorkflowGlobalVariable[]
   workflowParameters?: WorkflowParameter[]
   autoRun?: boolean
+  onOpenDebug?: (node: DifyNode) => void
 }
 
 type TemplateDetailDTO = {
@@ -137,9 +104,6 @@ const clonePlainValue = <T,>(value: T): T => {
 }
 const buildChildNodeId = (parentId: string, childId: string) => `${ITERATION_CHILD_NODE_PREFIX}${parentId}::${childId}`
 const buildChildEdgeId = (parentId: string, childEdgeId: string) => `${ITERATION_CHILD_EDGE_PREFIX}${parentId}::${childEdgeId}`
-const dedupeById = <T extends { id: string }>(items: T[]) => {
-  return [...new Map(items.map(item => [item.id, item])).values()]
-}
 const cloneNodeForPreview = (node: DifyNode): DifyNode => ({
   ...node,
   position: { ...node.position },
@@ -154,17 +118,12 @@ const cloneEdgeForPreview = (edge: DifyEdge): DifyEdge => ({
   type: CUSTOM_EDGE,
   data: edge.data ? clonePlainValue(edge.data) : edge.data,
 })
-const buildIterationContainerLayout = (
-  children: IterationNodeConfig['children']['nodes'],
-  manualSize?: IterationNodeConfig['canvasSize'],
-) => {
+const buildIterationContainerLayout = (children: IterationNodeConfig['children']['nodes']) => {
   const maxX = children.reduce((acc, item) => Math.max(acc, item.position.x), 0)
   const maxY = children.reduce((acc, item) => Math.max(acc, item.position.y), 0)
-  const contentWidth = Math.max(ITERATION_CONTAINER_MIN_WIDTH, maxX + ITERATION_CONTAINER_PADDING_X * 2 + ITERATION_CHILD_NODE_ESTIMATED_WIDTH)
-  const contentHeight = Math.max(ITERATION_CONTAINER_MIN_HEIGHT, maxY + ITERATION_CONTAINER_PADDING_Y + ITERATION_CHILD_NODE_ESTIMATED_HEIGHT)
   return {
-    width: Math.max(contentWidth, manualSize?.width ?? 0),
-    height: Math.max(contentHeight, manualSize?.height ?? 0),
+    width: Math.max(ITERATION_CONTAINER_MIN_WIDTH, maxX + ITERATION_CONTAINER_PADDING_X * 2 + ITERATION_CHILD_NODE_ESTIMATED_WIDTH),
+    height: Math.max(ITERATION_CONTAINER_MIN_HEIGHT, maxY + ITERATION_CONTAINER_PADDING_Y + ITERATION_CHILD_NODE_ESTIMATED_HEIGHT),
     paddingX: ITERATION_CONTAINER_PADDING_X,
     paddingY: ITERATION_CONTAINER_PADDING_Y,
   }
@@ -197,8 +156,6 @@ const shouldShowRunningIcon = (nodeType: string, status: RuntimeNodeStatus, acti
 const shouldAutoOpenNode = (nodeType: string, status: RuntimeNodeStatus) => {
   if (nodeType === BlockEnum.Start || nodeType === BlockEnum.End)
     return true
-  if (nodeType === BlockEnum.Iteration && status === 'running')
-    return true
   if (status === 'waiting_input' || status === 'failed')
     return true
   return false
@@ -216,43 +173,6 @@ const getNodePreviewStyle = (status: RuntimeNodeStatus | undefined) => {
   if (status === 'skipped')
     return { border: '1.5px solid #64748b', background: '#f8fafc' }
   return { border: '1px solid #d1d5db', background: '#ffffff' }
-}
-
-const formatTraceTime = (value?: string) => {
-  return formatShanghaiDateTime(value)
-}
-
-const formatTraceDuration = (startedAt?: string, endedAt?: string) => {
-  if (!startedAt || !endedAt)
-    return ''
-  const started = new Date(startedAt).getTime()
-  const ended = new Date(endedAt).getTime()
-  if (!Number.isFinite(started) || !Number.isFinite(ended) || ended < started)
-    return ''
-  const durationMs = ended - started
-  if (durationMs < 1000)
-    return `${durationMs}ms`
-  if (durationMs < 60000)
-    return `${(durationMs / 1000).toFixed(durationMs >= 10000 ? 0 : 1)}s`
-  const minutes = Math.floor(durationMs / 60000)
-  const seconds = Math.round((durationMs % 60000) / 1000)
-  return `${minutes}分${seconds}秒`
-}
-
-const summarizeIterationItem = (value: unknown) => {
-  if (value === null || value === undefined)
-    return '空值'
-  if (typeof value === 'string')
-    return value.length > 40 ? `${value.slice(0, 40)}...` : value
-  if (typeof value === 'number' || typeof value === 'boolean')
-    return String(value)
-  if (Array.isArray(value))
-    return `数组(${value.length})`
-  if (isObject(value)) {
-    const entries = Object.entries(value).slice(0, 3).map(([key, item]) => `${key}: ${typeof item === 'string' ? item : JSON.stringify(item)}`)
-    return entries.length > 0 ? entries.join('，') : '对象'
-  }
-  return String(value)
 }
 
 const normalizeStartFields = (nodes: DifyNode[]): DynamicField[] => {
@@ -380,8 +300,7 @@ const normalizeLogPath = (path: string) => path
   .replace(/\[(\d+)\]/g, '.$1')
 
 const getLogValueByPath = (source: Record<string, unknown>, path: string): unknown => {
-  const normalizedPath = normalizeLogPath(path)
-  const keys = normalizedPath.split('.').map(item => item.trim()).filter(Boolean)
+  const keys = normalizeLogPath(path).split('.').map(item => item.trim()).filter(Boolean)
   if (!keys.length)
     return undefined
 
@@ -398,37 +317,13 @@ const getLogValueByPath = (source: Record<string, unknown>, path: string): unkno
     }
     if (typeof current !== 'object')
       return undefined
-    const objectValue = current as Record<string, unknown>
-    if (Object.prototype.hasOwnProperty.call(objectValue, key)) {
-      current = objectValue[key]
-      continue
-    }
-    if (key === 'regionName' && Object.prototype.hasOwnProperty.call(objectValue, 'name')) {
-      current = objectValue.name
-      continue
-    }
-    return undefined
+    current = (current as Record<string, unknown>)[key]
   }
-  if (current !== undefined)
-    return current
-
-  if (normalizedPath.startsWith('workflow.')) {
-    const suffix = normalizedPath.slice('workflow.'.length)
-    const fallbackToGlobal = getLogValueByPath(source, `global.${suffix}`)
-    if (fallbackToGlobal !== undefined)
-      return fallbackToGlobal
-    const fallbackToRoot = getLogValueByPath(source, suffix)
-    if (fallbackToRoot !== undefined)
-      return fallbackToRoot
-    const fallbackToStart = getLogValueByPath(source, `start.${suffix}`)
-    if (fallbackToStart !== undefined)
-      return fallbackToStart
-  }
-  return undefined
+  return current
 }
 
 const renderRuntimeTemplate = (value: string, variables: Record<string, unknown>) => {
-  return String(value || '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_full, rawKey) => {
+  return String(value || '').replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_full, rawKey) => {
     const key = String(rawKey || '').trim()
     if (!key)
       return ''
@@ -439,32 +334,6 @@ const renderRuntimeTemplate = (value: string, variables: Record<string, unknown>
       return JSON.stringify(resolved)
     return String(resolved)
   })
-}
-
-const renderRuntimeTemplateKeepUnknown = (value: string, variables: Record<string, unknown>) => {
-  return String(value || '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (full, rawKey) => {
-    const key = String(rawKey || '').trim()
-    if (!key)
-      return full
-    const resolved = getLogValueByPath(variables, key)
-    if (resolved === undefined || resolved === null)
-      return full
-    if (typeof resolved === 'object')
-      return JSON.stringify(resolved)
-    return String(resolved)
-  })
-}
-
-const resolveTemplateSourceValue = (rawSource: string, variables: Record<string, unknown>) => {
-  const source = String(rawSource || '').trim()
-  if (!source)
-    return undefined
-  const singlePlaceholder = source.match(/^\s*\{\{\s*([^}]+?)\s*\}\}\s*$/)
-  if (singlePlaceholder?.[1]) {
-    const value = getLogValueByPath(variables, singlePlaceholder[1])
-    return value === undefined ? undefined : value
-  }
-  return renderRuntimeTemplateKeepUnknown(source, variables)
 }
 
 const renderHttpConfigForLog = (
@@ -514,7 +383,7 @@ const buildEndConfiguredOutput = (node: DifyNode, variables: Record<string, unkn
       return
     const source = String(item?.source || '').trim()
     if (source) {
-      const resolved = resolveTemplateSourceValue(source, context)
+      const resolved = getLogValueByPath(context, source)
       result[name] = resolved === undefined ? null : resolved
       return
     }
@@ -595,11 +464,11 @@ const detectRequiredUserConfigKeys = (dsl: unknown): UserConfigFieldKey[] => {
   return [...required]
 }
 
-export default function WorkflowRunPage({ workflowId, nodes, edges, globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
-  return <WorkflowRunPageInner workflowId={workflowId} nodes={nodes} edges={edges} globalVariables={globalVariables} workflowParameters={workflowParameters} autoRun={autoRun} />
+export default function WorkflowRunPage({ workflowId, nodes, edges, objectTypes = [], globalVariables = [], workflowParameters = [], autoRun = false, onOpenDebug }: WorkflowRunPageProps) {
+  return <WorkflowRunPageInner workflowId={workflowId} nodes={nodes} edges={edges} objectTypes={objectTypes} globalVariables={globalVariables} workflowParameters={workflowParameters} autoRun={autoRun} onOpenDebug={onOpenDebug} />
 }
 
-function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], workflowParameters = [], autoRun = false }: WorkflowRunPageProps) {
+function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], globalVariables = [], workflowParameters = [], autoRun = false, onOpenDebug }: WorkflowRunPageProps) {
   const router = useRouter()
   const [execution, setExecution] = useState<WorkflowExecution | null>(null)
   const [loading, setLoading] = useState(false)
@@ -626,41 +495,39 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const autoOpenedNodeIdsRef = useRef<Set<string>>(new Set())
   const nodeCardRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const nodeHeaderRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const waitingFormRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const startFormRef = useRef<HTMLDivElement | null>(null)
+  const runScrollContainerRef = useRef<HTMLDivElement | null>(null)
   const historyGroupHeaderRef = useRef<HTMLButtonElement | null>(null)
   const historyNodeIdsRef = useRef<string[]>([])
   const historyGroupExpandedRef = useRef(false)
+  const scrollRetryTimerRef = useRef<number | null>(null)
+  const scrollRequestTokenRef = useRef(0)
   const startFields = useMemo(() => normalizeStartFields(nodes), [nodes])
   const [startInput, setStartInput] = useState<Record<string, unknown>>({})
   const waitingFields = useMemo(() => normalizeWaitingFields(execution?.waitingInput?.schema), [execution?.waitingInput?.schema])
   const [waitingInput, setWaitingInput] = useState<Record<string, unknown>>({})
-  const waitingPreparedFields = useMemo(() => {
-    if (!execution?.waitingInput?.nodeId)
-      return []
-    return buildPreparedFields(waitingFields, execution.waitingInput.nodeId)
-  }, [execution?.waitingInput?.nodeId, waitingFields])
-  const waitingExternalRuleInputs = useMemo(() => {
-    return buildExternalRuleInputs(waitingPreparedFields, (execution?.variables ?? {}) as Record<string, unknown>)
-  }, [execution?.variables, waitingPreparedFields])
-  const waitingLocalRuleInputs = useMemo(() => {
-    if (!execution?.waitingInput?.nodeId)
-      return {}
-    return buildLocalRuleInputs(execution.waitingInput.nodeId, waitingInput)
-  }, [execution?.waitingInput?.nodeId, waitingInput])
-  const waitingFieldStates = useMemo(() => {
-    const mergedRuleInputs = {
-      ...waitingExternalRuleInputs,
-      ...waitingLocalRuleInputs,
+  const waitingDynamicFormState = useMemo(() => {
+    if (!execution?.waitingInput?.nodeId) {
+      return {
+        fieldStates: [],
+        validateErrors: {},
+      }
     }
-    return evaluateDynamicFieldStates(waitingPreparedFields, mergedRuleInputs)
-  }, [waitingExternalRuleInputs, waitingLocalRuleInputs, waitingPreparedFields])
+    return computeDynamicFormState(
+      execution.waitingInput.nodeId,
+      waitingFields,
+      waitingInput,
+      (execution.variables ?? {}) as Record<string, unknown>,
+    )
+  }, [execution?.variables, execution?.waitingInput?.nodeId, waitingFields, waitingInput])
+  const waitingFieldStates = waitingDynamicFormState.fieldStates
   const [autoRunTriggered, setAutoRunTriggered] = useState(false)
   const [endRendered, setEndRendered] = useState<Record<string, { html: string; outputType: 'text' | 'html'; templateName: string; executionId: string }>>({})
   const [endRenderLoading, setEndRenderLoading] = useState<Record<string, boolean>>({})
   const [endRenderError, setEndRenderError] = useState<Record<string, string>>({})
   const [endRenderedHeights, setEndRenderedHeights] = useState<Record<string, number>>({})
   const [nodeOutputExpandedById, setNodeOutputExpandedById] = useState<Record<string, boolean>>({})
-  const [iterationSubflowExpandedById, setIterationSubflowExpandedById] = useState<Record<string, boolean>>({})
   const iframeResizeObserversRef = useRef<Record<string, ResizeObserver>>({})
   const executionStreamIdRef = useRef<string>('')
   const executionStreamAbortRef = useRef<AbortController | null>(null)
@@ -692,6 +559,11 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       window.clearTimeout(playbackTimerRef.current)
       playbackTimerRef.current = null
     }
+    if (scrollRetryTimerRef.current !== null) {
+      window.clearTimeout(scrollRetryTimerRef.current)
+      scrollRetryTimerRef.current = null
+    }
+    scrollRequestTokenRef.current += 1
     playbackActiveRef.current = false
     processedExecutionIdRef.current = ''
     processedEventCountRef.current = 0
@@ -752,12 +624,140 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     return loading ? '提交中...' : '提交并继续'
   }
 
+  const scrollWaitingFormIntoView = (nodeId: string) => {
+    if (typeof window === 'undefined')
+      return
+    const formElement = waitingFormRefs.current[nodeId]
+    if (!formElement)
+      return
+    window.requestAnimationFrame(() => {
+      try {
+        formElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+      catch {
+      }
+      window.setTimeout(() => {
+        try {
+          const rect = formElement.getBoundingClientRect()
+          const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0
+          if (rect.bottom > viewportHeight - 24) {
+            const overshoot = rect.bottom - viewportHeight + 24
+            window.scrollBy({ top: overshoot, behavior: 'smooth' })
+          }
+        }
+        catch {
+        }
+      }, 80)
+    })
+  }
+
+  const scrollNodeCardIntoView = (nodeId: string, requestToken = ++scrollRequestTokenRef.current) => {
+    if (typeof window === 'undefined')
+      return
+    const titleElement = nodeId === '__history_group__'
+      ? historyGroupHeaderRef.current
+      : (nodeHeaderRefs.current[nodeId] || nodeCardRefs.current[nodeId])
+    if (!titleElement) {
+      if (scrollRetryTimerRef.current !== null)
+        window.clearTimeout(scrollRetryTimerRef.current)
+      scrollRetryTimerRef.current = window.setTimeout(() => {
+        if (scrollRequestTokenRef.current !== requestToken)
+          return
+        scrollNodeCardIntoView(nodeId, requestToken)
+      }, 60)
+      return
+    }
+
+    const alignTitleIntoView = (behavior: ScrollBehavior) => {
+      if (scrollRequestTokenRef.current !== requestToken)
+        return false
+      try {
+        const container = runScrollContainerRef.current
+        if (!container) {
+          titleElement.scrollIntoView({ behavior, block: 'start' })
+          return true
+        }
+
+        const containerRect = container.getBoundingClientRect()
+        const titleRect = titleElement.getBoundingClientRect()
+        const currentScrollTop = container.scrollTop
+        const targetOffsetTop = titleRect.top - containerRect.top + currentScrollTop
+        const topAnchorOffset = Math.max(16, Math.round(container.clientHeight / 8))
+        const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+        const targetTop = Math.min(maxScrollTop, Math.max(0, targetOffsetTop - topAnchorOffset))
+        if (Math.abs(container.scrollTop - targetTop) <= 4)
+          return true
+
+        container.scrollTo({
+          top: targetTop,
+          behavior,
+        })
+        return true
+      }
+      catch {
+        return false
+      }
+    }
+
+    window.requestAnimationFrame(() => {
+      const aligned = alignTitleIntoView('smooth')
+      if (!aligned)
+        return
+      if (scrollRetryTimerRef.current !== null)
+        window.clearTimeout(scrollRetryTimerRef.current)
+      scrollRetryTimerRef.current = window.setTimeout(() => {
+        if (scrollRequestTokenRef.current !== requestToken)
+          return
+        window.requestAnimationFrame(() => {
+          if (scrollRequestTokenRef.current !== requestToken)
+            return
+          alignTitleIntoView('auto')
+        })
+      }, 90)
+    })
+  }
+
+  const scheduleNodeScrollIntoView = (nodeId: string) => {
+    if (typeof window === 'undefined' || !nodeId)
+      return
+    const requestToken = ++scrollRequestTokenRef.current
+    const delays = [0, 80, 180, 320]
+    const runAttempt = (attemptIndex: number) => {
+      if (scrollRequestTokenRef.current !== requestToken)
+        return
+      scrollNodeCardIntoView(nodeId, requestToken)
+      const nextAttemptIndex = attemptIndex + 1
+      if (nextAttemptIndex >= delays.length)
+        return
+      if (scrollRetryTimerRef.current !== null)
+        window.clearTimeout(scrollRetryTimerRef.current)
+      scrollRetryTimerRef.current = window.setTimeout(() => {
+        runAttempt(nextAttemptIndex)
+      }, delays[nextAttemptIndex])
+    }
+    runAttempt(0)
+  }
+
   const bindNodeCardRef = (nodeId: string, element: HTMLDivElement | null) => {
     nodeCardRefs.current[nodeId] = element
+    if (!element)
+      return
+    if (activeNodeIdRef.current !== nodeId && focusedNodeIdRef.current !== nodeId)
+      return
+    window.setTimeout(() => {
+      scheduleNodeScrollIntoView(nodeId)
+    }, 0)
   }
 
   const bindNodeHeaderRef = (nodeId: string, element: HTMLButtonElement | null) => {
     nodeHeaderRefs.current[nodeId] = element
+    if (!element)
+      return
+    if (activeNodeIdRef.current !== nodeId && focusedNodeIdRef.current !== nodeId)
+      return
+    window.setTimeout(() => {
+      scheduleNodeScrollIntoView(nodeId)
+    }, 0)
   }
 
   const focusCurrentNode = (nodeId: string, options?: { open?: boolean }) => {
@@ -842,6 +842,14 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   }, [historyGroupExpanded])
 
   useEffect(() => {
+    if (!execution?.waitingInput?.nodeId)
+      return
+    if ((openPanels[execution.waitingInput.nodeId] ?? false) !== true)
+      return
+    scrollWaitingFormIntoView(execution.waitingInput.nodeId)
+  }, [execution?.waitingInput?.nodeId, openPanels])
+
+  useEffect(() => {
     const cached = typeof window !== 'undefined'
       ? (window.localStorage.getItem('sxfg_access_token')
           || window.localStorage.getItem('access_token')
@@ -879,6 +887,10 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   useEffect(() => {
     return () => {
       stopExecutionStream()
+      if (scrollRetryTimerRef.current !== null) {
+        window.clearTimeout(scrollRetryTimerRef.current)
+        scrollRetryTimerRef.current = null
+      }
       if (playbackTimerRef.current !== null) {
         window.clearTimeout(playbackTimerRef.current)
         playbackTimerRef.current = null
@@ -970,6 +982,38 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   }, [historyNodeIds])
 
   useEffect(() => {
+    const scrollTargetId = currentDisplayNodeId && currentHistoryNodeId === currentDisplayNodeId && !historyGroupExpanded
+      ? '__history_group__'
+      : currentDisplayNodeId
+    if (!scrollTargetId)
+      return
+    if (typeof window === 'undefined')
+      return
+    scheduleNodeScrollIntoView(scrollTargetId)
+  }, [currentDisplayNodeId, currentHistoryNodeId, historyGroupExpanded, nodes, visibleNodeIds])
+
+  useEffect(() => {
+    if (typeof window === 'undefined')
+      return
+    if (!currentDisplayNodeId || (currentHistoryNodeId === currentDisplayNodeId && !historyGroupExpanded))
+      return
+    const element = nodeCardRefs.current[currentDisplayNodeId]
+    if (!element || typeof ResizeObserver === 'undefined')
+      return
+    const observer = new ResizeObserver(() => {
+      scheduleNodeScrollIntoView(currentDisplayNodeId)
+    })
+    observer.observe(element)
+    return () => {
+      try {
+        observer.disconnect()
+      }
+      catch {
+      }
+    }
+  }, [currentDisplayNodeId, currentHistoryNodeId, historyGroupExpanded])
+
+  useEffect(() => {
     if (!execution)
       return
     if (typeof window === 'undefined')
@@ -984,8 +1028,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         return
       if (state.status !== 'succeeded' && execution.status !== 'completed')
         return
-      const rawOutputs = isObject(execution.outputs) ? execution.outputs : {}
-      const rawOutput = rawOutputs[nodeId] ?? execution.variables?.[nodeId]
+      const rawOutput = execution.variables?.[nodeId]
       const output = buildEndConfiguredOutput(node, execution.variables, rawOutput)
       void renderEndTemplateIfNeeded(node, output)
     })
@@ -1064,6 +1107,9 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
             }
             if (currentNode?.data.type !== BlockEnum.End)
               setHistoryGroupExpanded(false)
+            window.setTimeout(() => {
+              scheduleNodeScrollIntoView(nodeId)
+            }, 0)
           } else if (currentEvent.type === 'node.finished') {
             const finishedStatus = typeof currentEvent.payload?.status === 'string' ? currentEvent.payload.status : ''
             const node = nodeMap.get(nodeId)
@@ -1118,6 +1164,14 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
           && currentEvent.payload.status === 'failed')
       if (shouldExpandHistoryGroup)
         setHistoryGroupExpanded(true)
+      const scrollTargetNodeId = nextActiveNodeId || nextFocusedNodeId
+      if (scrollTargetNodeId) {
+        window.setTimeout(() => {
+          const targetNode = nodeMap.get(scrollTargetNodeId)
+          const shouldScrollGroupHeader = !!targetNode && targetNode.data.type !== BlockEnum.End && !historyGroupExpandedRef.current
+          scheduleNodeScrollIntoView(shouldScrollGroupHeader ? '__history_group__' : scrollTargetNodeId)
+        }, 0)
+      }
       setPendingPlaybackEvents(prev => prev.slice(1))
     }, delay)
 
@@ -1311,11 +1365,12 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         sourceHandle: edge.sourceHandle,
         targetHandle: edge.targetHandle,
       })),
+      objectTypes,
       globalVariables,
       workflowParameters,
       viewport: { x: 0, y: 0, zoom: 1 },
     }
-  }, [edges, globalVariables, nodes, workflowParameters])
+  }, [edges, globalVariables, nodes, objectTypes, workflowParameters])
 
   const renderPreviewGraph = useMemo(() => {
     const mergedNodes: DifyNode[] = []
@@ -1328,7 +1383,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       }
 
       const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
-      const layout = buildIterationContainerLayout(config.children.nodes, config.canvasSize)
+      const layout = buildIterationContainerLayout(config.children.nodes)
 
       mergedNodes.push({
         ...cloneNodeForPreview(node),
@@ -1382,8 +1437,8 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     })
 
     return {
-      nodes: dedupeById(mergedNodes),
-      edges: dedupeById(mergedEdges),
+      nodes: mergedNodes,
+      edges: mergedEdges,
     }
   }, [edges, nodes])
 
@@ -1488,7 +1543,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   }), [previewEdges, previewNodes])
 
   const validateBeforeRun = () => {
-    const issues = validateWorkflow(nodes, edges, workflowParameters)
+    const issues = validateWorkflow(nodes, edges, workflowParameters, globalVariables, objectTypes)
     const errors = issues.filter(item => item.level === 'error')
     if (errors.length === 0)
       return true
@@ -1581,11 +1636,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         throw new Error(detailPayload.message || '加载模板失败')
 
       const detail = detailPayload.data
-      const rawOutputs = isObject(execution.outputs) ? execution.outputs : {}
-      const executionEndOutput = rawOutputs[node.id]
       const runtimeContext = (() => {
-        if (isObject(executionEndOutput))
-          return executionEndOutput
         if (isObject(output))
           return output
         return { output }
@@ -1671,7 +1722,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         return
       }
     }
-    const startValidation = validateDynamicInput(startFields, startInput)
+    const startValidation = validateDynamicFormValues(startFields, startInput)
     if (!startValidation.ok) {
       setError(startValidation.message)
       return
@@ -1745,7 +1796,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
   const downloadExecutionSnapshot = () => {
     if (!execution)
       return
-    const timestamp = formatShanghaiFilenameTimestamp()
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
     const filename = `workflow-execution-${execution.id}-${timestamp}.json`
     const payload = JSON.stringify(execution, null, 2)
     const blob = new Blob([payload], { type: 'application/json;charset=utf-8' })
@@ -2037,12 +2088,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       return
     if (!validateBeforeRun())
       return
-    const waitingRuleInputs = {
-      ...waitingExternalRuleInputs,
-      ...buildLocalRuleInputs(execution.waitingInput.nodeId, waitingInput),
-    }
-    const waitingValidateErrors = evaluateDynamicFieldValidations(waitingPreparedFields, waitingRuleInputs)
-    const waitingValidation = validateDynamicInput(waitingFields, waitingInput, waitingFieldStates, waitingValidateErrors)
+    const waitingValidation = validateDynamicFormValues(waitingFields, waitingInput, waitingFieldStates, waitingDynamicFormState.validateErrors)
     if (!waitingValidation.ok) {
       setError(waitingValidation.message)
       return
@@ -2121,8 +2167,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       return null
     const panelOpen = options?.forceOpen || (openPanels[node.id] ?? false)
     const status = runtimeState.status
-    const rawOutputs = isObject(execution.outputs) ? execution.outputs : {}
-    const rawNodeOutput = rawOutputs[node.id] ?? execution.variables[node.id]
+    const rawNodeOutput = execution.variables[node.id]
     const nodeOutput = node.data.type === BlockEnum.End
       ? buildEndConfiguredOutput(node, execution.variables, rawNodeOutput)
       : rawNodeOutput
@@ -2130,12 +2175,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
     const showRunningIcon = shouldShowRunningIcon(node.data.type, status, activeNodeId, node.id)
     const nodeConfig: Record<string, unknown> = isObject(node.data.config) ? node.data.config : {}
     const hasEndTemplate = node.data.type === BlockEnum.End && Number(nodeConfig.templateId ?? 0) > 0
-    const iterationTrace = node.data.type === BlockEnum.Iteration
-      ? execution.iterationTraces?.[node.id]
-      : null
-    const iterationSubflowExpanded = node.data.type === BlockEnum.Iteration
-      ? (iterationSubflowExpandedById[node.id] ?? (status === 'running'))
-      : false
     const waitingPrompt = (() => {
       if (!isWaitingCurrent)
         return ''
@@ -2209,7 +2248,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
             )}
 
             {isWaitingCurrent && (
-              <div className="space-y-2 rounded border border-gray-200 bg-white p-2">
+              <div ref={(el) => { waitingFormRefs.current[node.id] = el }} className="space-y-2 rounded border border-gray-200 bg-white p-2">
                 <div className="text-xs font-medium text-gray-800">节点等待输入，请提交后继续</div>
                 {!!submitPhase && submitPhase === 'submitting_waiting_input' && (
                   <div className="rounded border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-700">
@@ -2221,7 +2260,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                     {waitingPrompt}
                   </div>
                 )}
-                <DynamicForm fieldStates={waitingFieldStates} values={waitingInput} onChange={setWaitingInput} templateVariables={(execution?.variables ?? {}) as Record<string, unknown>} />
+                <WorkflowDynamicForm fieldStates={waitingFieldStates} values={waitingInput} onChange={setWaitingInput} />
                 <div className="flex justify-end pt-1">
                   <button
                     type="button"
@@ -2232,6 +2271,18 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                     {getWaitingSubmitButtonText()}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {execution && onOpenDebug && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => onOpenDebug(node)}
+                  className="rounded border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 hover:bg-amber-100"
+                >
+                  调试当前节点
+                </button>
               </div>
             )}
 
@@ -2319,129 +2370,6 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                             {endRendered[node.id].html}
                           </pre>
                         )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {node.data.type === BlockEnum.Iteration && (
-              <div className="space-y-2 rounded border border-teal-200 bg-teal-50/40 p-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIterationSubflowExpandedById(prev => ({
-                      ...prev,
-                      [node.id]: !iterationSubflowExpanded,
-                    }))
-                  }}
-                  className="flex w-full items-center justify-between rounded px-1 py-1 text-left hover:bg-teal-50"
-                >
-                  <div>
-                    <div className="text-xs font-medium text-teal-900">迭代执行详情</div>
-                    <div className="text-[11px] text-teal-700">
-                      {iterationTrace?.items?.length
-                        ? `已记录 ${iterationTrace.items.length} 个迭代项`
-                        : '暂无子节点执行详情'}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`rounded px-2 py-0.5 text-xs ${statusClassMap[status]}`}>{statusTextMap[status]}</span>
-                    <span className="text-xs text-teal-700">{iterationSubflowExpanded ? '收起' : '展开'}</span>
-                  </div>
-                </button>
-                {iterationSubflowExpanded && (
-                  <div className="space-y-2 rounded border border-teal-200 bg-white p-2">
-                    {!iterationTrace?.items?.length && (
-                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无迭代子节点执行详情" />
-                    )}
-                    {!!iterationTrace?.items?.length && (
-                      <Collapse
-                        size="small"
-                        bordered={false}
-                        className="bg-white"
-                        items={iterationTrace.items.map((item) => {
-                          const itemStatus = item.status ?? 'pending'
-                          const itemDuration = formatTraceDuration(item.startedAt, item.endedAt)
-                          return {
-                            key: `iteration-item-${node.id}-${item.index}`,
-                            label: (
-                              <div className="flex min-w-0 items-center justify-between gap-3 pr-2">
-                                <div className="min-w-0">
-                                  <div className="truncate text-xs font-medium text-gray-900">
-                                    第 {item.index + 1} 项 · {summarizeIterationItem(item.itemSnapshot)}
-                                  </div>
-                                  <div className="truncate text-[11px] text-gray-500">
-                                    开始：{formatTraceTime(item.startedAt)}{itemDuration ? ` · 耗时 ${itemDuration}` : ''}
-                                  </div>
-                                </div>
-                                <span className={`shrink-0 rounded px-2 py-0.5 text-xs ${statusClassMap[itemStatus]}`}>{statusTextMap[itemStatus]}</span>
-                              </div>
-                            ),
-                            children: (
-                              <div className="space-y-2">
-                                <div className="rounded border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-700">
-                                  <div>索引变量：{iterationTrace.indexVar || 'index'}</div>
-                                  <div>项变量：{iterationTrace.itemVar || 'item'}</div>
-                                  <div>开始时间：{formatTraceTime(item.startedAt)}</div>
-                                  <div>结束时间：{formatTraceTime(item.endedAt)}</div>
-                                  {item.error && (
-                                    <div className="mt-1 rounded border border-rose-200 bg-rose-50 px-2 py-1 text-rose-700">
-                                      {item.error}
-                                    </div>
-                                  )}
-                                </div>
-                                {!!item.childNodes?.length && item.childNodes.map((child, childIndex) => {
-                                  const childStatus = child.status ?? 'pending'
-                                  const childDuration = formatTraceDuration(child.startedAt, child.endedAt)
-                                  return (
-                                    <div key={`iteration-child-${node.id}-${item.index}-${child.nodeId}-${childIndex}`} className="rounded border border-gray-200 bg-white p-2">
-                                      <div className="flex items-start justify-between gap-2">
-                                        <div className="min-w-0">
-                                          <div className="truncate text-xs font-medium text-gray-900">{child.nodeTitle || child.nodeId}</div>
-                                          <div className="text-[11px] text-gray-500">{child.nodeType} · {child.nodeId}</div>
-                                        </div>
-                                        <span className={`shrink-0 rounded px-2 py-0.5 text-xs ${statusClassMap[childStatus]}`}>{statusTextMap[childStatus]}</span>
-                                      </div>
-                                      <div className="mt-2 grid grid-cols-1 gap-1 text-[11px] text-gray-600 md:grid-cols-2">
-                                        <div>开始：{formatTraceTime(child.startedAt)}</div>
-                                        <div>结束：{formatTraceTime(child.endedAt)}</div>
-                                        {!!childDuration && <div>耗时：{childDuration}</div>}
-                                      </div>
-                                      {child.error && (
-                                        <div className="mt-2 rounded border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
-                                          {child.error}
-                                        </div>
-                                      )}
-                                      <Collapse
-                                        size="small"
-                                        bordered={false}
-                                        className="mt-2 rounded border border-gray-200 bg-white"
-                                        items={[
-                                          {
-                                            key: 'output',
-                                            label: <span className="text-xs text-gray-600">节点输出（JSON）</span>,
-                                            children: (
-                                              <pre className="overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">
-                                                {renderJson(child.output ?? {})}
-                                              </pre>
-                                            ),
-                                          },
-                                        ]}
-                                      />
-                                    </div>
-                                  )
-                                })}
-                                {!item.childNodes?.length && (
-                                  <div className="rounded border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
-                                    当前迭代项未记录到子节点明细。
-                                  </div>
-                                )}
-                              </div>
-                            ),
-                          }
-                        })}
-                      />
-                    )}
                   </div>
                 )}
               </div>
@@ -2573,7 +2501,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
         )}
       </div>
 
-      <div className="workflow-run-scroll min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 bg-white p-3">
+      <div ref={runScrollContainerRef} className="workflow-run-scroll min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 bg-white p-3">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-gray-900">
             <span className="shrink-0">流程执行</span>
@@ -2619,7 +2547,7 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
                 {submitPhase === 'checking_user_config' ? '正在检查运行配置，请稍候。' : '正在提交开始节点并启动流程，请稍候。'}
               </div>
             )}
-            <DynamicForm fields={startFields} values={startInput} onChange={setStartInput} templateVariables={{}} />
+            <WorkflowDynamicForm fields={startFields} values={startInput} onChange={setStartInput} />
             <div className="flex justify-end pt-1">
               <button
                 type="button"
@@ -2691,94 +2619,5 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, globalVariables = [], 
       </div>
 
     </div>
-  )
-}
-
-function DynamicForm({
-  fields,
-  fieldStates,
-  values,
-  onChange,
-  templateVariables,
-}: {
-  fields?: DynamicField[]
-  fieldStates?: DynamicFieldState[]
-  values: Record<string, unknown>
-  onChange: (nextValues: Record<string, unknown>) => void
-  templateVariables?: Record<string, unknown>
-}) {
-  const normalizedStates = fieldStates ?? (fields ?? []).map(item => ({
-    item,
-    visible: true,
-    visibleError: null,
-    validateError: null,
-  }))
-  const visibleStates = normalizedStates.filter(state => state.visible)
-
-  if (!visibleStates.length)
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前无可配置字段" />
-
-  const [form] = Form.useForm()
-  useEffect(() => {
-    form.setFieldsValue(values)
-  }, [form, values])
-
-  return (
-    <Form
-      form={form}
-      layout="vertical"
-      requiredMark={false}
-      onValuesChange={(_changed, allValues) => onChange(allValues)}
-      className="m-0"
-    >
-      {visibleStates.map((state) => {
-        const field = state.item
-        const rawLabel = field.label || field.name
-        const labelText = templateVariables ? renderRuntimeTemplateKeepUnknown(rawLabel, templateVariables) : rawLabel
-        const label = `${labelText}${field.required ? ' *' : ''}`
-        const help = state.visibleError || state.validateError || undefined
-        const validateStatus = help ? 'error' : undefined
-        if (field.type === 'checkbox') {
-          return (
-            <Form.Item key={field.name} name={field.name} label={label} valuePropName="checked" help={help} validateStatus={validateStatus}>
-              <Checkbox>勾选</Checkbox>
-            </Form.Item>
-          )
-        }
-        if (field.type === 'paragraph') {
-          return (
-            <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-              <Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} placeholder={templateVariables && field.placeholder ? renderRuntimeTemplateKeepUnknown(field.placeholder, templateVariables) : field.placeholder} />
-            </Form.Item>
-          )
-        }
-        if (field.type === 'number') {
-          return (
-            <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-              <InputNumber style={{ width: '100%' }} />
-            </Form.Item>
-          )
-        }
-        if (field.type === 'select') {
-          return (
-            <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-              <Select
-                allowClear
-                placeholder={templateVariables ? renderRuntimeTemplateKeepUnknown('请选择', templateVariables) : '请选择'}
-                options={field.options.map(option => ({
-                  label: templateVariables ? renderRuntimeTemplateKeepUnknown(option.label || option.value, templateVariables) : (option.label || option.value),
-                  value: option.value,
-                }))}
-              />
-            </Form.Item>
-          )
-        }
-        return (
-          <Form.Item key={field.name} name={field.name} label={label} help={help} validateStatus={validateStatus}>
-            <Input placeholder={templateVariables && field.placeholder ? renderRuntimeTemplateKeepUnknown(field.placeholder, templateVariables) : field.placeholder} />
-          </Form.Item>
-        )
-      })}
-    </Form>
   )
 }

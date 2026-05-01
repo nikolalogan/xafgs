@@ -1,6 +1,7 @@
 import { CUSTOM_EDGE, CUSTOM_NODE, ITERATION_CONTAINER_PADDING_X, ITERATION_CONTAINER_PADDING_Y, ITERATION_NESTED_EDGE_PREFIX, ITERATION_NESTED_NODE_PREFIX } from './constants'
 import { ensureNodeConfig } from './node-config'
 import { normalizeGlobalVariables } from './global-variables'
+import { normalizeWorkflowObjectTypes } from './object-types'
 import { normalizeWorkflowParameters } from './workflow-parameters'
 import { normalizeWorkflowVariableScopes } from './workflow-variable-scopes'
 import { BlockEnum, type DifyEdge, type DifyNode, type DifyWorkflowDSL, type IterationNodeConfig } from './types'
@@ -300,6 +301,7 @@ export const parseDifyWorkflowDSL = (input: string | DifyWorkflowDSL): DifyWorkf
   return {
     nodes,
     edges,
+    objectTypes: normalizeWorkflowObjectTypes(value.objectTypes),
     globalVariables: normalizeGlobalVariables(value.globalVariables),
     workflowParameters: normalizeWorkflowParameters(value.workflowParameters),
     workflowVariableScopes: normalizeWorkflowVariableScopes(value.workflowVariableScopes),

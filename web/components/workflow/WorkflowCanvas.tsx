@@ -1,10 +1,8 @@
 'use client'
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from 'react'
 import {
   ReactFlowProvider,
-  applyEdgeChanges,
-  applyNodeChanges,
   useReactFlow,
   type Connection,
   type EdgeChange,
@@ -16,18 +14,15 @@ import DSLModals from './dify/components/DSLModals'
 import AINodeGenerateModal from './dify/components/AINodeGenerateModal'
 import NodeConfigPanel from './dify/components/NodeConfigPanel'
 import WorkflowEditor from './dify/components/WorkflowEditor'
+import WorkflowNodeLibrary, { WORKFLOW_NODE_DND_TYPE } from './WorkflowNodeLibrary'
 import WorkflowToolbar from './dify/components/WorkflowToolbar'
 import WorkflowRunModal from './dify/components/WorkflowRunModal'
-import { demoDSL, nodeTypeLabel } from './dify/config/workflowPreset'
-import {
-  CUSTOM_EDGE,
-  CUSTOM_NODE,
-  ITERATION_CHILDREN_Z_INDEX,
-  ITERATION_CONTAINER_PADDING_X,
-  ITERATION_CONTAINER_PADDING_Y,
-} from './dify/core/constants'
+import WorkflowDebugModal from './dify/components/WorkflowDebugModal'
+import WorkflowWorkbench from './WorkflowWorkbench'
+import { demoDSL, edgeTypes, nodeTypeLabel, nodeTypes } from './dify/config/workflowPreset'
+import { CUSTOM_EDGE, CUSTOM_NODE, ITERATION_CHILDREN_Z_INDEX } from './dify/core/constants'
 import { ensureNodeConfig } from './dify/core/node-config'
-import { BlockEnum, type DifyEdge, type DifyNode, type DifyNodeConfig, type WorkflowParameter } from './dify/core/types'
+import { BlockEnum, type DifyEdge, type DifyNode, type DifyNodeConfig, type IterationNodeConfig, type WorkflowGlobalVariable, type WorkflowObjectType, type WorkflowParameter } from './dify/core/types'
 import { validateWorkflow } from './dify/core/validation'
 import { buildWorkflowVariableOptions } from './dify/core/variables'
 import { useClipboardInteractions } from './dify/hooks/useClipboardInteractions'
@@ -38,7 +33,7 @@ import { useKeyboardShortcuts } from './dify/hooks/useKeyboardShortcuts'
 import { useWorkflowCanvasState } from './dify/hooks/useWorkflowCanvasState'
 import { useNodeActions } from './dify/hooks/useNodeActions'
 import { useSelectionInteractions } from './dify/hooks/useSelectionInteractions'
-import { buildIterationNestedNodeId, parseDifyWorkflowDSL, serializeWorkflowDSL } from './dify/core/dsl'
+import { parseDifyWorkflowDSL } from './dify/core/dsl'
 import type { DifyWorkflowDSL } from './dify/core/types'
 import { IF_ELSE_FALLBACK_HANDLE, parseIfElseBranchIndex } from '@/lib/workflow-ifelse'
 import {
@@ -47,39 +42,21 @@ import {
   useWorkflowMenuStore,
 } from './dify/hooks/useWorkflowStoreSelectors'
 
+const ITERATION_CHILD_NODE_PREFIX = 'iter-child::'
+const ITERATION_CHILD_EDGE_PREFIX = 'iter-edge::'
 const ITERATION_CONTAINER_MIN_WIDTH = 760
 const ITERATION_CONTAINER_MIN_HEIGHT = 420
-const ITERATION_CONTAINER_COLLAPSED_WIDTH = 320
-const ITERATION_CONTAINER_COLLAPSED_HEIGHT = 120
+const ITERATION_CONTAINER_PADDING_X = 24
+const ITERATION_CONTAINER_PADDING_Y = 56
 const ITERATION_CHILD_NODE_ESTIMATED_WIDTH = 240
 const ITERATION_CHILD_NODE_ESTIMATED_HEIGHT = 130
 const NODE_INSERT_X_GAP = 320
 const NODE_INSERT_Y_GAP = 140
 const NODE_COLLISION_X_THRESHOLD = 260
 const NODE_COLLISION_Y_THRESHOLD = 110
-const WORKFLOW_PERF_DEBUG = false
 
-type PerfToken = {
-  label: string
-  startedAt: number
-}
-
-const startPerfMeasure = (label: string): PerfToken | null => {
-  if (!WORKFLOW_PERF_DEBUG || typeof performance === 'undefined')
-    return null
-  return {
-    label,
-    startedAt: performance.now(),
-  }
-}
-
-const endPerfMeasure = (token: PerfToken | null, extra?: Record<string, unknown>) => {
-  if (!token || typeof performance === 'undefined')
-    return
-  const duration = performance.now() - token.startedAt
-  const suffix = extra ? ` ${JSON.stringify(extra)}` : ''
-  console.log(`[workflow-perf] ${token.label}: ${duration.toFixed(2)}ms${suffix}`)
-}
+const buildChildNodeId = (parentId: string, childId: string) => `${ITERATION_CHILD_NODE_PREFIX}${parentId}::${childId}`
+const buildChildEdgeId = (parentId: string, childEdgeId: string) => `${ITERATION_CHILD_EDGE_PREFIX}${parentId}::${childEdgeId}`
 
 const sortIfElseEdges = (edges: DifyEdge[]) => {
   const order = (edge: DifyEdge) => {
@@ -96,7 +73,7 @@ const sortIfElseEdges = (edges: DifyEdge[]) => {
 }
 
 const autoLayoutNodes = (nodes: DifyNode[], edges: DifyEdge[]) => {
-  const filteredNodes = nodes.filter(node => !getParentIterationId(node))
+  const filteredNodes = nodes.filter(node => !node.id.startsWith(ITERATION_CHILD_NODE_PREFIX))
   if (filteredNodes.length === 0)
     return nodes
 
@@ -207,10 +184,25 @@ const autoLayoutNodes = (nodes: DifyNode[], edges: DifyEdge[]) => {
   })
 }
 
-const isNestedNode = (node: DifyNode | null | undefined) => Boolean(node?.data.parentIterationId || node?.parentNode)
-const getParentIterationId = (node: DifyNode | null | undefined) => node?.data.parentIterationId || node?.parentNode || null
-const isIterationEntryNode = (node: DifyNode | null | undefined) => Boolean(node?.data.parentIterationId && node?.data.isIterationEntry)
-const isNestedIterationEndNode = (node: DifyNode | null | undefined) => Boolean(node?.data.parentIterationId && node?.data.type === BlockEnum.End)
+const parseChildNodeId = (id: string): { parentId: string; childId: string } | null => {
+  if (!id.startsWith(ITERATION_CHILD_NODE_PREFIX))
+    return null
+  const payload = id.slice(ITERATION_CHILD_NODE_PREFIX.length)
+  const [parentId, childId] = payload.split('::')
+  if (!parentId || !childId)
+    return null
+  return { parentId, childId }
+}
+
+const parseChildEdgeId = (id: string): { parentId: string; childEdgeId: string } | null => {
+  if (!id.startsWith(ITERATION_CHILD_EDGE_PREFIX))
+    return null
+  const payload = id.slice(ITERATION_CHILD_EDGE_PREFIX.length)
+  const [parentId, childEdgeId] = payload.split('::')
+  if (!parentId || !childEdgeId)
+    return null
+  return { parentId, childEdgeId }
+}
 
 const resolveNonOverlappingNodePosition = (nodes: DifyNode[], baseX: number, baseY: number) => {
   const isOccupied = (x: number, y: number) => nodes.some((item) => {
@@ -232,7 +224,8 @@ const resolveInsertPosition = (nodes: DifyNode[], activeNode: DifyNode | null) =
   const fallbackY = 90 + (nodes.length % 4) * 120
   if (!activeNode)
     return resolveNonOverlappingNodePosition(nodes, fallbackX, fallbackY)
-  if (isNestedNode(activeNode))
+  const isChildNode = activeNode.data?._iterationRole === 'child' || parseChildNodeId(activeNode.id)
+  if (isChildNode)
     return resolveNonOverlappingNodePosition(nodes, fallbackX, fallbackY)
   const source = nodes.find(item => item.id === activeNode.id)
   if (!source)
@@ -244,24 +237,57 @@ const resolveInsertPosition = (nodes: DifyNode[], activeNode: DifyNode | null) =
   )
 }
 
-const buildIterationContainerLayout = (children: DifyNode[], manualSize?: { width?: number; height?: number }) => {
+const buildIterationContainerLayout = (children: IterationNodeConfig['children']['nodes']) => {
   const maxX = children.reduce((acc, item) => Math.max(acc, item.position.x), 0)
   const maxY = children.reduce((acc, item) => Math.max(acc, item.position.y), 0)
-  const contentWidth = Math.max(ITERATION_CONTAINER_MIN_WIDTH, maxX + ITERATION_CONTAINER_PADDING_X + ITERATION_CHILD_NODE_ESTIMATED_WIDTH)
-  const contentHeight = Math.max(ITERATION_CONTAINER_MIN_HEIGHT, maxY + ITERATION_CONTAINER_PADDING_Y + ITERATION_CHILD_NODE_ESTIMATED_HEIGHT)
   return {
-    width: Math.max(contentWidth, manualSize?.width ?? 0),
-    height: Math.max(contentHeight, manualSize?.height ?? 0),
+    width: Math.max(ITERATION_CONTAINER_MIN_WIDTH, maxX + ITERATION_CONTAINER_PADDING_X * 2 + ITERATION_CHILD_NODE_ESTIMATED_WIDTH),
+    height: Math.max(ITERATION_CONTAINER_MIN_HEIGHT, maxY + ITERATION_CONTAINER_PADDING_Y + ITERATION_CHILD_NODE_ESTIMATED_HEIGHT),
     paddingX: ITERATION_CONTAINER_PADDING_X,
     paddingY: ITERATION_CONTAINER_PADDING_Y,
   }
 }
 
+const buildIterationChildRenderNode = (
+  nodes: DifyNode[],
+  parentId: string,
+  childId: string,
+): DifyNode | null => {
+  const parent = nodes.find(node => node.id === parentId && node.data.type === BlockEnum.Iteration)
+  if (!parent)
+    return null
+  const config = ensureNodeConfig(BlockEnum.Iteration, parent.data.config)
+  const childNode = config.children.nodes.find(item => item.id === childId)
+  if (!childNode)
+    return null
+  const layout = buildIterationContainerLayout(config.children.nodes)
+  return {
+    id: buildChildNodeId(parentId, childId),
+    type: CUSTOM_NODE,
+    parentNode: parentId,
+    extent: 'parent',
+    position: {
+      x: layout.paddingX + childNode.position.x,
+      y: layout.paddingY + childNode.position.y,
+    },
+    data: {
+      ...childNode.data,
+      title: childNode.data.title || `${childNode.data.type}-${childNode.id}`,
+      config: childNode.data.config ?? ensureNodeConfig(childNode.data.type, undefined),
+      _iterationRole: 'child',
+      _iterationParentId: parentId,
+      _iterationChildId: childNode.id,
+    },
+    draggable: true,
+    selectable: true,
+  } as DifyNode
+}
+
 type WorkflowCanvasInnerProps = {
   initialDSL: DifyWorkflowDSL
   workflowId?: number
+  currentPublishedVersionNo?: number
   onDSLChange?: (dsl: DifyWorkflowDSL) => void
-  onSave?: () => void
   apiRef?: React.Ref<WorkflowCanvasHandle>
 }
 
@@ -269,7 +295,15 @@ type WorkflowRunSnapshot = {
   workflowId?: number
   nodes: DifyNode[]
   edges: DifyEdge[]
+  objectTypes: WorkflowObjectType[]
+  globalVariables: WorkflowGlobalVariable[]
   workflowParameters: WorkflowParameter[]
+}
+
+type WorkflowDebugSnapshot = {
+  workflowId?: number
+  workflowDsl?: DifyWorkflowDSL | null
+  targetNode: DifyNode | null
 }
 
 type SystemModelOption = {
@@ -298,40 +332,28 @@ const getToken = () => {
     || ''
 }
 
-function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiRef }: WorkflowCanvasInnerProps) {
+function WorkflowCanvasInner({ initialDSL, workflowId, currentPublishedVersionNo = 0, onDSLChange, apiRef }: WorkflowCanvasInnerProps) {
   const [runModalOpen, setRunModalOpen] = useState(false)
-  const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ workflowId, nodes: [], edges: [], workflowParameters: [] })
+  const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ workflowId, nodes: [], edges: [], objectTypes: [], globalVariables: [], workflowParameters: [] })
+  const [debugModalOpen, setDebugModalOpen] = useState(false)
+  const [debugSnapshot, setDebugSnapshot] = useState<WorkflowDebugSnapshot>({ workflowId, workflowDsl: null, targetNode: null })
+  const [nodeConfigOpen, setNodeConfigOpen] = useState(false)
   const [nodesForPanel, setNodesForPanel] = useState<DifyNode[]>([])
   const [llmModelOptions, setLLMModelOptions] = useState<Array<{ name: string; label: string }>>([{ name: 'gpt-4o-mini', label: 'GPT-4o mini' }])
   const [defaultLLMModel, setDefaultLLMModel] = useState('gpt-4o-mini')
   const [defaultCodeModel, setDefaultCodeModel] = useState('gpt-4o-mini')
   const [aiNodeGenerateOpen, setAINodeGenerateOpen] = useState(false)
-  const [collapsedIterationIds, setCollapsedIterationIds] = useState<Record<string, boolean>>({})
   const latestNodesRef = useRef<DifyNode[]>([])
   const latestEdgesRef = useRef<DifyEdge[]>([])
   const latestWorkflowParametersRef = useRef<WorkflowParameter[]>([])
-  const latestActiveNodeRef = useRef<DifyNode | null>(null)
   const lastReportedDSLRef = useRef('')
   const dragRecordPendingRef = useRef(false)
-  const renderedNodeCacheRef = useRef(new Map<string, {
-    sourceNode: DifyNode
-    parentIterationId: string | null
-    collapsed: boolean
-    width?: number
-    height?: number
-    rendered: DifyNode
-  }>())
-  const renderedEdgeCacheRef = useRef(new Map<string, {
-    sourceEdge: DifyEdge
-    parentIterationId: string | null
-    rendered: DifyEdge
-  }>())
-  const iterationToggleHandlerRef = useRef<Record<string, () => void>>({})
-  const iterationResizeHandlerRef = useRef<Record<string, (size: { width: number; height: number }, finalize?: boolean) => void>>({})
   const {
     parsed,
     nodes,
     edges,
+    onNodesChangeBase,
+    onEdgesChangeBase,
     activeNode,
     importOpen,
     exportOpen,
@@ -340,6 +362,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     checklistOpen,
     importText,
     exportText,
+    objectTypes,
     globalVariables,
     workflowParameters,
     workflowVariableScopes,
@@ -355,12 +378,12 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     setChecklistOpen,
     setImportText,
     setExportText,
+    setObjectTypes,
     setGlobalVariables,
     setWorkflowParameters,
     setWorkflowVariableScopes,
   } = useWorkflowCanvasState(initialDSL)
-
-  const { fitView, setViewport, getViewport } = useReactFlow()
+  const { fitView, setViewport, getViewport, project } = useReactFlow()
 
   const { canUndo, canRedo, record, undo, redo, resetHistory } = useWorkflowHistoryStore()
   const {
@@ -376,6 +399,34 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
   } = useWorkflowMenuStore()
   const { clipboard, setClipboard } = useWorkflowClipboardStore()
 
+  const openNodeConfig = useCallback((node: DifyNode) => {
+    setActiveNode(node)
+    setNodeConfigOpen(true)
+  }, [setActiveNode])
+
+  const closeNodeConfig = useCallback(() => {
+    clearMenus()
+    setNodeConfigOpen(false)
+    setActiveNode(null)
+  }, [clearMenus, setActiveNode])
+
+  const openDebugModal = useCallback((node: DifyNode | null) => {
+    if (!node)
+      return
+    if (node.data._iterationRole === 'child')
+      return
+    setDebugSnapshot({
+      workflowId,
+      workflowDsl: getDSL(),
+      targetNode: JSON.parse(JSON.stringify(node)) as DifyNode,
+    })
+    setDebugModalOpen(true)
+  }, [workflowId, activeNode, edges, globalVariables, objectTypes, workflowParameters, workflowVariableScopes])
+
+  const debugTargetNode = activeNode && !activeNode.data._iterationRole
+    ? JSON.parse(JSON.stringify(activeNode)) as DifyNode
+    : null
+
   useEffect(() => {
     resetHistory({ nodes: parsed.nodes, edges: parsed.edges })
   }, [parsed.edges, parsed.nodes, resetHistory])
@@ -384,16 +435,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     latestNodesRef.current = nodes
     latestEdgesRef.current = edges
     latestWorkflowParametersRef.current = workflowParameters
-    latestActiveNodeRef.current = activeNode
-  }, [activeNode, edges, nodes, workflowParameters])
-
-  useEffect(() => {
-    setCollapsedIterationIds((current) => {
-      const validIds = new Set(nodes.filter(node => node.data.type === BlockEnum.Iteration).map(node => node.id))
-      const next = Object.fromEntries(Object.entries(current).filter(([id]) => validIds.has(id)))
-      return Object.keys(next).length === Object.keys(current).length ? current : next
-    })
-  }, [nodes])
+  }, [edges, nodes, workflowParameters])
 
   useEffect(() => {
     const run = async () => {
@@ -460,16 +502,42 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
   }, [nodes])
 
   useEffect(() => {
+    if (!activeNode) {
+      setNodeConfigOpen(false)
+      return
+    }
+
+    const childRef = parseChildNodeId(activeNode.id)
+    if (!childRef) {
+      if (nodes.some(node => node.id === activeNode.id))
+        return
+      setActiveNode(null)
+      setNodeConfigOpen(false)
+      return
+    }
+
+    const parentNode = nodes.find(node => node.id === childRef.parentId)
+    if (parentNode?.data.type !== BlockEnum.Iteration) {
+      setActiveNode(null)
+      setNodeConfigOpen(false)
+      return
+    }
+    const config = ensureNodeConfig(BlockEnum.Iteration, parentNode.data.config)
+    if (config.children.nodes.some(node => node.id === childRef.childId))
+      return
+
+    setActiveNode(null)
+    setNodeConfigOpen(false)
+  }, [activeNode, nodes, setActiveNode])
+
+  useEffect(() => {
     const openRunModal = () => {
-      const serialized = serializeWorkflowDSL({
-        nodes: latestNodesRef.current,
-        edges: latestEdgesRef.current,
-        workflowParameters: latestWorkflowParametersRef.current,
-      } as DifyWorkflowDSL)
       setRunSnapshot({
         workflowId,
-        nodes: JSON.parse(JSON.stringify(serialized.nodes)) as DifyNode[],
-        edges: JSON.parse(JSON.stringify(serialized.edges)) as DifyEdge[],
+        nodes: JSON.parse(JSON.stringify(latestNodesRef.current)) as DifyNode[],
+        edges: JSON.parse(JSON.stringify(latestEdgesRef.current)) as DifyEdge[],
+        objectTypes: JSON.parse(JSON.stringify(objectTypes)) as WorkflowObjectType[],
+        globalVariables: JSON.parse(JSON.stringify(globalVariables)) as WorkflowGlobalVariable[],
         workflowParameters: JSON.parse(JSON.stringify(latestWorkflowParametersRef.current)) as WorkflowParameter[],
       })
       setRunModalOpen(true)
@@ -478,15 +546,12 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
 
     const params = new URLSearchParams(window.location.search)
     if (params.get('run') === '1') {
-      const serialized = serializeWorkflowDSL({
-        nodes: latestNodesRef.current,
-        edges: latestEdgesRef.current,
-        workflowParameters: latestWorkflowParametersRef.current,
-      } as DifyWorkflowDSL)
       setRunSnapshot({
         workflowId,
-        nodes: JSON.parse(JSON.stringify(serialized.nodes)) as DifyNode[],
-        edges: JSON.parse(JSON.stringify(serialized.edges)) as DifyEdge[],
+        nodes: JSON.parse(JSON.stringify(latestNodesRef.current)) as DifyNode[],
+        edges: JSON.parse(JSON.stringify(latestEdgesRef.current)) as DifyEdge[],
+        objectTypes: JSON.parse(JSON.stringify(objectTypes)) as WorkflowObjectType[],
+        globalVariables: JSON.parse(JSON.stringify(globalVariables)) as WorkflowGlobalVariable[],
         workflowParameters: JSON.parse(JSON.stringify(latestWorkflowParametersRef.current)) as WorkflowParameter[],
       })
       setRunModalOpen(true)
@@ -523,12 +588,14 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     nodes,
     edges,
     importText,
+    objectTypes,
     globalVariables,
     workflowParameters,
     workflowVariableScopes,
     demoDSL: initialDSL,
     setNodes,
     setEdges,
+    setObjectTypes,
     setGlobalVariables,
     setWorkflowParameters,
     setWorkflowVariableScopes,
@@ -557,6 +624,9 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     setClipboard,
     record,
   })
+  const handleDeleteEdge = useCallback((edgeId: string) => {
+    deleteSelection([], [edgeId])
+  }, [deleteSelection])
 
   const { handleNodeContextMenu, handleEdgeContextMenu, handlePaneContextMenu } = useContextMenuInteractions({
     canvasContainerRef,
@@ -576,32 +646,17 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     pasteClipboard: () => pasteClipboard(),
     duplicateSelection: () => duplicateSelection(),
     deleteSelection: () => deleteSelection(),
-    saveWorkflow: onSave,
-  })
-  const issues = useMemo(() => {
-    const perfToken = startPerfMeasure('validateWorkflow')
-    const result = validateWorkflow(nodesForPanel, edges, workflowParameters)
-    endPerfMeasure(perfToken, {
-      nodeCount: nodesForPanel.length,
-      edgeCount: edges.length,
-      issueCount: result.length,
-    })
-    return result
-  }, [edges, nodesForPanel, workflowParameters])
-  const aiVariableOptions = useMemo(
-    () => {
-      const perfToken = startPerfMeasure('buildWorkflowVariableOptions')
-      const result = buildWorkflowVariableOptions(nodesForPanel, workflowParameters, globalVariables, activeNode)
-      endPerfMeasure(perfToken, {
-        nodeCount: nodesForPanel.length,
-        parameterCount: workflowParameters.length,
-        globalCount: globalVariables.length,
-        optionCount: result.length,
-        activeNodeId: activeNode?.id ?? null,
-      })
-      return result
+    onEscape: () => {
+      if (!nodeConfigOpen)
+        return false
+      closeNodeConfig()
+      return true
     },
-    [activeNode, globalVariables, nodesForPanel, workflowParameters],
+  })
+  const issues = useMemo(() => validateWorkflow(nodesForPanel, edges, workflowParameters, globalVariables, objectTypes), [edges, globalVariables, nodesForPanel, objectTypes, workflowParameters])
+  const aiVariableOptions = useMemo(
+    () => buildWorkflowVariableOptions(nodesForPanel, workflowParameters, globalVariables, objectTypes, activeNode),
+    [activeNode, globalVariables, nodesForPanel, objectTypes, workflowParameters],
   )
 
   useEffect(() => {
@@ -630,6 +685,46 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
           },
         }
       }
+      if (node.data.type === BlockEnum.Iteration) {
+        const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
+        let childChanged = false
+        const nextChildren = config.children.nodes.map((child) => {
+          if (child.data.type !== BlockEnum.LLM)
+            return child
+          const childConfig = ensureNodeConfig(BlockEnum.LLM, child.data.config)
+          const currentModel = String(childConfig.model || '').trim()
+          const nextModel = allowed.has(currentModel) ? currentModel : fallbackModel
+          if (nextModel === childConfig.model)
+            return child
+          childChanged = true
+          return {
+            ...child,
+            data: {
+              ...child.data,
+              config: {
+                ...childConfig,
+                model: nextModel,
+              },
+            },
+          }
+        })
+        if (!childChanged)
+          return node
+        changed = true
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            config: {
+              ...config,
+              children: {
+                ...config.children,
+                nodes: nextChildren,
+              },
+            },
+          },
+        }
+      }
       return node
     })
     if (changed)
@@ -637,364 +732,231 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
   }, [defaultLLMModel, llmModelOptions, nodes, setNodes])
 
   useEffect(() => {
-    let changed = false
-    const nextNodes = nodes.map((node) => {
-      if (!isIterationEntryNode(node))
-        return node
-      const childConfig = ensureNodeConfig(BlockEnum.Start, node.data.config)
-      if (childConfig.variables.length === 0)
-        return node
-      changed = true
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          config: {
-            ...childConfig,
-            variables: [],
-          },
-        },
-      }
-    })
-    if (changed)
-      setNodes(nextNodes)
-  }, [nodes, setNodes])
-
-  useEffect(() => {
     if (!onDSLChange)
       return
-    const perfToken = startPerfMeasure('serializeWorkflowDSL:onDSLChange')
-    const nextDSL = serializeWorkflowDSL({
+    const nextDSL: DifyWorkflowDSL = {
       nodes,
       edges,
+      objectTypes,
       globalVariables,
       workflowParameters,
       workflowVariableScopes,
       viewport: getViewport(),
-    })
-    endPerfMeasure(perfToken, {
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
-    })
+    }
     const serializedDSL = JSON.stringify(nextDSL)
     if (serializedDSL === lastReportedDSLRef.current)
       return
     lastReportedDSLRef.current = serializedDSL
     onDSLChange(nextDSL)
-  }, [edges, getViewport, globalVariables, nodes, onDSLChange, workflowParameters, workflowVariableScopes])
+  }, [edges, getViewport, globalVariables, nodes, objectTypes, onDSLChange, workflowParameters, workflowVariableScopes])
 
   const iterationLayouts = useMemo(() => {
     const layoutMap: Record<string, ReturnType<typeof buildIterationContainerLayout>> = {}
     nodes.forEach((node) => {
       if (node.data.type !== BlockEnum.Iteration)
         return
-      const children = nodes.filter(item => getParentIterationId(item) === node.id)
       const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
-      layoutMap[node.id] = collapsedIterationIds[node.id]
-        ? {
-            width: ITERATION_CONTAINER_COLLAPSED_WIDTH,
-            height: ITERATION_CONTAINER_COLLAPSED_HEIGHT,
-            paddingX: ITERATION_CONTAINER_PADDING_X,
-            paddingY: ITERATION_CONTAINER_PADDING_Y,
-          }
-        : buildIterationContainerLayout(children, config.canvasSize)
+      layoutMap[node.id] = buildIterationContainerLayout(config.children.nodes)
     })
     return layoutMap
-  }, [collapsedIterationIds, nodes])
-
-  const handleResizeIterationCanvas = useCallback((iterationId: string, size: { width: number; height: number }, finalize = false) => {
-    const nextWidth = Math.max(ITERATION_CONTAINER_MIN_WIDTH, Math.round(size.width))
-    const nextHeight = Math.max(ITERATION_CONTAINER_MIN_HEIGHT, Math.round(size.height))
-    let nextActiveNode: DifyNode | null = null
-    setNodes((current) => {
-      const nextNodes = current.map((node) => {
-        if (node.id !== iterationId || node.data.type !== BlockEnum.Iteration)
-          return node
-        const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
-        const nextNode = {
-          ...node,
-          data: {
-            ...node.data,
-            config: {
-              ...config,
-              canvasSize: {
-                width: nextWidth,
-                height: nextHeight,
-              },
-            },
-          },
-        }
-        if (latestActiveNodeRef.current?.id === iterationId)
-          nextActiveNode = nextNode
-        return nextNode
-      })
-      latestNodesRef.current = nextNodes
-      return nextNodes
-    })
-    if (nextActiveNode)
-      setActiveNode(nextActiveNode)
-    if (!finalize)
-      return
-    window.requestAnimationFrame(() => {
-      record({
-        nodes: latestNodesRef.current,
-        edges: latestEdgesRef.current,
-      })
-    })
-  }, [record, setActiveNode, setNodes])
-
-  const getIterationToggleHandler = useCallback((iterationId: string) => {
-    const existed = iterationToggleHandlerRef.current[iterationId]
-    if (existed)
-      return existed
-    const nextHandler = () => {
-      setCollapsedIterationIds(current => ({
-        ...current,
-        [iterationId]: !current[iterationId],
-      }))
-    }
-    iterationToggleHandlerRef.current[iterationId] = nextHandler
-    return nextHandler
-  }, [])
-
-  const getIterationResizeHandler = useCallback((iterationId: string) => {
-    const existed = iterationResizeHandlerRef.current[iterationId]
-    if (existed)
-      return existed
-    const nextHandler = (size: { width: number; height: number }, finalize?: boolean) => {
-      handleResizeIterationCanvas(iterationId, size, finalize)
-    }
-    iterationResizeHandlerRef.current[iterationId] = nextHandler
-    return nextHandler
-  }, [handleResizeIterationCanvas])
+  }, [nodes])
 
   const renderNodes = useMemo(() => {
-    const perfToken = startPerfMeasure('renderNodes')
-    const nextCache = new Map<string, {
-      sourceNode: DifyNode
-      parentIterationId: string | null
-      collapsed: boolean
-      width?: number
-      height?: number
-      rendered: DifyNode
-    }>()
-    const result = nodes
-      .filter((node) => {
-        const parentIterationId = getParentIterationId(node)
-        if (!parentIterationId)
-          return true
-        return !collapsedIterationIds[parentIterationId]
-      })
-      .map((node) => {
-        const parentIterationId = getParentIterationId(node)
-        const cached = renderedNodeCacheRef.current.get(node.id)
+    const mergedNodes: DifyNode[] = []
+    nodes.forEach((node) => {
+      if (node.data.type !== BlockEnum.Iteration) {
+        mergedNodes.push(node)
+        return
+      }
 
-        if (node.data.type !== BlockEnum.Iteration) {
-          if (!parentIterationId) {
-            nextCache.set(node.id, {
-              sourceNode: node,
-              parentIterationId: null,
-              collapsed: false,
-              rendered: node,
-            })
-            return node
-          }
+      const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
+      const layout = iterationLayouts[node.id] ?? buildIterationContainerLayout(config.children.nodes)
 
-          if (cached && cached.sourceNode === node && cached.parentIterationId === parentIterationId) {
-            nextCache.set(node.id, cached)
-            return cached.rendered
-          }
-
-          const renderedNode = {
-            ...node,
-            style: {
-              ...(node.style ?? {}),
-              zIndex: ITERATION_CHILDREN_Z_INDEX,
-            },
-            data: {
-              ...node.data,
-              _iterationRole: 'child' as const,
-              _iterationParentId: parentIterationId,
-              _iterationChildId: node.data.nestedNodeId,
-            },
-          }
-          nextCache.set(node.id, {
-            sourceNode: node,
-            parentIterationId,
-            collapsed: false,
-            rendered: renderedNode,
-          })
-          return renderedNode
-        }
-
-        const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
-        const layout = iterationLayouts[node.id] ?? buildIterationContainerLayout(nodes.filter(item => getParentIterationId(item) === node.id), config.canvasSize)
-        const collapsed = Boolean(collapsedIterationIds[node.id])
-        if (
-          cached
-          && cached.sourceNode === node
-          && cached.parentIterationId === parentIterationId
-          && cached.collapsed === collapsed
-          && cached.width === layout.width
-          && cached.height === layout.height
-        ) {
-          nextCache.set(node.id, cached)
-          return cached.rendered
-        }
-
-        const renderedNode = {
-          ...node,
-          style: {
-            ...(node.style ?? {}),
-            width: layout.width,
-            height: layout.height,
-          },
-          data: {
-            ...node.data,
-            _iterationRole: 'container' as const,
-            _iterationCollapsed: collapsed,
-            _iterationCanvasWidth: layout.width,
-            _iterationCanvasHeight: layout.height,
-            _onToggleIterationCollapse: getIterationToggleHandler(node.id),
-            _onResizeIterationCanvas: getIterationResizeHandler(node.id),
-          },
-        }
-        nextCache.set(node.id, {
-          sourceNode: node,
-          parentIterationId,
-          collapsed,
+      mergedNodes.push({
+        ...node,
+        style: {
+          ...(node.style ?? {}),
           width: layout.width,
           height: layout.height,
-          rendered: renderedNode,
-        })
-        return renderedNode
+        },
+        data: {
+          ...node.data,
+          _iterationRole: 'container',
+        },
       })
-    renderedNodeCacheRef.current = nextCache
-    endPerfMeasure(perfToken, {
-      sourceNodeCount: nodes.length,
-      renderedNodeCount: result.length,
+
+      config.children.nodes.forEach((childNode) => {
+        mergedNodes.push({
+          id: buildChildNodeId(node.id, childNode.id),
+          type: CUSTOM_NODE,
+          parentNode: node.id,
+          extent: 'parent',
+          position: {
+            x: layout.paddingX + childNode.position.x,
+            y: layout.paddingY + childNode.position.y,
+          },
+          data: {
+            ...childNode.data,
+            title: childNode.data.title || `${childNode.data.type}-${childNode.id}`,
+            config: childNode.data.config ?? ensureNodeConfig(childNode.data.type, undefined),
+            _iterationRole: 'child',
+            _iterationParentId: node.id,
+            _iterationChildId: childNode.id,
+          },
+          draggable: true,
+          selectable: true,
+        } as DifyNode)
+      })
     })
-    return result
-  }, [collapsedIterationIds, getIterationResizeHandler, getIterationToggleHandler, iterationLayouts, nodes])
+    return mergedNodes
+  }, [iterationLayouts, nodes])
 
   const renderEdges = useMemo(() => {
-    const perfToken = startPerfMeasure('renderEdges')
-    const visibleEdges = edges.filter((edge) => {
-      const sourceNode = nodes.find(node => node.id === edge.source)
-      const targetNode = nodes.find(node => node.id === edge.target)
-      const parentIterationId = edge.data?.parentIterationId || getParentIterationId(sourceNode) || getParentIterationId(targetNode)
-      if (!parentIterationId)
-        return true
-      return !collapsedIterationIds[parentIterationId]
-    })
-    const nextCache = new Map<string, {
-      sourceEdge: DifyEdge
-      parentIterationId: string | null
-      rendered: DifyEdge
-    }>()
-    const result = [...new Map(visibleEdges.map(edge => [edge.id, edge])).values()].map((edge) => {
-      const sourceNode = nodes.find(node => node.id === edge.source)
-      const targetNode = nodes.find(node => node.id === edge.target)
-      const parentIterationId = edge.data?.parentIterationId || getParentIterationId(sourceNode) || getParentIterationId(targetNode)
-      if (!parentIterationId)
-      {
-        nextCache.set(edge.id, {
-          sourceEdge: edge,
-          parentIterationId: null,
-          rendered: edge,
+    const mergedEdges: DifyEdge[] = edges.map(edge => ({
+      ...edge,
+      data: {
+        ...edge.data,
+        _onDelete: handleDeleteEdge,
+      },
+    }))
+    nodes.forEach((node) => {
+      if (node.data.type !== BlockEnum.Iteration)
+        return
+      const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
+      config.children.edges.forEach((edge) => {
+        mergedEdges.push({
+          id: buildChildEdgeId(node.id, edge.id),
+          source: buildChildNodeId(node.id, edge.source),
+          target: buildChildNodeId(node.id, edge.target),
+          sourceHandle: edge.sourceHandle,
+          targetHandle: edge.targetHandle,
+          type: edge.type ?? CUSTOM_EDGE,
+          data: {
+            _iterationParentId: node.id,
+            _onDelete: handleDeleteEdge,
+          },
         })
-        return edge
-      }
+      })
+    })
+    return mergedEdges
+  }, [edges, handleDeleteEdge, nodes])
 
-      const cached = renderedEdgeCacheRef.current.get(edge.id)
-      if (cached && cached.sourceEdge === edge && cached.parentIterationId === parentIterationId) {
-        nextCache.set(edge.id, cached)
-        return cached.rendered
-      }
-      const renderedEdge = {
-        ...edge,
-        zIndex: ITERATION_CHILDREN_Z_INDEX,
-        style: {
-          ...(edge.style ?? {}),
-          zIndex: ITERATION_CHILDREN_Z_INDEX,
+  const updateIterationChildren = useCallback((
+    currentNodes: DifyNode[],
+    parentId: string,
+    updater: (children: IterationNodeConfig['children']) => IterationNodeConfig['children'],
+  ) => {
+    return currentNodes.map((node) => {
+      if (node.id !== parentId || node.data.type !== BlockEnum.Iteration)
+        return node
+      const config = ensureNodeConfig(BlockEnum.Iteration, node.data.config)
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          config: {
+            ...config,
+            children: updater(config.children),
+          },
         },
       }
-      nextCache.set(edge.id, {
-        sourceEdge: edge,
-        parentIterationId,
-        rendered: renderedEdge,
-      })
-      return renderedEdge
     })
-    renderedEdgeCacheRef.current = nextCache
-    endPerfMeasure(perfToken, {
-      sourceEdgeCount: edges.length,
-      renderedEdgeCount: result.length,
-    })
-    return result
-  }, [collapsedIterationIds, edges, nodes])
+  }, [])
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    const nextNodes = applyNodeChanges(changes, nodes) as DifyNode[]
-    const removedIds = changes
-      .filter(change => 'id' in change && change.type === 'remove')
-      .map(change => change.id)
-    const hasPositionChange = changes.some(change => change.type === 'position')
-
-    setNodes(() => {
-      if (removedIds.length === 0) {
-        latestNodesRef.current = nextNodes
-        return nextNodes
+    const mainChanges: NodeChange[] = []
+    const childChanges: NodeChange[] = []
+    changes.forEach((change) => {
+      if (!('id' in change)) {
+        mainChanges.push(change)
+        return
       }
-      const removedSet = new Set(removedIds)
-      const removedIterationIds = new Set(
-        nodes
-          .filter(node => removedSet.has(node.id) && node.data.type === BlockEnum.Iteration)
-          .map(node => node.id),
-      )
-      const filteredNodes = nextNodes.filter((node) => {
-        if (removedIterationIds.has(getParentIterationId(node) || ''))
-          return false
-        return true
-      })
-      latestNodesRef.current = filteredNodes
-      return filteredNodes
+      const childRef = parseChildNodeId(change.id)
+      if (!childRef) {
+        mainChanges.push(change)
+        return
+      }
+      childChanges.push(change)
     })
 
-    setEdges((currentEdges) => {
-      const removedSet = new Set(removedIds)
-      const removedIterationIds = new Set(
-        nodes
-          .filter(node => removedSet.has(node.id) && node.data.type === BlockEnum.Iteration)
-          .map(node => node.id),
-      )
-      const nextEdges = currentEdges.filter((edge) => {
-        if (removedSet.has(edge.source) || removedSet.has(edge.target))
-          return false
-        if (removedIterationIds.has(edge.data?.parentIterationId || ''))
-          return false
-        return true
-      })
-      latestEdgesRef.current = nextEdges
-      return nextEdges
-    })
-    if (hasPositionChange) {
-      dragRecordPendingRef.current = true
+    if (mainChanges.length > 0)
+      onNodesChangeBase(mainChanges)
+
+    if (childChanges.length === 0)
       return
-    }
 
-    window.requestAnimationFrame(() => {
-      record({
-        nodes: latestNodesRef.current,
-        edges: latestEdgesRef.current,
+    const hasPositionChange = childChanges.some(change => change.type === 'position')
+    let changed = false
+    setNodes((currentNodes) => {
+      const movingIterationParents = new Set<string>()
+      childChanges.forEach((change) => {
+        if (!('id' in change))
+          return
+        if (change.type !== 'position' || !change.position)
+          return
+        const targetNode = currentNodes.find(node => node.id === change.id)
+        if (targetNode?.data.type === BlockEnum.Iteration)
+          movingIterationParents.add(change.id)
       })
+
+      let nextNodes = currentNodes
+      childChanges.forEach((change) => {
+        if (!('id' in change))
+          return
+        const childRef = parseChildNodeId(change.id)
+        if (!childRef)
+          return
+
+        if (change.type === 'position' && change.position) {
+          if (movingIterationParents.has(childRef.parentId))
+            return
+          const nextPosition = change.position
+          nextNodes = updateIterationChildren(nextNodes, childRef.parentId, children => ({
+            ...children,
+            nodes: children.nodes.map((item) => {
+              if (item.id !== childRef.childId)
+                return item
+              return {
+                ...item,
+                position: {
+                  x: Math.max(0, nextPosition.x - ITERATION_CONTAINER_PADDING_X),
+                  y: Math.max(0, nextPosition.y - ITERATION_CONTAINER_PADDING_Y),
+                },
+              }
+            }),
+          }))
+          changed = true
+        }
+
+        if (change.type === 'remove') {
+          nextNodes = updateIterationChildren(nextNodes, childRef.parentId, children => ({
+            ...children,
+            nodes: children.nodes.filter(item => item.id !== childRef.childId),
+            edges: children.edges.filter(edge => edge.source !== childRef.childId && edge.target !== childRef.childId),
+          }))
+          changed = true
+        }
+      })
+      return changed ? nextNodes : currentNodes
     })
-  }, [nodes, record, setEdges, setNodes])
+
+    if (changed) {
+      if (hasPositionChange) {
+        dragRecordPendingRef.current = true
+      } else {
+        record({
+          nodes: latestNodesRef.current,
+          edges: latestEdgesRef.current,
+        })
+      }
+    }
+  }, [onNodesChangeBase, record, setNodes, updateIterationChildren])
 
   const handleNodeDragStop = useCallback((_: React.MouseEvent, node?: DifyNode) => {
     if (!node)
       return
     if (activeNode?.id === node.id) {
+      // 同步 activeNode，避免保存时使用旧 position 覆盖最新拖拽结果。
       setActiveNode(node)
     }
     if (!dragRecordPendingRef.current)
@@ -1009,108 +971,155 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
   }, [activeNode?.id, record, setActiveNode])
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
-    const nextEdges = applyEdgeChanges(changes, edges) as DifyEdge[]
-    setEdges(nextEdges)
-    latestEdgesRef.current = nextEdges
+    const mainChanges: EdgeChange[] = []
+    const childRemovedEdges: Array<{ parentId: string; childEdgeId: string }> = []
+    let changed = false
+
+    changes.forEach((change) => {
+      if (!('id' in change)) {
+        mainChanges.push(change)
+        return
+      }
+      const childRef = parseChildEdgeId(change.id)
+      if (!childRef) {
+        mainChanges.push(change)
+        return
+      }
+      if (change.type !== 'remove')
+        return
+
+      childRemovedEdges.push(childRef)
+    })
+
+    if (mainChanges.length > 0) {
+      onEdgesChangeBase(mainChanges)
+      changed = true
+    }
+
+    if (childRemovedEdges.length > 0) {
+      setNodes((currentNodes) => {
+        let nextNodes = currentNodes
+        childRemovedEdges.forEach((item) => {
+          nextNodes = updateIterationChildren(nextNodes, item.parentId, children => ({
+            ...children,
+            edges: children.edges.filter(edge => edge.id !== item.childEdgeId),
+          }))
+        })
+        if (nextNodes !== currentNodes)
+          changed = true
+        return nextNodes
+      })
+    }
+
+    if (!changed)
+      return
+
     window.requestAnimationFrame(() => {
       record({ nodes: latestNodesRef.current, edges: latestEdgesRef.current })
     })
-  }, [edges, record, setEdges])
+  }, [onEdgesChangeBase, record, setNodes, updateIterationChildren])
 
   const onConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target)
       return
-    const sourceNode = nodes.find(node => node.id === connection.source)
-    const targetNode = nodes.find(node => node.id === connection.target)
-    if (!sourceNode || !targetNode)
+
+    const sourceChild = parseChildNodeId(connection.source)
+    const targetChild = parseChildNodeId(connection.target)
+
+    if (sourceChild && targetChild) {
+      if (sourceChild.parentId !== targetChild.parentId)
+        return
+
+      const nextChildEdgeId = `sub-edge-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+      const nextNodes = updateIterationChildren(nodes, sourceChild.parentId, children => ({
+        ...children,
+        edges: [
+          ...children.edges,
+          {
+            id: nextChildEdgeId,
+            source: sourceChild.childId,
+            target: targetChild.childId,
+            sourceHandle: connection.sourceHandle ?? undefined,
+            targetHandle: connection.targetHandle ?? undefined,
+            type: CUSTOM_EDGE,
+          },
+        ],
+      }))
+      setNodes(nextNodes)
+      record({ nodes: nextNodes, edges })
       return
-    const sourceParentIterationId = getParentIterationId(sourceNode)
-    const targetParentIterationId = getParentIterationId(targetNode)
-    if (sourceParentIterationId !== targetParentIterationId)
+    }
+
+    if (sourceChild || targetChild)
       return
 
     const nextEdge: DifyEdge = {
       ...(connection as DifyEdge),
-      id: sourceParentIterationId ? `sub-edge-${Date.now()}-${Math.floor(Math.random() * 1000)}` : `e-${Date.now()}`,
+      id: `e-${Date.now()}`,
       type: CUSTOM_EDGE,
-      data: sourceParentIterationId
-        ? { parentIterationId: sourceParentIterationId }
-        : undefined,
     }
     const nextEdges = [...edges, nextEdge]
     setEdges(nextEdges)
     record({ nodes, edges: nextEdges })
-  }, [edges, nodes, record, setEdges])
+  }, [edges, nodes, record, setEdges, setNodes, updateIterationChildren])
 
-  const handleLocateNode = useCallback((nodeId: string) => {
+  const handleLocateNode = (nodeId: string) => {
     const node = nodes.find(item => item.id === nodeId)
     if (!node)
       return
 
-    const parentIterationId = getParentIterationId(node)
-    if (parentIterationId)
-      setCollapsedIterationIds(current => ({ ...current, [parentIterationId]: false }))
-    setActiveNode(node)
+    openNodeConfig(node)
     setChecklistOpen(false)
     fitView({ nodes: [{ id: node.id }], duration: 220, padding: 0.28 })
-  }, [fitView, nodes, setActiveNode, setChecklistOpen])
+  }
 
-  const handleAddNode = (type: BlockEnum) => {
+  const handleAddNode = (type: BlockEnum, positionOverride?: { x: number; y: number }) => {
     const iterationParentId = (() => {
       if (!activeNode)
         return null
       if (activeNode.data.type === BlockEnum.Iteration)
         return activeNode.id
-      if (activeNode.data.parentIterationId)
-        return activeNode.data.parentIterationId
+      if (activeNode.data._iterationRole === 'child' && activeNode.data._iterationParentId)
+        return activeNode.data._iterationParentId
       return null
     })()
 
     if (iterationParentId) {
-      const parentNode = nodes.find(node => node.id === iterationParentId && node.data.type === BlockEnum.Iteration)
-      if (!parentNode)
-        return
-      const iterationChildren = nodes.filter(node => getParentIterationId(node) === iterationParentId)
-      if ((type === BlockEnum.Start || type === BlockEnum.End) && iterationChildren.some(node => node.data.type === type)) {
-        globalThis.alert(`${nodeTypeLabel[type]}在当前循环中仅允许一个，已取消插入`)
-        return
-      }
       const nextChildId = `sub-node-${Date.now()}-${Math.floor(Math.random() * 1000)}`
-      const nextNodes = [...nodes, {
-        id: buildIterationNestedNodeId(iterationParentId, nextChildId),
-        type: CUSTOM_NODE,
-        parentNode: iterationParentId,
-        extent: 'parent',
-        position: {
-          x: ITERATION_CONTAINER_PADDING_X + 40 + (iterationChildren.length % 3) * 240,
-          y: ITERATION_CONTAINER_PADDING_Y + 40 + Math.floor(iterationChildren.length / 3) * 150,
-        },
-        data: {
-          title: `${nodeTypeLabel[type]}-${iterationChildren.length + 1}`,
-          desc: '',
-          type,
-          config: ensureNodeConfig(type, undefined),
-          parentIterationId: iterationParentId,
-          nestedNodeId: nextChildId,
-          isIterationEntry: type === BlockEnum.Start,
-        },
-        draggable: true,
-        selectable: true,
-      } as DifyNode]
+      const nextNodes = updateIterationChildren(nodes, iterationParentId, children => ({
+        ...children,
+        nodes: [
+          ...children.nodes,
+          {
+            id: nextChildId,
+            type: 'childNode',
+            position: {
+              x: 40 + (children.nodes.length % 3) * 240,
+              y: 40 + Math.floor(children.nodes.length / 3) * 150,
+            },
+            data: {
+              title: `${nodeTypeLabel[type]}-${children.nodes.length + 1}`,
+              desc: '',
+              type,
+              config: ensureNodeConfig(type, undefined),
+            },
+          },
+        ],
+      }))
       setNodes(nextNodes)
-      const insertedNode = nextNodes[nextNodes.length - 1]
-      setActiveNode(insertedNode)
-      setCollapsedIterationIds(current => ({ ...current, [iterationParentId]: false }))
+      const nextParentNode = nextNodes.find(node => node.id === iterationParentId) ?? null
+      if (nextParentNode)
+        openNodeConfig(nextParentNode)
       record({ nodes: nextNodes, edges })
       fitView({ nodes: [{ id: iterationParentId }], duration: 220, padding: 0.28 })
       return
     }
 
-    const createdNode = addNode(type, resolveInsertPosition(nodes, activeNode))
+    const createdNode = addNode(type, positionOverride ?? resolveInsertPosition(nodes, activeNode))
     if (!createdNode)
       return
 
-    setActiveNode(createdNode)
+    openNodeConfig(createdNode)
     if (type === BlockEnum.Iteration)
       fitView({ nodes: [{ id: createdNode.id }], duration: 220, padding: 0.28 })
   }
@@ -1128,70 +1137,84 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
         return null
       if (activeNode.data.type === BlockEnum.Iteration)
         return activeNode.id
-      if (activeNode.data.parentIterationId)
-        return activeNode.data.parentIterationId
+      if (activeNode.data._iterationRole === 'child' && activeNode.data._iterationParentId)
+        return activeNode.data._iterationParentId
       return null
     })()
 
     if (iterationParentId) {
-      let insertedNodeId = ''
+      let insertedChildId = ''
       let linked = false
       let cannotLink = false
       let duplicateTypeBlocked = false
-      const iterationChildren = nodes.filter(node => getParentIterationId(node) === iterationParentId)
-      if ((type === BlockEnum.Start || type === BlockEnum.End) && iterationChildren.some(node => node.data.type === type)) {
-        duplicateTypeBlocked = true
-      }
-      insertedNodeId = `sub-node-${Date.now()}-${Math.floor(Math.random() * 1000)}`
-      const nextNodeId = buildIterationNestedNodeId(iterationParentId, insertedNodeId)
-      const nextNode: DifyNode = {
-        id: nextNodeId,
-        type: CUSTOM_NODE,
-        parentNode: iterationParentId,
-        extent: 'parent',
-        position: {
-          x: ITERATION_CONTAINER_PADDING_X + 40 + (iterationChildren.length % 3) * 240,
-          y: ITERATION_CONTAINER_PADDING_Y + 40 + Math.floor(iterationChildren.length / 3) * 150,
-        },
-        data: {
-          title: payload.suggestedTitle || `${nodeTypeLabel[type]}-${iterationChildren.length + 1}`,
-          desc: payload.suggestedDesc || '',
-          type,
-          config: normalizedConfig,
-          parentIterationId: iterationParentId,
-          nestedNodeId: insertedNodeId,
-          isIterationEntry: type === BlockEnum.Start,
-        },
-        draggable: true,
-        selectable: true,
-      }
+      const nextNodes = updateIterationChildren(nodes, iterationParentId, (children) => {
+        if (type === BlockEnum.Start || type === BlockEnum.End) {
+          const existing = children.nodes.find(item => item.data.type === type)
+          if (existing) {
+            duplicateTypeBlocked = true
+            return children
+          }
+        }
+
+        insertedChildId = `sub-node-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+        const nextNode = {
+          id: insertedChildId,
+          type: 'childNode',
+          position: {
+            x: 40 + (children.nodes.length % 3) * 240,
+            y: 40 + Math.floor(children.nodes.length / 3) * 150,
+          },
+          data: {
+            title: payload.suggestedTitle || `${nodeTypeLabel[type]}-${children.nodes.length + 1}`,
+            desc: payload.suggestedDesc || '',
+            type,
+            config: normalizedConfig,
+          },
+        }
+
+        const nextChildren: IterationNodeConfig['children'] = {
+          ...children,
+          nodes: [...children.nodes, nextNode],
+          edges: [...children.edges],
+        }
+
+        if (activeNode?.data._iterationRole === 'child' && activeNode.data._iterationParentId === iterationParentId && activeNode.data._iterationChildId) {
+          const sourceChildId = activeNode.data._iterationChildId
+          const sourceChild = children.nodes.find(item => item.id === sourceChildId)
+          if (sourceChild && sourceChild.data.type !== BlockEnum.End && type !== BlockEnum.Start) {
+            linked = true
+            nextChildren.edges.push({
+              id: `sub-edge-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              source: sourceChildId,
+              target: insertedChildId,
+              sourceHandle: sourceChild.data.type === BlockEnum.IfElse ? IF_ELSE_FALLBACK_HANDLE : undefined,
+              type: CUSTOM_EDGE,
+            })
+          } else {
+            cannotLink = true
+          }
+        } else if (activeNode) {
+          cannotLink = true
+        }
+
+        return nextChildren
+      })
 
       if (duplicateTypeBlocked) {
         globalThis.alert(`${nodeTypeLabel[type]}在当前迭代分支中仅允许一个，已取消插入`)
         return
       }
 
-      const nextNodes = [...nodes, nextNode]
-      const nextEdges = [...edges]
-      if (activeNode?.data.parentIterationId === iterationParentId && activeNode.data.type !== BlockEnum.End && type !== BlockEnum.Start) {
-        linked = true
-        nextEdges.push({
-          id: `e-${Date.now()}`,
-          source: activeNode.id,
-          target: nextNode.id,
-          sourceHandle: activeNode.data.type === BlockEnum.IfElse ? IF_ELSE_FALLBACK_HANDLE : undefined,
-          type: CUSTOM_EDGE,
-          data: { parentIterationId: iterationParentId },
-        })
-      } else if (activeNode) {
-        cannotLink = true
-      }
-
       setNodes(nextNodes)
-      setEdges(nextEdges)
-      setActiveNode(nextNode)
-      setCollapsedIterationIds(current => ({ ...current, [iterationParentId]: false }))
-      record({ nodes: nextNodes, edges: nextEdges })
+      const insertedChildNode = insertedChildId
+        ? buildIterationChildRenderNode(nextNodes, iterationParentId, insertedChildId)
+        : null
+      const nextParentNode = nextNodes.find(node => node.id === iterationParentId) ?? null
+      if (insertedChildNode)
+        openNodeConfig(insertedChildNode)
+      else if (nextParentNode)
+        openNodeConfig(nextParentNode)
+      record({ nodes: nextNodes, edges })
       fitView({ nodes: [{ id: iterationParentId }], duration: 220, padding: 0.28 })
       if (!linked && cannotLink)
         globalThis.alert('节点已插入，但当前选中节点无法自动连线')
@@ -1220,7 +1243,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
     let linked = false
     let cannotLink = false
     const nextEdges = [...edges]
-    if (activeNode && !isNestedNode(activeNode)) {
+    if (activeNode && !parseChildNodeId(activeNode.id)) {
       const sourceNodeExists = nextNodes.some(node => node.id === activeNode.id)
       if (sourceNodeExists && activeNode.data.type !== BlockEnum.End && type !== BlockEnum.Start) {
         linked = true
@@ -1238,253 +1261,314 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
 
     setNodes(nextNodes)
     setEdges(nextEdges)
-    setActiveNode(nextNode)
+    openNodeConfig(nextNode)
     record({ nodes: nextNodes, edges: nextEdges })
     if (type === BlockEnum.Iteration)
       fitView({ nodes: [{ id: nextNode.id }], duration: 220, padding: 0.28 })
     if (!linked && cannotLink)
       globalThis.alert('节点已插入，但当前选中节点无法自动连线')
-  }, [activeNode, edges, fitView, idRef, nodeTypeLabel, nodes, record, setActiveNode, setEdges, setNodes])
+  }, [activeNode, edges, fitView, idRef, nodeTypeLabel, nodes, openNodeConfig, record, setEdges, setNodes, updateIterationChildren])
 
-  const handleSaveActiveNode = useCallback(() => {
+  const handleSaveActiveNode = () => {
     if (!activeNode)
       return
-    const currentNode = nodes.find(item => item.id === activeNode.id)
-    if (!currentNode)
-      return
-    const currentPayload = JSON.stringify({
-      title: currentNode.data.title,
-      desc: currentNode.data.desc || '',
-      type: currentNode.data.type,
-      config: currentNode.data.config ?? null,
-    })
-    const activePayload = JSON.stringify({
-      title: activeNode.data.title,
-      desc: activeNode.data.desc || '',
-      type: activeNode.data.type,
-      config: activeNode.data.config ?? null,
-    })
-    if (currentPayload === activePayload)
-      return
-    saveNode()
-  }, [activeNode, nodes, saveNode])
 
-  const handleFocusIterationRegion = useCallback((nodeId: string) => {
+    const childRef = parseChildNodeId(activeNode.id)
+    if (!childRef) {
+      saveNode()
+      return
+    }
+
+    const nextNodes = updateIterationChildren(nodes, childRef.parentId, children => ({
+      ...children,
+      nodes: children.nodes.map((item) => {
+        if (item.id !== childRef.childId)
+          return item
+        return {
+          ...item,
+          data: {
+            title: activeNode.data.title,
+            desc: activeNode.data.desc,
+            type: activeNode.data.type,
+            config: activeNode.data.config,
+          },
+        }
+      }),
+    }))
+    setNodes(nextNodes)
+    record({ nodes: nextNodes, edges })
+  }
+
+  const handleFocusIterationRegion = (nodeId: string) => {
     const node = nodes.find(item => item.id === nodeId && item.data.type === BlockEnum.Iteration)
     if (!node)
       return
-    setCollapsedIterationIds(current => ({ ...current, [nodeId]: false }))
-    setActiveNode(node)
+    openNodeConfig(node)
     fitView({ nodes: [{ id: node.id }], duration: 220, padding: 0.28 })
-  }, [fitView, nodes, setActiveNode])
+  }
 
-  const handleAutoLayout = useCallback(() => {
+  const handleAutoLayout = () => {
     const nextNodes = autoLayoutNodes(nodes, edges)
     setNodes(nextNodes)
     record({ nodes: nextNodes, edges })
     fitView({ duration: 260, padding: 0.22 })
-  }, [edges, fitView, nodes, record, setNodes])
-
-  const handleAddIterationChild = (parentId: string, type: BlockEnum) => {
-    const parentNode = nodes.find(node => node.id === parentId)
-    if (!parentNode)
-      return
-    if (activeNode && activeNode.id !== parentNode.id)
-      handleSaveActiveNode()
-    setActiveNode(parentNode)
-    window.requestAnimationFrame(() => {
-      handleAddNode(type)
-    })
   }
 
-  const getEffectiveNodes = useCallback(() => {
+  const getEffectiveNodes = () => {
     if (!activeNode)
       return nodes
-    return nodes.map((item) => {
-      if (item.id !== activeNode.id)
-        return item
-      return {
-        ...item,
-        data: {
-          ...item.data,
-          ...activeNode.data,
-        },
-      }
-    })
-  }, [activeNode, nodes])
 
-  const getDSL = useCallback(() => {
-    const perfToken = startPerfMeasure('serializeWorkflowDSL:getDSL')
-    const result = serializeWorkflowDSL({
+    const childRef = parseChildNodeId(activeNode.id)
+    if (!childRef) {
+      return nodes.map((item) => {
+        if (item.id !== activeNode.id)
+          return item
+        // 合并 activeNode.data，保留节点当前位置/尺寸等运行态属性。
+        return {
+          ...item,
+          data: {
+            ...item.data,
+            ...activeNode.data,
+          },
+        }
+      })
+    }
+
+    return updateIterationChildren(nodes, childRef.parentId, children => ({
+      ...children,
+      nodes: children.nodes.map((item) => {
+        if (item.id !== childRef.childId)
+          return item
+        return {
+          ...item,
+          data: {
+            title: activeNode.data.title,
+            desc: activeNode.data.desc,
+            type: activeNode.data.type,
+            config: activeNode.data.config,
+          },
+        }
+      }),
+    }))
+  }
+
+  const getDSL = () => {
+    return {
       nodes: getEffectiveNodes(),
       edges,
+      objectTypes,
       globalVariables,
       workflowParameters,
       workflowVariableScopes,
       viewport: getViewport(),
-    })
-    endPerfMeasure(perfToken, {
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
-    })
-    return result
-  }, [edges, getEffectiveNodes, getViewport, globalVariables, nodes.length, workflowParameters, workflowVariableScopes])
-
-  const flowActions = useMemo(() => ({
-    onNodesChange,
-    onEdgesChange,
-    onConnect,
-    onNodeDragStop: handleNodeDragStop,
-    onNodeClick: (_: React.MouseEvent, node: DifyNode) => {
-      if (activeNode && activeNode.id !== node.id)
-        handleSaveActiveNode()
-      setActiveNode(node)
-    },
-    onPaneClick: clearMenus,
-    onNodeContextMenu: handleNodeContextMenu,
-    onEdgeContextMenu: handleEdgeContextMenu,
-    onPaneContextMenu: handlePaneContextMenu,
-  }), [activeNode, clearMenus, handleEdgeContextMenu, handleNodeContextMenu, handleNodeDragStop, handlePaneContextMenu, handleSaveActiveNode, onConnect, onEdgesChange, onNodesChange, setActiveNode])
-
-  const nodeMenuActions = useMemo(() => ({
-    onClose: () => setNodeMenu(undefined),
-    onCopy: () => copySelection(nodeMenu ? [nodeMenu.nodeId] : []),
-    onDuplicate: () => duplicateSelection(nodeMenu ? [nodeMenu.nodeId] : []),
-    onDelete: () => deleteSelection(nodeMenu ? [nodeMenu.nodeId] : []),
-  }), [copySelection, deleteSelection, duplicateSelection, nodeMenu, setNodeMenu])
-
-  const edgeMenuActions = useMemo(() => ({
-    onClose: () => setEdgeMenu(undefined),
-    onDelete: () => deleteSelection([], edgeMenu ? [edgeMenu.edgeId] : []),
-  }), [deleteSelection, edgeMenu, setEdgeMenu])
-
-  const panelMenuActions = useMemo(() => ({
-    onClose: () => setPanelMenu(undefined),
-    onPaste: () => pasteClipboard(panelMenu),
-    onExport: exportDSL,
-    onImport: () => setImportOpen(true),
-  }), [exportDSL, panelMenu, pasteClipboard, setImportOpen, setPanelMenu])
-
-  const selectionMenuActions = useMemo(() => ({
-    onClose: () => setSelectionMenu(undefined),
-    onCopy: () => copySelection(),
-    onDuplicate: () => duplicateSelection(),
-    onDelete: () => deleteSelection(),
-    onAlign: (direction: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom' | 'distributeHorizontal' | 'distributeVertical') => alignSelection(direction),
-  }), [alignSelection, copySelection, deleteSelection, duplicateSelection, setSelectionMenu])
-
-  const quickPanelActions = useMemo(() => ({
-    globalVariableOpen,
-    workflowParamsOpen,
-    checklistOpen,
-    issueCount: issues.length,
-    globalVariables,
-    workflowParameters,
-    issues,
-    onOpenGlobalVariables: () => {
-      setWorkflowParamsOpen(false)
-      setChecklistOpen(false)
-      setGlobalVariableOpen(true)
-    },
-    onOpenWorkflowParams: () => {
-      setGlobalVariableOpen(false)
-      setChecklistOpen(false)
-      setWorkflowParamsOpen(true)
-    },
-    onOpenChecklist: () => {
-      setGlobalVariableOpen(false)
-      setWorkflowParamsOpen(false)
-      setChecklistOpen(true)
-    },
-    onCloseGlobalVariables: () => setGlobalVariableOpen(false),
-    onCloseWorkflowParams: () => setWorkflowParamsOpen(false),
-    onChangeWorkflowParams: setWorkflowParameters,
-    onCloseChecklist: () => setChecklistOpen(false),
-    onLocateIssueNode: handleLocateNode,
-  }), [checklistOpen, globalVariableOpen, globalVariables, handleLocateNode, issues, setChecklistOpen, setGlobalVariableOpen, setWorkflowParameters, setWorkflowParamsOpen, workflowParameters, workflowParamsOpen])
-
-  const editorActions = useMemo(() => ({
-    flow: flowActions,
-    nodeMenu: nodeMenuActions,
-    edgeMenu: edgeMenuActions,
-    panelMenu: panelMenuActions,
-    selectionMenu: selectionMenuActions,
-    quickPanel: quickPanelActions,
-  }), [edgeMenuActions, flowActions, nodeMenuActions, panelMenuActions, quickPanelActions, selectionMenuActions])
+    }
+  }
 
   useImperativeHandle(apiRef, () => ({
     flushActiveNode: () => handleSaveActiveNode(),
     getDSL,
-  }), [activeNode, edges, globalVariables, workflowParameters, workflowVariableScopes])
+  }), [activeNode, edges, globalVariables, objectTypes, workflowParameters, workflowVariableScopes])
+
+  const handleCanvasDragOver = useCallback((event: ReactDragEvent) => {
+    if (!Array.from(event.dataTransfer.types).includes(WORKFLOW_NODE_DND_TYPE))
+      return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }, [globalVariables, objectTypes, workflowId])
+
+  const handleCanvasDrop = useCallback((event: ReactDragEvent) => {
+    const rawType = event.dataTransfer.getData(WORKFLOW_NODE_DND_TYPE)
+    if (!rawType)
+      return
+    event.preventDefault()
+    const type = rawType as BlockEnum
+    const bounds = canvasContainerRef.current?.getBoundingClientRect()
+    if (!bounds) {
+      handleAddNode(type)
+      return
+    }
+    const position = project({
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+    })
+    handleAddNode(type, position)
+  }, [canvasContainerRef, handleAddNode, project])
 
   return (
-    <div className="space-y-3">
-      <WorkflowToolbar
-        canUndo={canUndo}
-        canRedo={canRedo}
-        issueCount={issues.length}
-        onAddNode={handleAddNode}
-        onUndo={doUndo}
-        onRedo={doRedo}
-        onLayout={handleAutoLayout}
-        onRun={() => {
-          const perfToken = startPerfMeasure('serializeWorkflowDSL:onRun')
-          const serialized = serializeWorkflowDSL({
-            nodes,
-            edges,
-            workflowParameters,
-          } as DifyWorkflowDSL)
-          endPerfMeasure(perfToken, {
-            nodeCount: nodes.length,
-            edgeCount: edges.length,
-          })
-          setRunSnapshot({
-            workflowId,
-            nodes: JSON.parse(JSON.stringify(serialized.nodes)) as DifyNode[],
-            edges: JSON.parse(JSON.stringify(serialized.edges)) as DifyEdge[],
-            workflowParameters: JSON.parse(JSON.stringify(workflowParameters)) as typeof workflowParameters,
-          })
-          setRunModalOpen(true)
-        }}
-        onOpenGlobalParams={() => setGlobalVariableOpen(true)}
-        onOpenChecklist={() => setChecklistOpen(true)}
-        onOpenAINodeGenerate={() => setAINodeGenerateOpen(true)}
-        onExport={exportDSL}
-        onOpenImport={() => setImportOpen(true)}
-        onReset={reset}
+    <div className="space-y-4">
+      <WorkflowWorkbench
+        library={(
+          <WorkflowNodeLibrary
+            activeNodeType={activeNode?.data.type}
+            onAddNode={handleAddNode}
+          />
+        )}
+        canvas={(
+          <WorkflowEditor
+            canvasContainerRef={canvasContainerRef}
+            title="工作流工作台"
+            subtitle="保留现有 Dify DSL、右键菜单、运行与保存链路，只重做核心画布工作区。"
+            activeNodeTitle={activeNode?.data.title}
+            statusBadges={[
+              `${nodes.length} 个节点`,
+              `${edges.length} 条连线`,
+              `${issues.length} 个检查项`,
+            ]}
+            nodeConfigOpen={nodeConfigOpen && !!activeNode}
+            nodeConfigPanel={(
+              <NodeConfigPanel
+                nodes={nodesForPanel}
+                objectTypes={objectTypes}
+                workflowParameters={workflowParameters}
+                globalVariables={globalVariables}
+                workflowVariableScopes={workflowVariableScopes}
+                llmModelOptions={llmModelOptions}
+                defaultLLMModel={defaultLLMModel}
+                defaultCodeModel={defaultCodeModel}
+                activeNode={activeNode}
+                onChange={setActiveNode}
+                onChangeScopes={setWorkflowVariableScopes}
+                onFocusIterationRegion={handleFocusIterationRegion}
+                onDebugNode={openDebugModal}
+                onSave={handleSaveActiveNode}
+              />
+            )}
+            onCloseNodeConfig={closeNodeConfig}
+            toolbar={(
+              <WorkflowToolbar
+                canUndo={canUndo}
+                canRedo={canRedo}
+                issueCount={issues.length}
+                onUndo={doUndo}
+                onRedo={doRedo}
+                onLayout={handleAutoLayout}
+                onSave={handleSaveActiveNode}
+                onRun={() => {
+                  setRunSnapshot({
+                    workflowId,
+                    nodes: JSON.parse(JSON.stringify(nodes)) as DifyNode[],
+                    edges: JSON.parse(JSON.stringify(edges)) as DifyEdge[],
+                    objectTypes: JSON.parse(JSON.stringify(objectTypes)) as WorkflowObjectType[],
+                    globalVariables: JSON.parse(JSON.stringify(globalVariables)) as WorkflowGlobalVariable[],
+                    workflowParameters: JSON.parse(JSON.stringify(workflowParameters)) as typeof workflowParameters,
+                  })
+                  setRunModalOpen(true)
+                }}
+                onOpenGlobalParams={() => {
+                  setWorkflowParamsOpen(false)
+                  setChecklistOpen(false)
+                  setGlobalVariableOpen(true)
+                }}
+                onOpenWorkflowParams={() => {
+                  setGlobalVariableOpen(false)
+                  setChecklistOpen(false)
+                  setWorkflowParamsOpen(true)
+                }}
+                onOpenChecklist={() => {
+                  setGlobalVariableOpen(false)
+                  setWorkflowParamsOpen(false)
+                  setChecklistOpen(true)
+                }}
+                onOpenAINodeGenerate={() => setAINodeGenerateOpen(true)}
+                onExport={exportDSL}
+                onOpenImport={() => setImportOpen(true)}
+                onReset={reset}
+              />
+            )}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            nodes={renderNodes}
+            edges={renderEdges}
+            nodeMenu={nodeMenu}
+            edgeMenu={edgeMenu}
+            panelMenu={panelMenu}
+            selectionMenu={selectionMenu}
+            canPaste={clipboard.nodes.length > 0}
+            connectionLineComponent={CustomConnectionLine}
+            connectionLineZIndex={ITERATION_CHILDREN_Z_INDEX}
+            actions={{
+              flow: {
+                onNodesChange,
+                onEdgesChange,
+                onConnect,
+                onNodeDragStop: handleNodeDragStop,
+                onNodeClick: (_, node) => {
+                  openNodeConfig(node)
+                },
+                onPaneClick: closeNodeConfig,
+                onNodeContextMenu: (event, node) => {
+                  if (parseChildNodeId(node.id))
+                    return
+                  handleNodeContextMenu(event, node)
+                },
+                onEdgeContextMenu: (event, edge) => {
+                  if (parseChildEdgeId(edge.id))
+                    return
+                  handleEdgeContextMenu(event, edge)
+                },
+                onPaneContextMenu: handlePaneContextMenu,
+                onDrop: handleCanvasDrop,
+                onDragOver: handleCanvasDragOver,
+              },
+              nodeMenu: {
+                onClose: () => setNodeMenu(undefined),
+                onDebug: () => openDebugModal(nodeMenu ? nodes.find(item => item.id === nodeMenu.nodeId) ?? null : null),
+                onCopy: () => copySelection(nodeMenu ? [nodeMenu.nodeId] : []),
+                onDuplicate: () => duplicateSelection(nodeMenu ? [nodeMenu.nodeId] : []),
+                onDelete: () => deleteSelection(nodeMenu ? [nodeMenu.nodeId] : []),
+              },
+              edgeMenu: {
+                onClose: () => setEdgeMenu(undefined),
+                onDelete: () => deleteSelection([], edgeMenu ? [edgeMenu.edgeId] : []),
+              },
+              panelMenu: {
+                onClose: () => setPanelMenu(undefined),
+                onPaste: () => pasteClipboard(panelMenu),
+                onExport: exportDSL,
+                onImport: () => setImportOpen(true),
+              },
+              selectionMenu: {
+                onClose: () => setSelectionMenu(undefined),
+                onCopy: () => copySelection(),
+                onDuplicate: () => duplicateSelection(),
+                onDelete: () => deleteSelection(),
+                onAlign: alignSelection,
+              },
+              quickPanel: {
+                globalVariableOpen,
+                workflowParamsOpen,
+                checklistOpen,
+                issueCount: issues.length,
+                objectTypes,
+                globalVariables,
+                workflowParameters,
+                issues,
+                onOpenGlobalVariables: () => {
+                  setWorkflowParamsOpen(false)
+                  setChecklistOpen(false)
+                  setGlobalVariableOpen(true)
+                },
+                onOpenWorkflowParams: () => {
+                  setGlobalVariableOpen(false)
+                  setChecklistOpen(false)
+                  setWorkflowParamsOpen(true)
+                },
+                onOpenChecklist: () => {
+                  setGlobalVariableOpen(false)
+                  setWorkflowParamsOpen(false)
+                  setChecklistOpen(true)
+                },
+                onCloseGlobalVariables: () => setGlobalVariableOpen(false),
+                onCloseWorkflowParams: () => setWorkflowParamsOpen(false),
+                onChangeObjectTypes: setObjectTypes,
+                onChangeWorkflowParams: setWorkflowParameters,
+                onCloseChecklist: () => setChecklistOpen(false),
+                onLocateIssueNode: handleLocateNode,
+              },
+            }}
+          />
+        )}
       />
-
-      <div className="grid grid-cols-12 gap-3">
-        <NodeConfigPanel
-          nodes={nodesForPanel}
-          edges={edges}
-          workflowParameters={workflowParameters}
-          globalVariables={globalVariables}
-          workflowVariableScopes={workflowVariableScopes}
-          llmModelOptions={llmModelOptions}
-          defaultLLMModel={defaultLLMModel}
-          defaultCodeModel={defaultCodeModel}
-          activeNode={activeNode}
-          onChange={setActiveNode}
-          onChangeScopes={setWorkflowVariableScopes}
-          onFocusIterationRegion={handleFocusIterationRegion}
-          onAddIterationChild={handleAddIterationChild}
-          onSave={handleSaveActiveNode}
-        />
-        <WorkflowEditor
-          canvasContainerRef={canvasContainerRef}
-          nodes={renderNodes}
-          edges={renderEdges}
-          nodeMenu={nodeMenu}
-          edgeMenu={edgeMenu}
-          panelMenu={panelMenu}
-          selectionMenu={selectionMenu}
-          canPaste={clipboard.nodes.length > 0}
-          connectionLineComponent={CustomConnectionLine}
-          connectionLineZIndex={ITERATION_CHILDREN_Z_INDEX}
-          actions={editorActions}
-        />
-      </div>
 
       <AINodeGenerateModal
         open={aiNodeGenerateOpen}
@@ -1509,10 +1593,25 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
       <WorkflowRunModal
         open={runModalOpen}
         workflowId={runSnapshot.workflowId}
+        publishedVersionNo={currentPublishedVersionNo}
         nodes={runSnapshot.nodes}
         edges={runSnapshot.edges}
+        objectTypes={runSnapshot.objectTypes}
+        globalVariables={runSnapshot.globalVariables}
         workflowParameters={runSnapshot.workflowParameters}
+        debugTargetNode={debugTargetNode}
+        onOpenDebug={(node) => {
+          setRunModalOpen(false)
+          openDebugModal(node)
+        }}
         onClose={() => setRunModalOpen(false)}
+      />
+      <WorkflowDebugModal
+        open={debugModalOpen}
+        workflowId={debugSnapshot.workflowId}
+        workflowDsl={debugSnapshot.workflowDsl}
+        targetNode={debugSnapshot.targetNode}
+        onClose={() => setDebugModalOpen(false)}
       />
     </div>
   )
@@ -1521,11 +1620,11 @@ function WorkflowCanvasInner({ initialDSL, workflowId, onDSLChange, onSave, apiR
 type WorkflowCanvasProps = {
   initialDSL?: DifyWorkflowDSL
   workflowId?: number
+  currentPublishedVersionNo?: number
   onDSLChange?: (dsl: DifyWorkflowDSL) => void
-  onSave?: () => void
 }
 
-const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasProps>(({ initialDSL, workflowId, onDSLChange, onSave }, ref) => {
+const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasProps>(({ initialDSL, workflowId, currentPublishedVersionNo = 0, onDSLChange }, ref) => {
   const safeInitialDSL = useMemo(() => {
     try {
       return parseDifyWorkflowDSL(initialDSL ?? demoDSL)
@@ -1537,7 +1636,7 @@ const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasProps>(({ 
 
   return (
     <ReactFlowProvider>
-      <WorkflowCanvasInner initialDSL={safeInitialDSL} workflowId={workflowId} onDSLChange={onDSLChange} onSave={onSave} apiRef={ref} />
+      <WorkflowCanvasInner initialDSL={safeInitialDSL} workflowId={workflowId} currentPublishedVersionNo={currentPublishedVersionNo} onDSLChange={onDSLChange} apiRef={ref} />
     </ReactFlowProvider>
   )
 })
