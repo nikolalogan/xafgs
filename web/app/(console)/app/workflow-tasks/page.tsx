@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Checkbox, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, message } from 'antd'
 import { buildExternalRuleInputs, buildLocalRuleInputs, buildPreparedFields, evaluateDynamicFieldStates, evaluateDynamicFieldValidations, validateDynamicInput, type DynamicField, type DynamicFieldState } from '@/components/workflow/dify/core/dynamic-form-rules'
+import { resolveTemplatePreviewContext } from '@/components/workflow/dify/core/runtime-template'
 import { formatShanghaiDateTime } from '@/lib/time'
 
 type ConsoleRole = 'admin' | 'user' | 'guest'
@@ -489,19 +490,11 @@ export default function WorkflowTasksPage() {
     }
     try {
       const detail = await request<TemplateDetailDTO>(`/api/templates/${templateID}`, { method: 'GET' })
-      const outputs = isObject(execution.outputs) ? execution.outputs : {}
-      const endNodeOutput = endNodeID ? outputs[endNodeID] : undefined
-      const variablesEndNodeOutput = endNodeID ? execution.variables?.[endNodeID] : undefined
-      const outputsEnd = outputs.end
-      const contextJson = isObject(endNodeOutput)
-        ? endNodeOutput
-        : isObject(variablesEndNodeOutput)
-          ? variablesEndNodeOutput
-        : isObject(outputsEnd)
-          ? outputsEnd
-          : isObject(execution.outputs)
-            ? execution.outputs
-            : { output: execution.outputs }
+      const contextJson = resolveTemplatePreviewContext({
+        endNodeId: endNodeID,
+        outputs: execution.outputs,
+        variables: execution.variables,
+      })
       const preview = await request<TemplatePreviewResponse>('/api/templates/preview', {
         method: 'POST',
         body: JSON.stringify({

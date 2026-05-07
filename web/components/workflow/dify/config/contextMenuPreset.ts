@@ -23,7 +23,7 @@ export type ContextMenuItem<ActionKey extends string> =
 
 export type ActionMenuItem<ActionKey extends string> = MenuActionItem<ActionKey>
 
-export type NodeMenuActionKey = 'copy' | 'duplicate' | 'delete'
+export type NodeMenuActionKey = 'debug' | 'copy' | 'duplicate' | 'delete'
 export type EdgeMenuActionKey = 'delete'
 export type PanelMenuActionKey = 'paste' | 'export' | 'import'
 export type SelectionMenuActionKey =
@@ -40,6 +40,7 @@ export type SelectionMenuActionKey =
   | 'delete'
 
 export const nodeMenuItems: ActionMenuItem<NodeMenuActionKey>[] = [
+  { type: 'action', key: 'debug', label: '调试当前节点' },
   { type: 'action', key: 'copy', label: '复制' },
   { type: 'action', key: 'duplicate', label: '复制并粘贴' },
   { type: 'action', key: 'delete', label: '删除', variant: 'danger' },

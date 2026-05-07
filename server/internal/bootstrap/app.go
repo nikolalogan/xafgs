@@ -200,6 +200,8 @@ func NewApp() (*fiber.App, Config) {
 	}
 	executionRuntime := workflowruntime.NewRuntime(executionStore, workflowruntime.WithAIClient(aiClient))
 	workflowExecutionService := service.NewWorkflowExecutionService(executionRuntime)
+	debugSessionStore := workflowruntime.DebugSessionStorePort(workflowruntime.NewInMemoryDebugSessionStore())
+	workflowDebugService := service.NewWorkflowDebugService(executionRuntime, debugSessionStore)
 	workflowExecutionRateLimiter := service.NewWorkflowExecutionRateLimiter()
 	authService := service.NewAuthService(authRepository, userRepository)
 	authMiddleware := middleware.NewAuthMiddleware(authService)
@@ -214,15 +216,16 @@ func NewApp() (*fiber.App, Config) {
 	regionHandler := handler.NewRegionHandler(regionService, apiRegistry)
 	adminDivisionHandler := handler.NewAdminDivisionHandler(adminDivisionService, apiRegistry)
 	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, workflowService, workflowExecutionRateLimiter, userConfigService, apiRegistry)
+	workflowDebugHandler := handler.NewWorkflowDebugHandler(workflowDebugService, workflowService, userConfigService, apiRegistry)
 	fileHandler := handler.NewFileHandler(fileService, fileParseQueueService, ocrTaskService, apiRegistry)
 	templateHandler := handler.NewTemplateHandler(templateService, apiRegistry)
 	reportingHandler := handler.NewReportingHandler(reportingService, apiRegistry)
 	chatHandler := handler.NewChatHandler(chatService, apiRegistry)
+	knowledgeHandler := handler.NewKnowledgeHandler(knowledgeService, apiRegistry)
 	debugFeedbackHandler := handler.NewDebugFeedbackHandler(debugFeedbackService, apiRegistry)
 	workflowCodeGenerateHandler := handler.NewWorkflowCodeGenerateHandler(workflowCodeGenerateService, apiRegistry)
 	workflowNodeGenerateHandler := handler.NewWorkflowNodeGenerateHandler(workflowNodeGenerateService, apiRegistry)
 	workflowDSLGenerateHandler := handler.NewWorkflowDSLGenerateHandler(workflowDSLGenerateService, apiRegistry)
-	knowledgeHandler := handler.NewKnowledgeHandler(knowledgeService, apiRegistry)
 	ocrPreviewHandler := handler.NewOCRPreviewHandler(tableRepairPreviewService, apiRegistry)
 	if syncerAware, ok := fileParseQueueService.(interface{ SetSyncer(service.FileParseJobSyncer) }); ok {
 		syncerAware.SetSyncer(reportingService)
@@ -235,7 +238,7 @@ func NewApp() (*fiber.App, Config) {
 	app.Use(traceMiddleware.Handler())
 
 	apiMetaHandler := handler.NewAPIMetaHandler(apiRegistry, traceStore)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, fileHandler, templateHandler, reportingHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, knowledgeHandler, debugFeedbackHandler, ocrPreviewHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, workflowDebugHandler, fileHandler, templateHandler, reportingHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, knowledgeHandler, debugFeedbackHandler, ocrPreviewHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }

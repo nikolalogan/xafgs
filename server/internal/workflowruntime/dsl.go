@@ -8,9 +8,18 @@ import (
 type WorkflowDSL struct {
 	Nodes              []WorkflowNode            `json:"nodes"`
 	Edges              []WorkflowEdge            `json:"edges"`
+	ObjectTypes        []WorkflowObjectType      `json:"objectTypes,omitempty"`
 	GlobalVariables    []WorkflowGlobalVariable  `json:"globalVariables,omitempty"`
 	WorkflowParameters []WorkflowParameter       `json:"workflowParameters,omitempty"`
 	Viewport           map[string]any            `json:"viewport,omitempty"`
+}
+
+type WorkflowObjectType struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	SchemaJSON  string `json:"schemaJson"`
+	SampleJSON  string `json:"sampleJson,omitempty"`
 }
 
 type WorkflowGlobalVariable struct {
@@ -18,6 +27,7 @@ type WorkflowGlobalVariable struct {
 	ValueType    string `json:"valueType"`
 	DefaultValue string `json:"defaultValue,omitempty"`
 	JSON         string `json:"json,omitempty"`
+	ObjectTypeID string `json:"objectTypeId,omitempty"`
 	JSONSchema   string `json:"jsonSchema,omitempty"` // 兼容旧字段
 	Description  string `json:"description,omitempty"`
 }
@@ -29,6 +39,7 @@ type WorkflowParameter struct {
 	Required     bool   `json:"required,omitempty"`
 	DefaultValue string `json:"defaultValue,omitempty"`
 	JSON         string `json:"json,omitempty"`
+	ObjectTypeID string `json:"objectTypeId,omitempty"`
 	JSONSchema   string `json:"jsonSchema,omitempty"` // 兼容旧字段
 	Description  string `json:"description,omitempty"`
 }
@@ -140,6 +151,27 @@ func ParseWorkflowDSL(input any) (WorkflowDSL, error) {
 		viewport = map[string]any{"x": 0, "y": 0, "zoom": 1}
 	}
 
+	objectTypes := make([]WorkflowObjectType, 0)
+	if rawList, ok := root["objectTypes"].([]any); ok {
+		for _, item := range rawList {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			id := toString(m["id"])
+			if id == "" {
+				continue
+			}
+			objectTypes = append(objectTypes, WorkflowObjectType{
+				ID:          id,
+				Name:        toString(m["name"]),
+				Description: toString(m["description"]),
+				SchemaJSON:  toString(m["schemaJson"]),
+				SampleJSON:  toString(m["sampleJson"]),
+			})
+		}
+	}
+
 	globalVariables := make([]WorkflowGlobalVariable, 0)
 	if rawList, ok := root["globalVariables"].([]any); ok {
 		for _, item := range rawList {
@@ -156,6 +188,7 @@ func ParseWorkflowDSL(input any) (WorkflowDSL, error) {
 				ValueType:    toString(m["valueType"]),
 				DefaultValue: toString(m["defaultValue"]),
 				JSON:         toString(m["json"]),
+				ObjectTypeID: toString(m["objectTypeId"]),
 				JSONSchema:   toString(m["jsonSchema"]),
 				Description:  toString(m["description"]),
 			})
@@ -181,6 +214,7 @@ func ParseWorkflowDSL(input any) (WorkflowDSL, error) {
 				Required:     required,
 				DefaultValue: toString(m["defaultValue"]),
 				JSON:         toString(m["json"]),
+				ObjectTypeID: toString(m["objectTypeId"]),
 				JSONSchema:   toString(m["jsonSchema"]),
 				Description:  toString(m["description"]),
 			})
@@ -190,6 +224,7 @@ func ParseWorkflowDSL(input any) (WorkflowDSL, error) {
 	return WorkflowDSL{
 		Nodes:              nodes,
 		Edges:              edges,
+		ObjectTypes:        objectTypes,
 		GlobalVariables:    globalVariables,
 		WorkflowParameters: workflowParameters,
 		Viewport:           viewport,

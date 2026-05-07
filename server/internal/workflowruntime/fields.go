@@ -88,6 +88,10 @@ func BuildInputSchema(fields []DynamicField, prompt string) map[string]any {
 }
 
 func ValidateAndNormalizeDynamicInput(fields []DynamicField, input map[string]any) (map[string]any, error) {
+	return ValidateAndNormalizeDynamicInputWithVariables(fields, input, nil)
+}
+
+func ValidateAndNormalizeDynamicInputWithVariables(fields []DynamicField, input map[string]any, variables map[string]any) (map[string]any, error) {
 	normalized := map[string]any{}
 	for _, field := range fields {
 		if strings.TrimSpace(field.Name) == "" {
@@ -103,10 +107,10 @@ func ValidateAndNormalizeDynamicInput(fields []DynamicField, input map[string]an
 			if raw, ok := input[field.Name]; ok {
 				candidate = raw
 			} else {
-				candidate = field.DefaultValue
+				candidate = resolveDynamicFieldDefaultValue(field, variables)
 			}
 		} else {
-			candidate = field.DefaultValue
+			candidate = resolveDynamicFieldDefaultValue(field, variables)
 		}
 
 		if field.Required && !hasFieldValue(field, candidate) {
@@ -155,6 +159,26 @@ func ValidateAndNormalizeDynamicInput(fields []DynamicField, input map[string]an
 	}
 
 	return normalized, nil
+}
+
+func resolveDynamicFieldDefaultValue(field DynamicField, variables map[string]any) any {
+	if variables == nil {
+		return field.DefaultValue
+	}
+	defaultText, ok := field.DefaultValue.(string)
+	if !ok {
+		return field.DefaultValue
+	}
+	trimmed := strings.TrimSpace(defaultText)
+	if !strings.Contains(trimmed, "{{") {
+		return field.DefaultValue
+	}
+
+	resolved := resolveValue(defaultText, variables)
+	if resolved == nil {
+		return ""
+	}
+	return resolved
 }
 
 func parseDynamicFields(raw []any) []DynamicField {

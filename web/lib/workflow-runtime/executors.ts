@@ -176,11 +176,27 @@ const buildWritebacks = (
     return []
   return mappings
     .map((item) => {
-      const sourcePath = typeof item?.sourcePath === 'string' ? item.sourcePath.trim() : ''
+      const expression = typeof item?.expression === 'string'
+        ? item.expression.trim()
+        : (typeof item?.sourcePath === 'string' ? item.sourcePath.trim() : '')
       const targetPath = typeof item?.targetPath === 'string' ? item.targetPath.trim() : ''
-      if (!sourcePath || !targetPath)
+      if (!expression || !targetPath)
         return null
-      const value = sourcePath === '$' ? output : readFromOutputByPath(output, sourcePath)
+
+      const readValueByExpression = (): unknown => {
+        if (expression === '$')
+          return output
+        const byRawPath = readFromOutputByPath(output, expression)
+        if (byRawPath !== undefined)
+          return byRawPath
+        if (expression.startsWith('output.'))
+          return readFromOutputByPath(output, expression.slice('output.'.length))
+        return readFromOutputByPath(output, `data.${expression}`)
+      }
+
+      const value = readValueByExpression()
+      if (value === undefined)
+        return null
       return { targetPath, value }
     })
     .filter(Boolean) as Array<{ targetPath: string; value: unknown }>

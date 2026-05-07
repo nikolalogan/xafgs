@@ -106,7 +106,6 @@
 
 ---
 
-<<<<<<< HEAD
 ## 5. 混合检索打分说明
 
 当前检索流程：
@@ -163,14 +162,6 @@ keywordScore = ts_rank_cd(...) * 0.7 + similarity(...) * 0.3
 1. `POST /api/files/:fileId/reindex?versionNo=2`
 2. `GET /api/files/:fileId/index-status?versionNo=2`
 3. `POST /api/knowledge/search`
-=======
-## 5. 运行与验证建议
-
-1. 上传文件后，检查是否自动入队索引任务。
-2. 调 `index-status` 确认任务 `succeeded`。
-3. 调 `knowledge/search` 看是否命中。
-4. 调 Chat 接口，验证回复是否体现检索证据语境。
->>>>>>> parent of d998be6 (优化)
 
 ---
 

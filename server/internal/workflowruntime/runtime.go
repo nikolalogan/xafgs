@@ -2,6 +2,7 @@ package workflowruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"sort"
@@ -150,6 +151,13 @@ func applyDSLDefaults(target map[string]any, dsl WorkflowDSL) {
 	if target == nil {
 		return
 	}
+	objectTypeMap := map[string]WorkflowObjectType{}
+	for _, item := range dsl.ObjectTypes {
+		if strings.TrimSpace(item.ID) == "" {
+			continue
+		}
+		objectTypeMap[item.ID] = item
+	}
 
 	ensureMap := func(key string) map[string]any {
 		if existing, ok := target[key].(map[string]any); ok && existing != nil {
@@ -169,7 +177,7 @@ func applyDSLDefaults(target map[string]any, dsl WorkflowDSL) {
 		if existing, exists := workflow[name]; exists && hasValue(existing) {
 			continue
 		}
-		workflow[name] = parseScalar(strings.TrimSpace(param.DefaultValue))
+		workflow[name] = resolveDSLDefaultValue(param.ValueType, param.DefaultValue, param.ObjectTypeID, objectTypeMap)
 	}
 
 	global := ensureMap("global")
@@ -181,12 +189,34 @@ func applyDSLDefaults(target map[string]any, dsl WorkflowDSL) {
 		if existing, exists := global[name]; exists && hasValue(existing) {
 			continue
 		}
-		global[name] = parseScalar(strings.TrimSpace(variable.DefaultValue))
+		global[name] = resolveDSLDefaultValue(variable.ValueType, variable.DefaultValue, variable.ObjectTypeID, objectTypeMap)
 	}
 
 	if _, exists := global["timestamp"]; !exists {
 		global["timestamp"] = float64(time.Now().Unix())
 	}
+}
+
+func resolveDSLDefaultValue(valueType string, rawDefault string, objectTypeID string, objectTypeMap map[string]WorkflowObjectType) any {
+	defaultValue := parseScalar(strings.TrimSpace(rawDefault))
+	if strings.TrimSpace(valueType) != "object" {
+		return defaultValue
+	}
+	if strings.TrimSpace(rawDefault) != "" {
+		return defaultValue
+	}
+	objectType, ok := objectTypeMap[strings.TrimSpace(objectTypeID)]
+	if !ok {
+		return defaultValue
+	}
+	if strings.TrimSpace(objectType.SampleJSON) == "" {
+		return defaultValue
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(objectType.SampleJSON), &parsed); err != nil {
+		return defaultValue
+	}
+	return parsed
 }
 
 func (runtime *Runtime) Resume(ctx context.Context, input ResumeExecutionInput) (WorkflowExecution, error) {
@@ -238,7 +268,7 @@ func (runtime *Runtime) prepareResumeExecution(ctx context.Context, input Resume
 	if node, ok := findNodeByID(execution.WorkflowDSL.Nodes, input.NodeID); ok {
 		if node.Data.Type == "input" {
 			fields := ParseInputFields(node.Data.Config)
-			normalized, validateErr := ValidateAndNormalizeDynamicInput(fields, resumeInput)
+			normalized, validateErr := ValidateAndNormalizeDynamicInputWithVariables(fields, resumeInput, execution.Variables)
 			if validateErr != nil {
 				runtime.log(ctx, map[string]any{
 					"event":       "node.input_invalid",
@@ -807,7 +837,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			succeededState.Status = NodeRunStatusSucceeded
 			succeededState.EndedAt = NowISO()
 			next.NodeStates[nodeID] = succeededState
-			output := defaultMap(result.Output)
+			output := mapOutputByWritebacks(defaultMap(result.Output), result.Writebacks)
 			if result.IterationTrace != nil {
 				if next.IterationTraces == nil {
 					next.IterationTraces = map[string]IterationTrace{}
@@ -817,12 +847,7 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 			next.Variables[nodeID] = output
 			for _, mapping := range result.Writebacks {
 				targetPath := strings.TrimSpace(mapping.TargetPath)
-				if targetPath == "" {
-					continue
-				}
-				// 保护：避免 writeback 覆盖保留根对象，导致后续变量解析失败
-				// 仅允许写入 workflow.xxx / global.xxx / user.xxx
-				if targetPath == "workflow" || targetPath == "global" || targetPath == "user" {
+				if isReservedRootPath(targetPath) {
 					runtime.log(ctx, map[string]any{
 						"event":       "writeback.blocked",
 						"requestId":   requestIDFromContext(ctx),
@@ -830,32 +855,9 @@ func (runtime *Runtime) runUntilPauseOrEnd(ctx context.Context, execution Workfl
 						"nodeId":      nodeID,
 						"targetPath":  targetPath,
 					})
-					continue
 				}
-				if strings.HasSuffix(targetPath, "[]") {
-					if incoming, ok := mapping.Value.([]any); ok {
-						appendPath := strings.TrimSuffix(targetPath, "[]")
-						appendPath = strings.TrimSuffix(appendPath, ".")
-						existing, found := getByPath(next.Variables, appendPath)
-						switch typed := existing.(type) {
-						case []any:
-							combined := make([]any, 0, len(typed)+len(incoming))
-							combined = append(combined, typed...)
-							combined = append(combined, incoming...)
-							setByPath(next.Variables, appendPath, combined)
-						default:
-							if found {
-								// 已有值但不是数组：按覆盖新数组处理，避免类型冲突造成 append 失败。
-								setByPath(next.Variables, appendPath, incoming)
-							} else {
-								setByPath(next.Variables, appendPath, incoming)
-							}
-						}
-						continue
-					}
-				}
-				setByPath(next.Variables, targetPath, mapping.Value)
 			}
+			applyWritebacks(next.Variables, result.Writebacks, writebackApplyOptions{ProtectReservedRoots: true})
 			runtime.log(ctx, map[string]any{
 				"event":       "variables.after_writeback",
 				"requestId":   requestIDFromContext(ctx),

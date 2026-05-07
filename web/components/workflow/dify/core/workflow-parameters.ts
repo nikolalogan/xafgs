@@ -35,6 +35,7 @@ export const normalizeWorkflowParameters = (input?: unknown): WorkflowParameter[
           : typeof (item as { jsonSchema?: unknown }).jsonSchema === 'string'
             ? String((item as { jsonSchema?: unknown }).jsonSchema)
             : '',
+        objectTypeId: typeof item.objectTypeId === 'string' ? item.objectTypeId : '',
         description: typeof item.description === 'string' ? item.description : '',
       } satisfies WorkflowParameter
     })

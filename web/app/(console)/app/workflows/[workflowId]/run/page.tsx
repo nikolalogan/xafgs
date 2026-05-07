@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { message } from 'antd'
 import WorkflowRunPage from '@/components/workflow/dify/components/WorkflowRunPage'
+import WorkflowRunFrame from '@/components/workflow/module/WorkflowRunFrame'
 import { parseDifyWorkflowDSL } from '@/components/workflow/dify/core/dsl'
 import type { DifyWorkflowDSL } from '@/components/workflow/dify/core/types'
 import { useConsoleRole } from '@/lib/useConsoleRole'
@@ -74,12 +75,12 @@ export default function WorkflowRunRoutePage() {
         const headers: Record<string, string> = { 'content-type': 'application/json' }
         if (token)
           headers.Authorization = `Bearer ${token}`
-	        const response = await fetch(`/api/workflows/${workflowIDValue}`, { method: 'GET', headers, credentials: 'include' })
-	        const payload = await response.json() as ApiResponse<WorkflowDetailDTO>
-	        if (response.status === 401) {
-	          router.push('/?redirect=/app/workflows')
-	          return
-	        }
+        const response = await fetch(`/api/workflows/${workflowIDValue}`, { method: 'GET', headers, credentials: 'include' })
+        const payload = await response.json() as ApiResponse<WorkflowDetailDTO>
+        if (response.status === 401) {
+          router.push('/?redirect=/app/workflows')
+          return
+        }
         if (response.status === 403)
           throw new Error(payload.message || '无权限访问')
         if (!response.ok || !payload.data)
@@ -129,16 +130,11 @@ export default function WorkflowRunRoutePage() {
   }
 
   return (
-    <div className="space-y-3">
+    <WorkflowRunFrame
+      title={detail?.name || '工作流运行'}
+    >
       {contextHolder}
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="text-sm font-semibold text-gray-900">{detail?.name || '工作流运行'}</div>
-        </div>
-        {loading && <div className="text-xs text-gray-500">加载中...</div>}
-        {!loading && !parsed && <div className="text-xs text-rose-600">DSL 解析失败或为空。</div>}
-      </div>
       {parsed && <WorkflowRunPage workflowId={workflowIDValue} nodes={parsed.nodes} edges={parsed.edges} globalVariables={parsed.globalVariables ?? []} workflowParameters={parsed.workflowParameters ?? []} autoRun={autoRun} />}
-    </div>
+    </WorkflowRunFrame>
   )
 }

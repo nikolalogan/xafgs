@@ -3,17 +3,19 @@ import type { NodeMenuState } from '../core/store'
 
 type NodeContextMenuProps = {
   menu?: NodeMenuState
+  onDebug: () => void
   onCopy: () => void
   onDuplicate: () => void
   onDelete: () => void
   onClose: () => void
 }
 
-export default function NodeContextMenu({ menu, onCopy, onDuplicate, onDelete, onClose }: NodeContextMenuProps) {
+export default function NodeContextMenu({ menu, onDebug, onCopy, onDuplicate, onDelete, onClose }: NodeContextMenuProps) {
   if (!menu)
     return null
 
   const handlers: Record<NodeMenuActionKey, () => void> = {
+    debug: onDebug,
     copy: onCopy,
     duplicate: onDuplicate,
     delete: onDelete,

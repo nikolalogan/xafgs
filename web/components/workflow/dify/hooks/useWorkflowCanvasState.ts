@@ -3,7 +3,7 @@ import { useEdgesState, useNodesState } from 'reactflow'
 import { parseDifyWorkflowDSL } from '../core/dsl'
 import { defaultGlobalVariables } from '../core/global-variables'
 import { defaultWorkflowParameters } from '../core/workflow-parameters'
-import type { DifyEdge, DifyNode, DifyWorkflowDSL } from '../core/types'
+import type { DifyEdge, DifyNode, DifyWorkflowDSL, WorkflowObjectType } from '../core/types'
 
 const nextNodeIdSeed = (nodes: DifyNode[]) => {
   let max = 0
@@ -31,6 +31,7 @@ export const useWorkflowCanvasState = (demoDSL: DifyWorkflowDSL) => {
   const [checklistOpen, setChecklistOpen] = useState(false)
   const [importText, setImportText] = useState('')
   const [exportText, setExportText] = useState('')
+  const [objectTypes, setObjectTypes] = useState<WorkflowObjectType[]>(parsed.objectTypes ?? [])
   const [globalVariables, setGlobalVariables] = useState(parsed.globalVariables ?? defaultGlobalVariables)
   const [workflowParameters, setWorkflowParameters] = useState(parsed.workflowParameters ?? defaultWorkflowParameters)
   const [workflowVariableScopes, setWorkflowVariableScopes] = useState(parsed.workflowVariableScopes ?? {})
@@ -40,6 +41,7 @@ export const useWorkflowCanvasState = (demoDSL: DifyWorkflowDSL) => {
   useEffect(() => {
     setNodes(parsed.nodes)
     setEdges(parsed.edges)
+    setObjectTypes(parsed.objectTypes ?? [])
     setGlobalVariables(parsed.globalVariables ?? defaultGlobalVariables)
     setWorkflowParameters(parsed.workflowParameters ?? defaultWorkflowParameters)
     setWorkflowVariableScopes(parsed.workflowVariableScopes ?? {})
@@ -61,6 +63,7 @@ export const useWorkflowCanvasState = (demoDSL: DifyWorkflowDSL) => {
     checklistOpen,
     importText,
     exportText,
+    objectTypes,
     globalVariables,
     workflowParameters,
     workflowVariableScopes,
@@ -76,6 +79,7 @@ export const useWorkflowCanvasState = (demoDSL: DifyWorkflowDSL) => {
     setChecklistOpen,
     setImportText,
     setExportText,
+    setObjectTypes,
     setGlobalVariables,
     setWorkflowParameters,
     setWorkflowVariableScopes,

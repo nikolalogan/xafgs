@@ -213,17 +213,31 @@ type inputNodeExecutor struct{}
 func (inputNodeExecutor) Execute(_ context.Context, input NodeExecutorContext) (NodeExecutorResult, error) {
 	fields := ParseInputFields(input.Node.Data.Config)
 	prompt := ParseInputPrompt(input.Node.Data.Config)
-	schema := BuildInputSchema(fields, prompt)
+	schemaFields := resolveDynamicFieldDefaultValues(fields, input.Variables)
+	schema := BuildInputSchema(schemaFields, prompt)
 	if input.NodeInput == nil {
 		return NodeExecutorResult{Type: NodeExecutorResultWaitingInput, Schema: schema}, nil
 	}
 
-	normalized, err := ValidateAndNormalizeDynamicInput(fields, input.NodeInput)
+	normalized, err := ValidateAndNormalizeDynamicInputWithVariables(fields, input.NodeInput, input.Variables)
 	if err != nil {
 		return NodeExecutorResult{Type: NodeExecutorResultFailed, Error: err.Error()}, nil
 	}
 
 	return NodeExecutorResult{Type: NodeExecutorResultSuccess, Output: normalized}, nil
+}
+
+func resolveDynamicFieldDefaultValues(fields []DynamicField, variables map[string]any) []DynamicField {
+	if len(fields) == 0 {
+		return nil
+	}
+	resolved := make([]DynamicField, 0, len(fields))
+	for _, field := range fields {
+		next := field
+		next.DefaultValue = resolveDynamicFieldDefaultValue(field, variables)
+		resolved = append(resolved, next)
+	}
+	return resolved
 }
 
 type codeNodeExecutor struct{}
@@ -478,6 +492,8 @@ func (apiRequestExecutor) Execute(ctx context.Context, input NodeExecutorContext
 	paramDefs, _ := cfg["params"].([]any)
 	paramValues, _ := cfg["paramValues"].([]any)
 	valueByKey := map[string]any{}
+
+	// 先读取节点配置中的参数值，作为默认值来源。
 	for _, item := range paramValues {
 		m, ok := item.(map[string]any)
 		if !ok {
@@ -489,6 +505,14 @@ func (apiRequestExecutor) Execute(ctx context.Context, input NodeExecutorContext
 			continue
 		}
 		valueByKey[location+":"+name] = m["value"]
+	}
+	// 再合并本次节点输入，允许调试输入覆盖配置值。
+	for key, value := range input.NodeInput {
+		normalizedKey := strings.TrimSpace(key)
+		if normalizedKey == "" {
+			continue
+		}
+		valueByKey[normalizedKey] = value
 	}
 
 	missing := []string{}
@@ -769,6 +793,14 @@ func getByPathWithFallback(variables map[string]any, path string) (any, bool) {
 	value, found := getByPath(variables, path)
 	if found {
 		return value, true
+	}
+
+	// 兼容：历史调试快照常把 start.xxx 直接放在顶层 xxx
+	if strings.HasPrefix(path, "start.") {
+		suffix := strings.TrimPrefix(path, "start.")
+		if v, ok := getByPath(variables, suffix); ok {
+			return v, true
+		}
 	}
 
 	// 兼容：部分历史流程误用 workflow.xxx 引用全局参数 global.xxx

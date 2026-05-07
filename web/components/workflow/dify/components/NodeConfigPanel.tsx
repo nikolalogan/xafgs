@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Cascader, Modal, Select, TreeSelect } from 'antd'
 import StartNodeFormConfig from './StartNodeFormConfig'
 import VariableValueInput from './VariableValueInput'
@@ -12,7 +12,6 @@ import {
   type ApiRequestParamDef,
   type ApiRequestParamLocation,
   type CodeNodeConfig,
-  type DifyEdge,
   type DifyNode,
   type EndNodeConfig,
   type HttpNodeConfig,
@@ -22,6 +21,7 @@ import {
   type LLMNodeConfig,
   type StartNodeConfig,
   type WorkflowGlobalVariable,
+  type WorkflowObjectType,
   type WorkflowParameter,
   type WorkflowVariableScope,
   type WritebackMapping,
@@ -29,7 +29,7 @@ import {
 
 type NodeConfigPanelProps = {
   nodes: DifyNode[]
-  edges: DifyEdge[]
+  objectTypes: WorkflowObjectType[]
   workflowParameters: WorkflowParameter[]
   globalVariables: WorkflowGlobalVariable[]
   workflowVariableScopes: Record<string, WorkflowVariableScope>
@@ -40,7 +40,6 @@ type NodeConfigPanelProps = {
   onChange: (node: DifyNode) => void
   onChangeScopes: (scopes: Record<string, WorkflowVariableScope>) => void
   onFocusIterationRegion: (nodeId: string) => void
-  onAddIterationChild: (parentId: string, type: BlockEnum) => void
   onSave: () => void
 }
 
@@ -670,9 +669,9 @@ const setValueByTargetPath = (target: Record<string, unknown>, rawPath: string, 
   current[segments[segments.length - 1]] = value
 }
 
-function NodeConfigPanel({
+export default function NodeConfigPanel({
   nodes,
-  edges,
+  objectTypes,
   workflowParameters,
   globalVariables,
   workflowVariableScopes,
@@ -683,10 +682,9 @@ function NodeConfigPanel({
   onChange,
   onChangeScopes,
   onFocusIterationRegion,
-  onAddIterationChild,
   onSave,
 }: NodeConfigPanelProps) {
-  const panelRootRef = useRef<HTMLDivElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
   const [templateOptions, setTemplateOptions] = useState<TemplateOption[]>([])
   const [apiRoutes, setApiRoutes] = useState<APIRouteDoc[]>([])
   const [apiRoutesError, setApiRoutesError] = useState('')
@@ -707,8 +705,8 @@ function NodeConfigPanel({
   const [mappingTestErrorByOwner, setMappingTestErrorByOwner] = useState<Record<string, string>>({})
   const apiJsonTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
   const variableOptions = useMemo(
-    () => buildWorkflowVariableOptions(nodes, workflowParameters, globalVariables, activeNode),
-    [activeNode, globalVariables, nodes, workflowParameters],
+    () => buildWorkflowVariableOptions(nodes, workflowParameters, globalVariables, objectTypes, activeNode),
+    [activeNode, globalVariables, nodes, objectTypes, workflowParameters],
   )
   const mappingTargetOptions = useMemo(
     () => variableOptions.filter(option => option.nodeId === 'workflow' || option.nodeId === 'global'),
@@ -959,23 +957,11 @@ function NodeConfigPanel({
 
   if (!activeNode) {
     return (
-      <div className="col-span-3 rounded-xl border border-gray-200 bg-white p-3">
+      <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.35)]">
         <div className="mb-2 text-sm font-semibold">节点配置</div>
         <p className="text-xs text-gray-500">点击画布中的节点后可编辑</p>
       </div>
     )
-  }
-
-  const handlePanelBlurCapture = () => {
-    window.requestAnimationFrame(() => {
-      const root = panelRootRef.current
-      if (!root)
-        return
-      const activeElement = document.activeElement
-      if (activeElement instanceof Node && root.contains(activeElement))
-        return
-      onSave()
-    })
   }
 
   const updateNode = (nextNode: DifyNode) => onChange(nextNode)
@@ -1353,29 +1339,12 @@ function NodeConfigPanel({
 
   const renderStartConfig = () => {
     const config = ensureNodeConfig(BlockEnum.Start, activeNode.data.config) as StartNodeConfig
-    const isIterationEntry = Boolean(activeNode.data.parentIterationId && activeNode.data.isIterationEntry)
-
-    if (isIterationEntry) {
-      return (
-        <div className="space-y-2 rounded border border-teal-200 bg-teal-50/60 p-3">
-          <div className="text-sm font-semibold text-teal-800">循环入口</div>
-          <div className="text-xs leading-5 text-teal-700">
-            该开始节点仅表示循环体入口，不再配置表单。
-            迭代输入数组请在父级迭代节点的“迭代输入（Array）”中选择；
-            循环内其他节点引用当前项时，请从循环上下文选择 `item` / `index`。
-          </div>
-          <div className="rounded border border-dashed border-teal-200 bg-white/80 px-2 py-2 text-xs text-gray-600">
-            当前入口变量数：{config.variables.length}（只读）
-          </div>
-        </div>
-      )
-    }
-
     return (
       <StartNodeFormConfig
         nodeId={activeNode.id}
         config={config}
         onChange={nextConfig => updateBase({ config: nextConfig })}
+        objectTypes={objectTypes}
         variableOptions={variableOptions}
         getScope={getScope}
         onScopeChange={setScope}
@@ -1416,6 +1385,7 @@ function NodeConfigPanel({
           allowedTypes={['text-input', 'paragraph', 'number', 'select', 'checkbox']}
           config={adaptedStartConfig}
           onChange={handleChange}
+          objectTypes={objectTypes}
           variableOptions={variableOptions}
           getScope={getScope}
           onScopeChange={setScope}
@@ -1953,15 +1923,46 @@ function NodeConfigPanel({
   const renderIterationConfig = () => {
     const config = ensureNodeConfig(BlockEnum.Iteration, activeNode.data.config) as IterationNodeConfig
     const updateConfig = (nextConfig: IterationNodeConfig) => updateBase({ config: nextConfig })
-    const iterationChildNodes = nodes.filter(node => node.data.parentIterationId === activeNode.id)
-    const iterationChildEdges = edges.filter(edge => edge.data?.parentIterationId === activeNode.id)
     const childTypes: Array<{ type: BlockEnum; label: string }> = [
       { type: BlockEnum.LLM, label: 'LLM' },
       { type: BlockEnum.Code, label: '代码' },
       { type: BlockEnum.HttpRequest, label: 'HTTP' },
       { type: BlockEnum.IfElse, label: '条件分支' },
       { type: BlockEnum.Input, label: '输入' },
+      { type: BlockEnum.End, label: '结束' },
     ]
+    const addChildNode = (type: BlockEnum) => {
+      const nextIndex = config.children.nodes.length + 1
+      const nextNodeId = `sub-node-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+      const nextNode = {
+        id: nextNodeId,
+        type: 'childNode',
+        position: {
+          x: 40 + (config.children.nodes.length % 3) * 240,
+          y: 40 + Math.floor(config.children.nodes.length / 3) * 150,
+        },
+        data: {
+          title: `${type}-${nextIndex}`,
+          desc: '',
+          type,
+          config: (() => {
+            const nextConfig = createDefaultNodeConfig(type)
+            if (type === BlockEnum.LLM) {
+              const llmConfig = nextConfig as LLMNodeConfig
+              llmConfig.model = defaultLLMModel
+            }
+            return nextConfig
+          })(),
+        },
+      }
+      updateConfig({
+        ...config,
+        children: {
+          ...config.children,
+          nodes: [...config.children.nodes, nextNode],
+        },
+      })
+    }
     return (
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">迭代节点</div>
@@ -1974,6 +1975,15 @@ function NodeConfigPanel({
           onScopeChange={scope => setScope(`${activeNode.id}.iteration.iteratorSource`, scope)}
           placeholder="例如 {{input.items}}"
         />
+        <VariableValueInput
+          label="输出来源（迭代体内变量）"
+          value={config.outputSource}
+          onChange={nextValue => updateConfig({ ...config, outputSource: nextValue })}
+          options={variableOptions}
+          scope={getScope(`${activeNode.id}.iteration.outputSource`, 'all')}
+          onScopeChange={scope => setScope(`${activeNode.id}.iteration.outputSource`, scope)}
+          placeholder="例如 {{code.result}}"
+        />
         <label className={labelClass}>输出变量名</label>
         <input
           className={inputClass}
@@ -1981,10 +1991,6 @@ function NodeConfigPanel({
           placeholder="results"
           onChange={event => updateConfig({ ...config, outputVar: event.target.value })}
         />
-        <div className="rounded border border-teal-200 bg-teal-50/70 p-2 text-xs leading-5 text-teal-800">
-          迭代体内自动注入隐藏状态对象，可通过 {'{{'}{`${activeNode.id}.state`}{'}}'} 引用或写入。
-          同时可在嵌套结束节点里定义“每次循环返回值”，父级会按返回名称自动聚合为数组输出。
-        </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className={labelClass}>迭代项变量名</label>
@@ -2005,9 +2011,27 @@ function NodeConfigPanel({
             />
           </div>
         </div>
-        <div className="text-xs text-gray-500">
-          当前共享状态对象仅支持顺序执行，并行模式已停用。
-        </div>
+        <label className="flex items-center gap-1 text-xs text-gray-600">
+          <input
+            type="checkbox"
+            checked={config.isParallel}
+            onChange={event => updateConfig({ ...config, isParallel: event.target.checked })}
+          />
+          并行模式
+        </label>
+        {config.isParallel && (
+          <>
+            <label className={labelClass}>最大并行数</label>
+            <input
+              className={inputClass}
+              type="number"
+              min="1"
+              max="100"
+              value={config.parallelNums}
+              onChange={event => updateConfig({ ...config, parallelNums: Number(event.target.value || 1) })}
+            />
+          </>
+        )}
         <label className={labelClass}>错误处理方式</label>
         <Select
           className={antSelectClass}
@@ -2019,15 +2043,23 @@ function NodeConfigPanel({
           ]}
           onChange={value => updateConfig({ ...config, errorHandleMode: value as IterationNodeConfig['errorHandleMode'] })}
         />
+        <label className="flex items-center gap-1 text-xs text-gray-600">
+          <input
+            type="checkbox"
+            checked={config.flattenOutput}
+            onChange={event => updateConfig({ ...config, flattenOutput: event.target.checked })}
+          />
+          扁平化输出
+        </label>
         <div className="rounded border border-gray-200 p-2">
           <div className="mb-1 text-xs text-gray-600">
-            子流程节点：{iterationChildNodes.length}，连线：{iterationChildEdges.length}
+            子流程节点：{config.children.nodes.length}，连线：{config.children.edges.length}
           </div>
           <div className="mb-2 flex flex-wrap gap-1.5">
             {childTypes.map(item => (
               <button
                 key={item.type}
-                onClick={() => onAddIterationChild(activeNode.id, item.type)}
+                onClick={() => addChildNode(item.type)}
                 className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"
               >
                 + {item.label}
@@ -2964,60 +2996,7 @@ function NodeConfigPanel({
 
   const renderEndConfig = () => {
     const config = ensureNodeConfig(BlockEnum.End, activeNode.data.config) as EndNodeConfig
-    const isIterationEnd = Boolean(activeNode.data.parentIterationId)
     const updateConfig = (nextConfig: EndNodeConfig) => updateBase({ config: nextConfig })
-    if (isIterationEnd) {
-      const primaryOutput = config.outputs[0] ?? { name: 'result', source: '' }
-      return (
-        <div className="space-y-3 rounded border border-teal-200 bg-teal-50/60 p-3">
-          <div className="text-sm font-semibold text-teal-800">循环收口</div>
-          <div className="text-xs leading-5 text-teal-700">
-            该结束节点用于定义每次循环产出的单项对象。
-            例如输出名称填写 result，引用数据填写 {'{{sub-node-1.result}}'}，则父级迭代节点最终聚合为 result: [每次循环的引用数据]。
-          </div>
-          <div className="space-y-2 rounded border border-dashed border-teal-200 bg-white/80 p-2">
-            <div>
-              <label className={labelClass}>输出对象名称</label>
-              <input
-                className={inputClass}
-                placeholder="result"
-                value={primaryOutput.name}
-                onChange={(event) => {
-                  updateConfig({
-                    ...config,
-                    outputs: [
-                      {
-                        ...primaryOutput,
-                        name: event.target.value,
-                      },
-                    ],
-                  })
-                }}
-              />
-            </div>
-            <VariableValueInput
-              label="引用数据"
-              value={primaryOutput.source}
-              onChange={(nextValue) => {
-                updateConfig({
-                  ...config,
-                  outputs: [
-                    {
-                      ...primaryOutput,
-                      source: nextValue,
-                    },
-                  ],
-                })
-              }}
-              options={variableOptions}
-              scope={getScope(`${activeNode.id}.iteration.end.source`, 'all')}
-              onScopeChange={scope => setScope(`${activeNode.id}.iteration.end.source`, scope)}
-              placeholder="例如 {{sub-node-1.result}}"
-            />
-          </div>
-        </div>
-      )
-    }
     return (
       <div className={sectionClass}>
         <div className="text-xs font-semibold text-gray-700">结束节点输出</div>
@@ -3165,9 +3144,17 @@ function NodeConfigPanel({
 
   return (
     <div
-      ref={panelRootRef}
-      className="col-span-3 rounded-xl border border-gray-200 bg-white p-3"
-      onBlurCapture={handlePanelBlurCapture}
+      ref={panelRef}
+      className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.35)]"
+      onBlurCapture={(event) => {
+        const nextFocused = event.relatedTarget
+        const container = panelRef.current
+        if (!container)
+          return
+        if (nextFocused instanceof Node && container.contains(nextFocused))
+          return
+        onSave()
+      }}
     >
       <div className="mb-2 text-sm font-semibold">节点配置</div>
       <div className="space-y-2">
@@ -3190,5 +3177,3 @@ function NodeConfigPanel({
     </div>
   )
 }
-
-export default memo(NodeConfigPanel)

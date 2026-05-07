@@ -8,7 +8,7 @@ type UseKeyboardShortcutsParams = {
   pasteClipboard: () => void
   duplicateSelection: () => void
   deleteSelection: () => void
-  saveWorkflow?: () => void
+  onEscape?: () => boolean
 }
 
 export const useKeyboardShortcuts = ({
@@ -19,7 +19,7 @@ export const useKeyboardShortcuts = ({
   pasteClipboard,
   duplicateSelection,
   deleteSelection,
-  saveWorkflow,
+  onEscape,
 }: UseKeyboardShortcutsParams) => {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -29,6 +29,13 @@ export const useKeyboardShortcuts = ({
 
       if (!canvasContainerRef.current?.contains(target))
         return
+
+      if (event.key === 'Escape') {
+        const handled = onEscape?.() ?? false
+        if (handled)
+          event.preventDefault()
+        return
+      }
 
       const isInput = !!target && (
         target.tagName === 'INPUT'
@@ -64,10 +71,6 @@ export const useKeyboardShortcuts = ({
         event.preventDefault()
         doUndo()
       }
-      if (modKey && key === 's') {
-        event.preventDefault()
-        saveWorkflow?.()
-      }
       if (modKey && (key === 'y' || (event.shiftKey && key === 'z'))) {
         event.preventDefault()
         doRedo()
@@ -78,5 +81,5 @@ export const useKeyboardShortcuts = ({
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [canvasContainerRef, copySelection, deleteSelection, doRedo, doUndo, duplicateSelection, pasteClipboard, saveWorkflow])
+  }, [canvasContainerRef, copySelection, deleteSelection, doRedo, doUndo, duplicateSelection, onEscape, pasteClipboard])
 }

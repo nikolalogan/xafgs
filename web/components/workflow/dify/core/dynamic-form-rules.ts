@@ -34,6 +34,20 @@ export type PreparedDynamicField = DynamicField & {
   validateRule?: PreparedRule
 }
 
+const normalizeRulePath = (path: string) => path
+  .trim()
+  .replace(/^用户属性\./, 'user.')
+  .replace(/^流程参数\./, 'workflow.')
+  .replace(/^全局参数\./, 'global.')
+  .replace(/^\$\./, '')
+  .replace(/^\$/, '')
+  .replace(/\[(\d+)\]/g, '.$1')
+
+const normalizeRuleCode = (code: string) => code
+  .replace(/(\{\{\s*)用户属性\./g, '$1user.')
+  .replace(/(\{\{\s*)流程参数\./g, '$1workflow.')
+  .replace(/(\{\{\s*)全局参数\./g, '$1global.')
+
 export const splitRuleDeps = (compiled: CompiledRule, nodeId: string) => {
   const localPrefix = `${nodeId}.`
   const localDeps: string[] = []
@@ -48,7 +62,7 @@ export const splitRuleDeps = (compiled: CompiledRule, nodeId: string) => {
 }
 
 export const buildPreparedRule = (code: string | undefined, nodeId: string) => {
-  const normalized = String(code || '').trim()
+  const normalized = normalizeRuleCode(String(code || '').trim())
   if (!normalized)
     return undefined
   const compiled = compileRule(normalized)
@@ -68,23 +82,57 @@ export const buildPreparedFields = (
 }
 
 export const getRuleValueByPath = (source: Record<string, unknown>, path: string): unknown => {
-  const keys = path.split('.').map(item => item.trim()).filter(Boolean)
-  let current: unknown = source
-  for (const key of keys) {
-    if (current === null || current === undefined)
-      return undefined
-    if (Array.isArray(current)) {
-      const index = Number(key)
-      if (!Number.isInteger(index))
+  const resolveExactPath = (normalizedPath: string): unknown => {
+    const keys = normalizedPath.split('.').map(item => item.trim()).filter(Boolean)
+    let current: unknown = source
+    for (const key of keys) {
+      if (current === null || current === undefined)
         return undefined
-      current = current[index]
-      continue
-    }
-    if (typeof current !== 'object')
+      if (Array.isArray(current)) {
+        const index = Number(key)
+        if (!Number.isInteger(index))
+          return undefined
+        current = current[index]
+        continue
+      }
+      if (typeof current !== 'object')
+        return undefined
+      const objectValue = current as Record<string, unknown>
+      if (Object.prototype.hasOwnProperty.call(objectValue, key)) {
+        current = objectValue[key]
+        continue
+      }
+      // 兼容区域对象常见结构：{ name: 'xx' }，规则中引用 *.regionName 时回退到 name
+      if (key === 'regionName' && Object.prototype.hasOwnProperty.call(objectValue, 'name')) {
+        current = objectValue.name
+        continue
+      }
       return undefined
-    current = (current as Record<string, unknown>)[key]
+    }
+    return current
   }
-  return current
+
+  const normalizedPath = normalizeRulePath(path)
+  if (!normalizedPath)
+    return undefined
+  const resolved = resolveExactPath(normalizedPath)
+  if (resolved !== undefined)
+    return resolved
+
+  // 与运行页保持一致：workflow.* 缺失时尝试 global.* / root / start.*
+  if (normalizedPath.startsWith('workflow.')) {
+    const suffix = normalizedPath.slice('workflow.'.length)
+    const fallbackToGlobal = resolveExactPath(`global.${suffix}`)
+    if (fallbackToGlobal !== undefined)
+      return fallbackToGlobal
+    const fallbackToRoot = resolveExactPath(suffix)
+    if (fallbackToRoot !== undefined)
+      return fallbackToRoot
+    const fallbackToStart = resolveExactPath(`start.${suffix}`)
+    if (fallbackToStart !== undefined)
+      return fallbackToStart
+  }
+  return undefined
 }
 
 export const buildExternalRuleInputs = (
@@ -151,14 +199,25 @@ export const evaluateDynamicFieldValidations = (
   fields: PreparedDynamicField[],
   ruleInputs: Record<string, unknown>,
 ) => {
+  const hasRuleValue = (value: unknown) => {
+    if (value === null || value === undefined)
+      return false
+    if (typeof value === 'string')
+      return value.trim() !== ''
+    return true
+  }
   const validationMap = new Map<string, string | null>()
   fields.forEach((item) => {
     let validateError: string | null = null
     if (item.validateRule) {
       const validateResult = evaluatePreparedRule(item.validateRule, ruleInputs)
       if (validateResult.ok) {
-        if (!validateResult.result)
-          validateError = '结果校验未通过'
+        if (!validateResult.result) {
+          const missingDeps = item.validateRule.externalDeps.filter(dep => !hasRuleValue(ruleInputs[dep]))
+          validateError = missingDeps.length > 0
+            ? `结果校验未通过（缺少变量：${missingDeps.join('、')}）`
+            : '结果校验未通过'
+        }
       }
       else {
         validateError = validateResult.error ?? '结果校验执行失败'

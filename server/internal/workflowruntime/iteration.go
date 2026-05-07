@@ -334,7 +334,7 @@ func (runtime *Runtime) executeChildWorkflowWithTrace(ctx context.Context, dsl W
 		case NodeExecutorResultBranch:
 			childTrace.Status = NodeRunStatusSucceeded
 			childTrace.EndedAt = NowISO()
-			childTrace.Output = cloneMap(defaultMap(result.Output))
+			childTrace.Output = mapOutputByWritebacks(defaultMap(result.Output), result.Writebacks)
 			itemTrace.ChildNodes = append(itemTrace.ChildNodes, childTrace)
 			itemTrace.Events = append(itemTrace.Events,
 				ExecutionEvent{
@@ -397,8 +397,8 @@ func (runtime *Runtime) executeChildWorkflowWithTrace(ctx context.Context, dsl W
 					},
 				},
 			)
-			nextVariables[nodeID] = defaultMap(result.Output)
-			applyWritebacksToVariables(nextVariables, result.Writebacks)
+			nextVariables[nodeID] = mapOutputByWritebacks(defaultMap(result.Output), result.Writebacks)
+			applyWritebacks(nextVariables, result.Writebacks, writebackApplyOptions{ProtectReservedRoots: true})
 			nextEdges := orderFanOutEdges(node, outgoingEdgesMap[nodeID], nodeMap)
 			for _, edge := range nextEdges {
 				markArrived(edge.Target, nodeID)
@@ -409,40 +409,6 @@ func (runtime *Runtime) executeChildWorkflowWithTrace(ctx context.Context, dsl W
 
 	itemTrace.Status = NodeRunStatusSucceeded
 	return nextVariables, itemTrace, nil
-}
-
-func applyWritebacksToVariables(variables map[string]any, writebacks []Writeback) {
-	for _, mapping := range writebacks {
-		targetPath := strings.TrimSpace(mapping.TargetPath)
-		if targetPath == "" {
-			continue
-		}
-		if targetPath == "workflow" || targetPath == "global" || targetPath == "user" {
-			continue
-		}
-		if strings.HasSuffix(targetPath, "[]") {
-			if incoming, ok := mapping.Value.([]any); ok {
-				appendPath := strings.TrimSuffix(targetPath, "[]")
-				appendPath = strings.TrimSuffix(appendPath, ".")
-				existing, found := getByPath(variables, appendPath)
-				switch typed := existing.(type) {
-				case []any:
-					combined := make([]any, 0, len(typed)+len(incoming))
-					combined = append(combined, typed...)
-					combined = append(combined, incoming...)
-					setByPath(variables, appendPath, combined)
-				default:
-					if found {
-						setByPath(variables, appendPath, incoming)
-					} else {
-						setByPath(variables, appendPath, incoming)
-					}
-				}
-				continue
-			}
-		}
-		setByPath(variables, targetPath, mapping.Value)
-	}
 }
 
 func commitIterationReservedRoots(parentVariables map[string]any, iterationVariables map[string]any) {

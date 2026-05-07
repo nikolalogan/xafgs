@@ -221,6 +221,7 @@ const defaultIterationConfig = (): IterationNodeConfig => ({
   joinMode: 'all',
   fanOutMode: 'sequential',
   iteratorSource: '',
+  outputSource: '',
   outputVar: 'results',
   itemVar: 'item',
   indexVar: 'index',
@@ -408,6 +409,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
             fileTypes: normalizeStartVariableFileTypes(item?.fileTypes),
             maxFiles: typeof item?.maxFiles === 'number' ? item.maxFiles : undefined,
             jsonSchema: typeof item?.jsonSchema === 'string' ? item.jsonSchema : undefined,
+            objectTypeId: typeof item?.objectTypeId === 'string' ? item.objectTypeId : undefined,
           }
         })
       : fallback.variables
@@ -467,8 +469,8 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       return fallback as DifyNodeConfigMap[K]
     const condition = config as Partial<IfElseNodeConfig>
     const normalizedConditions = Array.isArray(condition.conditions)
-      ? condition.conditions.map((item, index) => ({
-          name: typeof item?.name === 'string' && item.name.trim() ? item.name : `分支${index + 1}`,
+      ? condition.conditions.map(item => ({
+          name: typeof item?.name === 'string' ? item.name : '',
           left: typeof item?.left === 'string' ? item.left : '',
           operator: item?.operator ?? 'contains',
           right: typeof item?.right === 'string' ? item.right : '',
@@ -527,6 +529,7 @@ export const ensureNodeConfig = <K extends BlockEnum>(
       ...iteration,
       joinMode: normalizeJoinMode(iteration.joinMode),
       fanOutMode: normalizeFanOutMode(iteration.fanOutMode),
+      outputSource: typeof iteration.outputSource === 'string' ? iteration.outputSource : fallback.outputSource,
       itemVar: typeof iteration.itemVar === 'string' && iteration.itemVar.trim() ? iteration.itemVar : fallback.itemVar,
       indexVar: typeof iteration.indexVar === 'string' && iteration.indexVar.trim() ? iteration.indexVar : fallback.indexVar,
       isParallel: false,
