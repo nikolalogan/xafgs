@@ -322,3 +322,93 @@ func TestDebugSession_ContinueWaitingInputBeforeTarget(t *testing.T) {
 		t.Fatalf("目标节点输出不正确：%v", output)
 	}
 }
+
+func TestExecuteDebugNodeOnce_StartInputOverridesDebugVariables(t *testing.T) {
+	runtime := NewRuntime(NewInMemoryExecutionStore())
+	dsl := WorkflowDSL{
+		Nodes: []WorkflowNode{
+			{
+				ID:       "start",
+				Position: map[string]any{"x": 0, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "开始",
+					Type:  "start",
+					Config: map[string]any{
+						"variables": []any{
+							map[string]any{"name": "name", "type": "text", "required": true},
+						},
+					},
+				},
+			},
+			{
+				ID:       "target",
+				Position: map[string]any{"x": 200, "y": 0},
+				Data: WorkflowNodeData{
+					Title: "目标",
+					Type:  "code",
+					Config: map[string]any{
+						"language": "javascript",
+						"code":     "function main(input) { return { value: input.name } }",
+					},
+				},
+			},
+		},
+		Edges: []WorkflowEdge{{ID: "e1", Source: "start", Target: "target"}},
+	}
+
+	result, err := runtime.ExecuteDebugNodeOnce(context.Background(), ExecuteDebugNodeOnceInput{
+		WorkflowID:   1,
+		WorkflowDSL:  dsl,
+		TargetNodeID: "target",
+		StartInput:   map[string]any{"name": "alice"},
+		DebugVariables: map[string]any{
+			"name": "bob",
+		},
+	})
+	if err != nil {
+		t.Fatalf("执行单次调试失败：%v", err)
+	}
+	if got := result.NodeInput["variables"].(map[string]any)["name"]; got != "alice" {
+		t.Fatalf("开始参数应覆盖同名调试变量，actual=%v", got)
+	}
+}
+
+func TestExecuteDebugNodeOnce_StartNodeNoRecursiveWriteback(t *testing.T) {
+	runtime := NewRuntime(NewInMemoryExecutionStore())
+	dsl := WorkflowDSL{
+		Nodes: []WorkflowNode{
+			{
+				ID:       "start",
+				Position: map[string]any{"x": 0, "y": 0},
+				Data:     WorkflowNodeData{Title: "开始", Type: "start", Config: map[string]any{"variables": []any{}}},
+			},
+		},
+	}
+
+	debugVariables := map[string]any{}
+	for i := 0; i < 10; i++ {
+		result, err := runtime.ExecuteDebugNodeOnce(context.Background(), ExecuteDebugNodeOnceInput{
+			WorkflowID:      1,
+			WorkflowDSL:     dsl,
+			TargetNodeID:    "start",
+			StartInput:      map[string]any{"name": "alice"},
+			DebugVariables:  debugVariables,
+			NodeInput:       map[string]any{},
+		})
+		if err != nil {
+			t.Fatalf("第 %d 次执行单次调试失败：%v", i+1, err)
+		}
+		debugVariables = result.UpdatedDebugVariables
+		startValue, hasStart := debugVariables["start"]
+		if !hasStart {
+			continue
+		}
+		startMap, ok := startValue.(map[string]any)
+		if !ok {
+			t.Fatalf("start 变量类型异常：%T", startValue)
+		}
+		if _, nested := startMap["start"]; nested {
+			t.Fatalf("start 节点不应产生递归套娃：%#v", startMap)
+		}
+	}
+}

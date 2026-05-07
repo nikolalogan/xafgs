@@ -13,6 +13,7 @@ import ReactFlow, {
   type NodeTypes,
 } from 'reactflow'
 import EdgeContextMenu from './EdgeContextMenu'
+import DebugVariablePanel from './DebugVariablePanel'
 import GlobalVariablePanel from './GlobalVariablePanel'
 import NodeContextMenu from './NodeContextMenu'
 import PanelContextMenu from './PanelContextMenu'
@@ -29,6 +30,8 @@ type WorkflowEditorProps = {
   title: string
   subtitle: string
   activeNodeTitle?: string
+  debugTargetNode?: DifyNode | null
+  onDebugNode?: (node: DifyNode) => void
   statusBadges: string[]
   toolbar: ReactNode
   nodeConfigOpen: boolean
@@ -87,18 +90,26 @@ type WorkflowEditorProps = {
       globalVariableOpen: boolean
       workflowParamsOpen: boolean
       checklistOpen: boolean
+      debugVariableOpen: boolean
       issueCount: number
       objectTypes: WorkflowObjectType[]
       globalVariables: WorkflowGlobalVariable[]
       workflowParameters: WorkflowParameter[]
+      debugVariables: Record<string, unknown>
+      recentDebugVariables: Record<string, unknown> | null
       issues: WorkflowIssue[]
       onOpenGlobalVariables: () => void
       onOpenWorkflowParams: () => void
       onOpenChecklist: () => void
+      onOpenDebugVariables: () => void
       onCloseGlobalVariables: () => void
       onCloseWorkflowParams: () => void
+      onCloseDebugVariables: () => void
       onChangeObjectTypes: (objectTypes: WorkflowObjectType[]) => void
       onChangeWorkflowParams: (params: WorkflowParameter[]) => void
+      onChangeDebugVariables: (variables: Record<string, unknown>) => void
+      onFillDebugVariablesFromRecent: () => void
+      onClearDebugVariables: () => void
       onCloseChecklist: () => void
       onLocateIssueNode: (nodeId: string) => void
     }
@@ -110,6 +121,8 @@ export default function WorkflowEditor({
   title,
   subtitle,
   activeNodeTitle,
+  debugTargetNode,
+  onDebugNode,
   statusBadges,
   toolbar,
   nodeConfigOpen,
@@ -182,6 +195,19 @@ export default function WorkflowEditor({
             </button>
             <button
               type="button"
+              title="调试参数"
+              onClick={quickPanel.onOpenDebugVariables}
+              className={`flex h-9 w-9 items-center justify-center rounded-xl border ${quickPanel.debugVariableOpen ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-transparent text-slate-600 hover:bg-slate-100'}`}
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.8">
+                <path d="M4 7h16M4 12h10M4 17h7" />
+                <circle cx="16" cy="12" r="2" />
+                <circle cx="11" cy="17" r="2" />
+                <circle cx="8" cy="7" r="2" />
+              </svg>
+            </button>
+            <button
+              type="button"
               title="流程参数"
               onClick={quickPanel.onOpenWorkflowParams}
               className={`flex h-9 w-9 items-center justify-center rounded-xl border ${quickPanel.workflowParamsOpen ? 'border-emerald-300 bg-emerald-50 text-emerald-600' : 'border-transparent text-slate-600 hover:bg-slate-100'}`}
@@ -227,6 +253,15 @@ export default function WorkflowEditor({
             onChangeObjectTypes={quickPanel.onChangeObjectTypes}
             onChange={quickPanel.onChangeWorkflowParams}
           />
+          <DebugVariablePanel
+            open={quickPanel.debugVariableOpen}
+            variables={quickPanel.debugVariables}
+            recentVariables={quickPanel.recentDebugVariables}
+            onClose={quickPanel.onCloseDebugVariables}
+            onChange={quickPanel.onChangeDebugVariables}
+            onFillFromRecent={quickPanel.onFillDebugVariablesFromRecent}
+            onClear={quickPanel.onClearDebugVariables}
+          />
           <WorkflowChecklistPanel
             open={quickPanel.checklistOpen}
             issues={quickPanel.issues}
@@ -244,16 +279,31 @@ export default function WorkflowEditor({
                   <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Node Config</div>
                   <div className="mt-1 text-sm font-semibold text-slate-900">节点配置</div>
                 </div>
-                <button
-                  type="button"
-                  aria-label="关闭节点配置"
-                  className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                  onClick={onCloseNodeConfig}
-                >
-                  <svg viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.8">
-                    <path d="m6 6 12 12M18 6 6 18" />
-                  </svg>
-                </button>
+                <div className="flex items-center gap-2">
+                  {debugTargetNode && (
+                    <button
+                      type="button"
+                      aria-label="调试当前节点"
+                      title="调试当前节点"
+                      className="flex h-9 w-9 items-center justify-center rounded-xl border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                      onClick={() => onDebugNode?.(debugTargetNode)}
+                    >
+                      <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+                        <path d="M8 6v12l10-6z" />
+                      </svg>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    aria-label="关闭节点配置"
+                    className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                    onClick={onCloseNodeConfig}
+                  >
+                    <svg viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.8">
+                      <path d="m6 6 12 12M18 6 6 18" />
+                    </svg>
+                  </button>
+                </div>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
                 {nodeConfigPanel}
@@ -302,48 +352,48 @@ export default function WorkflowEditor({
             <Background gap={[18, 18]} size={1.5} color="#dbe4f0" />
           </ReactFlow>
         </div>
-      </div>
 
-      <NodeContextMenu
-        menu={nodeMenu}
-        onClose={actions.nodeMenu.onClose}
-        onDebug={actions.nodeMenu.onDebug}
-        onCopy={actions.nodeMenu.onCopy}
-        onDuplicate={actions.nodeMenu.onDuplicate}
-        onDelete={actions.nodeMenu.onDelete}
-      />
-      <EdgeContextMenu
-        menu={edgeMenu}
-        onClose={actions.edgeMenu.onClose}
-        onDelete={actions.edgeMenu.onDelete}
-      />
-      <PanelContextMenu
-        menu={panelMenu}
-        canPaste={canPaste}
-        onClose={actions.panelMenu.onClose}
-        onPaste={actions.panelMenu.onPaste}
-        onExport={actions.panelMenu.onExport}
-        onImport={actions.panelMenu.onImport}
-      />
-      <SelectionContextMenu
-        menu={selectionMenu}
-        onClose={actions.selectionMenu.onClose}
-        onCopy={actions.selectionMenu.onCopy}
-        onDuplicate={actions.selectionMenu.onDuplicate}
-        onDelete={actions.selectionMenu.onDelete}
-        onAlignLeft={() => actions.selectionMenu.onAlign('left')}
-        onAlignCenter={() => actions.selectionMenu.onAlign('center')}
-        onAlignRight={() => actions.selectionMenu.onAlign('right')}
-        onAlignTop={() => actions.selectionMenu.onAlign('top')}
-        onAlignMiddle={() => actions.selectionMenu.onAlign('middle')}
-        onAlignBottom={() => actions.selectionMenu.onAlign('bottom')}
-        onDistributeHorizontal={() => actions.selectionMenu.onAlign('distributeHorizontal')}
-        onDistributeVertical={() => actions.selectionMenu.onAlign('distributeVertical')}
-      />
+        <NodeContextMenu
+          menu={nodeMenu}
+          onClose={actions.nodeMenu.onClose}
+          onDebug={actions.nodeMenu.onDebug}
+          onCopy={actions.nodeMenu.onCopy}
+          onDuplicate={actions.nodeMenu.onDuplicate}
+          onDelete={actions.nodeMenu.onDelete}
+        />
+        <EdgeContextMenu
+          menu={edgeMenu}
+          onClose={actions.edgeMenu.onClose}
+          onDelete={actions.edgeMenu.onDelete}
+        />
+        <PanelContextMenu
+          menu={panelMenu}
+          canPaste={canPaste}
+          onClose={actions.panelMenu.onClose}
+          onPaste={actions.panelMenu.onPaste}
+          onExport={actions.panelMenu.onExport}
+          onImport={actions.panelMenu.onImport}
+        />
+        <SelectionContextMenu
+          menu={selectionMenu}
+          onClose={actions.selectionMenu.onClose}
+          onCopy={actions.selectionMenu.onCopy}
+          onDuplicate={actions.selectionMenu.onDuplicate}
+          onDelete={actions.selectionMenu.onDelete}
+          onAlignLeft={() => actions.selectionMenu.onAlign('left')}
+          onAlignCenter={() => actions.selectionMenu.onAlign('center')}
+          onAlignRight={() => actions.selectionMenu.onAlign('right')}
+          onAlignTop={() => actions.selectionMenu.onAlign('top')}
+          onAlignMiddle={() => actions.selectionMenu.onAlign('middle')}
+          onAlignBottom={() => actions.selectionMenu.onAlign('bottom')}
+          onDistributeHorizontal={() => actions.selectionMenu.onAlign('distributeHorizontal')}
+          onDistributeVertical={() => actions.selectionMenu.onAlign('distributeVertical')}
+        />
+      </div>
       <Drawer
         title="节点配置"
         placement="right"
-        width={380}
+        size={380}
         open={nodeConfigOpen && !showFloatingNodeConfig}
         onClose={onCloseNodeConfig}
         destroyOnHidden={false}

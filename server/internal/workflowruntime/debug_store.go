@@ -51,6 +51,11 @@ func cloneDebugSessionSnapshot(source WorkflowDebugSession) WorkflowDebugSession
 	} else {
 		cloned.Variables = cloneMap(source.Variables)
 	}
+	if debugVariables, cycle := cloneMapForRuntimeJSON(source.DebugVariables, map[uintptr]struct{}{}, map[uintptr]struct{}{}); !cycle && debugVariables != nil {
+		cloned.DebugVariables = debugVariables
+	} else {
+		cloned.DebugVariables = cloneMap(source.DebugVariables)
+	}
 	if lastInput, cycle := cloneMapForRuntimeJSON(source.LastTargetInput, map[uintptr]struct{}{}, map[uintptr]struct{}{}); !cycle && lastInput != nil {
 		cloned.LastTargetInput = lastInput
 	} else {

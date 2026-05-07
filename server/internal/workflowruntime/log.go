@@ -11,6 +11,7 @@ type contextKey string
 
 const (
 	contextKeyRequestID contextKey = "requestId"
+	contextKeyAuthHeader contextKey = "authHeader"
 )
 
 func WithRequestID(ctx context.Context, requestID string) context.Context {
@@ -21,6 +22,16 @@ func WithRequestID(ctx context.Context, requestID string) context.Context {
 		return ctx
 	}
 	return context.WithValue(ctx, contextKeyRequestID, requestID)
+}
+
+func WithAuthHeader(ctx context.Context, authHeader string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if authHeader == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, contextKeyAuthHeader, authHeader)
 }
 
 func requestIDFromContext(ctx context.Context) string {

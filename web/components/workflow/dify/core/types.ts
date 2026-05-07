@@ -126,6 +126,7 @@ export type IterationNodeConfig = {
   joinMode?: 'all' | 'any'
   fanOutMode?: FanOutMode
   iteratorSource: string
+  outputSource: string
   outputVar: string
   itemVar: string
   indexVar: string
@@ -289,6 +290,7 @@ export type DifyNodeData = {
   _runningStatus?: NodeRunningStatus
   _connectedSourceHandleIds?: string[]
   _connectedTargetHandleIds?: string[]
+  _debugExecuted?: boolean
 }
 
 export type DifyEdgeData = {

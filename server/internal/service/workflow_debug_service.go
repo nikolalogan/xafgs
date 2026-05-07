@@ -14,6 +14,7 @@ type WorkflowDebugService interface {
 	Continue(ctx context.Context, input workflowruntime.ContinueDebugSessionInput, requesterID int64, role string) (workflowruntime.WorkflowDebugSession, *model.APIError)
 	RerunTarget(ctx context.Context, input workflowruntime.RerunDebugTargetInput, requesterID int64, role string) (workflowruntime.WorkflowDebugSession, *model.APIError)
 	Rebuild(ctx context.Context, input workflowruntime.RebuildDebugSessionInput, requesterID int64, role string) (workflowruntime.WorkflowDebugSession, *model.APIError)
+	ExecuteNodeOnce(ctx context.Context, input workflowruntime.ExecuteDebugNodeOnceInput, requesterID int64, role string) (workflowruntime.ExecuteDebugNodeOnceResult, *model.APIError)
 }
 
 type workflowDebugService struct {
@@ -81,6 +82,17 @@ func (service *workflowDebugService) Rebuild(ctx context.Context, input workflow
 		return workflowruntime.WorkflowDebugSession{}, model.NewAPIError(400, response.CodeBadRequest, err.Error())
 	}
 	return session, nil
+}
+
+func (service *workflowDebugService) ExecuteNodeOnce(ctx context.Context, input workflowruntime.ExecuteDebugNodeOnceInput, requesterID int64, role string) (workflowruntime.ExecuteDebugNodeOnceResult, *model.APIError) {
+	if requesterID <= 0 && !isAdminRole(role) {
+		return workflowruntime.ExecuteDebugNodeOnceResult{}, model.NewAPIError(403, response.CodeForbidden, "无权限执行节点调试")
+	}
+	result, err := service.runtime.ExecuteDebugNodeOnce(ctx, input)
+	if err != nil {
+		return workflowruntime.ExecuteDebugNodeOnceResult{}, model.NewAPIError(400, response.CodeBadRequest, err.Error())
+	}
+	return result, nil
 }
 
 func canAccessDebugSession(session *workflowruntime.WorkflowDebugSession, requesterID int64, role string) bool {

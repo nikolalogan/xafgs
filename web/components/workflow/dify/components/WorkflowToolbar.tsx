@@ -7,6 +7,7 @@ type WorkflowToolbarProps = {
   onUndo: () => void
   onRedo: () => void
   onLayout: () => void
+  onSave: () => void
   onOpenGlobalParams: () => void
   onOpenWorkflowParams: () => void
   onOpenChecklist: () => void
@@ -24,6 +25,7 @@ export default function WorkflowToolbar({
   onUndo,
   onRedo,
   onLayout,
+  onSave,
   onOpenGlobalParams,
   onOpenWorkflowParams,
   onOpenChecklist,
@@ -37,6 +39,7 @@ export default function WorkflowToolbar({
     undo: onUndo,
     redo: onRedo,
     layout: onLayout,
+    save: onSave,
     run: onRun,
     globalParams: onOpenGlobalParams,
     workflowParams: onOpenWorkflowParams,

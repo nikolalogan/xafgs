@@ -14,6 +14,7 @@ const getHandleClassName = (emphasize = false) => {
 
 const baseCardClassName = 'group relative overflow-visible rounded-[22px] border border-slate-200/90 bg-white/96 shadow-[0_14px_32px_-24px_rgba(15,23,42,0.45)] transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_24px_44px_-28px_rgba(15,23,42,0.35)]'
 const selectedCardClassName = 'border-sky-400 shadow-[0_0_0_4px_rgba(56,189,248,0.14),0_24px_44px_-28px_rgba(14,116,144,0.36)]'
+const debugExecutedCardClassName = 'border-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.12),0_24px_44px_-28px_rgba(5,150,105,0.28)]'
 
 const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
   const isStart = data.type === BlockEnum.Start
@@ -24,6 +25,7 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
   const subtitle = getWorkflowNodeSubtitle(data)
   const sourceConnected = Boolean(data._connectedSourceHandleIds?.length)
   const targetConnected = Boolean(data._connectedTargetHandleIds?.length)
+  const isDebugExecuted = Boolean(data._debugExecuted)
   const sourceHandleClassName = getHandleClassName(selected || sourceConnected)
   const targetHandleClassName = getHandleClassName(selected || targetConnected)
 
@@ -45,8 +47,12 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
   )
 
   if (isIterationContainer) {
+    const iterationCardClassName = [
+      isDebugExecuted ? debugExecutedCardClassName : 'border-slate-200/90 hover:border-violet-200',
+      selected ? 'border-violet-400 shadow-[0_0_0_4px_rgba(139,92,246,0.12),0_26px_52px_-34px_rgba(76,29,149,0.34)]' : '',
+    ].filter(Boolean).join(' ')
     return (
-      <div className={`group relative h-full w-full overflow-hidden rounded-[28px] border bg-white/96 shadow-[0_22px_48px_-34px_rgba(76,29,149,0.35)] ${selected ? 'border-violet-400 shadow-[0_0_0_4px_rgba(139,92,246,0.12),0_26px_52px_-34px_rgba(76,29,149,0.34)]' : 'border-slate-200/90 hover:border-violet-200'}`}>
+      <div className={`group relative h-full w-full overflow-hidden rounded-[28px] border bg-white/96 shadow-[0_22px_48px_-34px_rgba(76,29,149,0.35)] ${iterationCardClassName}`}>
         <Handle id="target" type="target" position={Position.Left} style={{ left: -5, backgroundColor: '#94a3b8' }} className={targetHandleClassName} />
         <div className="border-b border-slate-200/90 bg-[linear-gradient(180deg,#ffffff_0%,#faf5ff_100%)]">
           {renderHeader({ badge: '迭代容器' })}
@@ -84,7 +90,7 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
     ]
 
     return (
-      <div className={`${isIterationChild ? 'w-[250px]' : 'w-[282px]'} ${baseCardClassName} ${selected ? selectedCardClassName : ''}`}>
+      <div className={`${isIterationChild ? 'w-[250px]' : 'w-[282px]'} ${baseCardClassName} ${isDebugExecuted ? debugExecutedCardClassName : ''} ${selected ? selectedCardClassName : ''}`}>
         <Handle id="target" type="target" position={Position.Left} style={{ left: -5, backgroundColor: '#94a3b8' }} className={targetHandleClassName} />
         {renderHeader({ compact: isIterationChild, badge: `${branchItems.length} 路输出` })}
         <div className="space-y-2 px-3.5 pb-3.5 text-xs text-slate-600">
@@ -111,7 +117,7 @@ const CustomNode = ({ data, selected }: NodeProps<DifyNodeData>) => {
   }
 
   return (
-    <div className={`${isIterationChild ? 'w-[224px]' : 'w-[248px]'} ${baseCardClassName} ${selected ? selectedCardClassName : ''}`}>
+    <div className={`${isIterationChild ? 'w-[224px]' : 'w-[248px]'} ${baseCardClassName} ${isDebugExecuted ? debugExecutedCardClassName : ''} ${selected ? selectedCardClassName : ''}`}>
       {!isStart && <Handle id="target" type="target" position={Position.Left} style={{ left: -5, backgroundColor: '#94a3b8' }} className={targetHandleClassName} />}
       {renderHeader({ compact: isIterationChild, badge: isIterationChild ? '子流程' : workflowNodeTypeLabel[data.type] })}
       <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-1.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 ${visual.iconBg}`} />

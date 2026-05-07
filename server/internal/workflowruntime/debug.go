@@ -13,6 +13,8 @@ type StartDebugSessionInput struct {
 	WorkflowID     int64
 	WorkflowDSL    WorkflowDSL
 	Input          map[string]any
+	Mode           DebugSessionMode
+	DebugVariables map[string]any
 	CreatorUserID  int64
 	TargetNodeID   string
 }
@@ -28,8 +30,9 @@ type RerunDebugTargetInput struct {
 }
 
 type RebuildDebugSessionInput struct {
-	SessionID string
-	Input     map[string]any
+	SessionID      string
+	Input          map[string]any
+	DebugVariables map[string]any
 }
 
 type debugRunOptions struct {
@@ -73,7 +76,7 @@ func (runtime *Runtime) ContinueDebugSession(ctx context.Context, store DebugSes
 		return WorkflowDebugSession{}, errors.New("等待输入节点不存在")
 	}
 	if node.Data.Type == "input" {
-		normalized, validateErr := ValidateAndNormalizeDynamicInput(ParseInputFields(node.Data.Config), resumeInput)
+		normalized, validateErr := ValidateAndNormalizeDynamicInputWithVariables(ParseInputFields(node.Data.Config), resumeInput, session.DebugVariables)
 		if validateErr != nil {
 			return WorkflowDebugSession{}, validateErr
 		}
@@ -122,11 +125,13 @@ func (runtime *Runtime) RebuildDebugSession(ctx context.Context, store DebugSess
 		return WorkflowDebugSession{}, errors.New("debug session 不存在")
 	}
 	next, err := runtime.buildDebugSession(StartDebugSessionInput{
-		WorkflowID:    session.WorkflowID,
-		WorkflowDSL:   session.WorkflowDSL,
-		Input:         input.Input,
-		CreatorUserID: session.CreatorUserID,
-		TargetNodeID:  session.TargetNodeID,
+		WorkflowID:     session.WorkflowID,
+		WorkflowDSL:    session.WorkflowDSL,
+		Input:          input.Input,
+		Mode:           session.Mode,
+		DebugVariables: input.DebugVariables,
+		CreatorUserID:  session.CreatorUserID,
+		TargetNodeID:   session.TargetNodeID,
 	})
 	if err != nil {
 		return WorkflowDebugSession{}, err
@@ -138,6 +143,75 @@ func (runtime *Runtime) RebuildDebugSession(ctx context.Context, store DebugSess
 		return WorkflowDebugSession{}, err
 	}
 	return result, nil
+}
+
+func (runtime *Runtime) ExecuteDebugNodeOnce(ctx context.Context, input ExecuteDebugNodeOnceInput) (ExecuteDebugNodeOnceResult, error) {
+	if input.WorkflowID <= 0 {
+		return ExecuteDebugNodeOnceResult{}, errors.New("workflowId 不能为空")
+	}
+	targetNodeID := strings.TrimSpace(input.TargetNodeID)
+	if targetNodeID == "" {
+		return ExecuteDebugNodeOnceResult{}, errors.New("targetNodeId 不能为空")
+	}
+	if len(input.WorkflowDSL.Nodes) == 0 {
+		return ExecuteDebugNodeOnceResult{}, errors.New("workflowDsl 不能为空")
+	}
+	targetNode, ok := findNodeByID(input.WorkflowDSL.Nodes, targetNodeID)
+	if !ok {
+		return ExecuteDebugNodeOnceResult{}, errors.New("targetNodeId 不存在")
+	}
+
+	variables := cloneMap(input.DebugVariables)
+	if variables == nil {
+		variables = map[string]any{}
+	}
+	for key, value := range input.StartInput {
+		variables[key] = value
+	}
+	applyDSLDefaults(variables, input.WorkflowDSL)
+	ensureReservedVariableRoots(variables, input.WorkflowDSL)
+
+	executor := runtime.executors[targetNode.Data.Type]
+	if executor == nil {
+		executor = runtime.executors["start"]
+	}
+	nodeInputSnapshot := map[string]any{"variables": cloneMap(variables), "nodeInput": cloneMap(input.NodeInput)}
+	result, executeErr := executor.Execute(ctx, NodeExecutorContext{
+		Node:      targetNode,
+		Variables: variables,
+		NodeInput: cloneMap(input.NodeInput),
+	})
+	if executeErr != nil {
+		return ExecuteDebugNodeOnceResult{}, executeErr
+	}
+	if result.Type == NodeExecutorResultWaitingInput {
+		return ExecuteDebugNodeOnceResult{
+			NodeInput:             nodeInputSnapshot,
+			Error:                 "当前节点需要输入参数",
+			UpdatedDebugVariables: cloneMap(variables),
+		}, nil
+	}
+	if result.Type == NodeExecutorResultFailed {
+		return ExecuteDebugNodeOnceResult{
+			NodeInput:             nodeInputSnapshot,
+			Error:                 result.Error,
+			UpdatedDebugVariables: cloneMap(variables),
+		}, nil
+	}
+
+	output := defaultMap(result.Output)
+	if targetNodeID != "start" {
+		variables[targetNodeID] = mapOutputByWritebacks(output, result.Writebacks)
+	}
+	applyWritebacks(variables, result.Writebacks, writebackApplyOptions{ProtectReservedRoots: true})
+	ensureReservedVariableRoots(variables, input.WorkflowDSL)
+
+	return ExecuteDebugNodeOnceResult{
+		NodeInput:             nodeInputSnapshot,
+		NodeOutput:            mapOutputByWritebacks(output, result.Writebacks),
+		Writebacks:            append([]Writeback{}, result.Writebacks...),
+		UpdatedDebugVariables: cloneMap(variables),
+	}, nil
 }
 
 func (runtime *Runtime) buildDebugSession(input StartDebugSessionInput) (WorkflowDebugSession, error) {
@@ -167,15 +241,26 @@ func (runtime *Runtime) buildDebugSession(input StartDebugSessionInput) (Workflo
 	}
 	applyDSLDefaults(variables, input.WorkflowDSL)
 	ensureReservedVariableRoots(variables, input.WorkflowDSL)
+	mode := input.Mode
+	if mode != DebugSessionModeNodeOnly && mode != DebugSessionModeDependencyChain {
+		mode = DebugSessionModeDependencyChain
+	}
+	debugVariables := cloneMap(input.DebugVariables)
+	if debugVariables == nil {
+		debugVariables = cloneMap(variables)
+	}
+	ensureReservedVariableRoots(debugVariables, input.WorkflowDSL)
 
 	session := WorkflowDebugSession{
 		ID:                         uuid.NewString(),
 		WorkflowID:                 input.WorkflowID,
 		CreatorUserID:              input.CreatorUserID,
 		TargetNodeID:               targetNodeID,
+		Mode:                       mode,
 		Status:                     DebugSessionStatusReady,
 		WorkflowDSL:                input.WorkflowDSL,
 		WorkflowParametersSnapshot: append([]WorkflowParameter{}, input.WorkflowDSL.WorkflowParameters...),
+		DebugVariables:             debugVariables,
 		Variables:                  variables,
 		NodeStates:                 nodeStates,
 		CreatedAt:                  now,
@@ -206,12 +291,19 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 	}
 
 	requiredNodes := collectDebugRequiredNodes(session.TargetNodeID, session.WorkflowDSL.Edges)
+	if session.Mode == DebugSessionModeNodeOnly {
+		requiredNodes = map[string]bool{session.TargetNodeID: true}
+	}
 	plan := BuildExecutionPlan(session.WorkflowDSL)
 	maxSteps := int(math.Max(float64(len(plan)*8), 32))
 
 	next := cloneDebugSessionSnapshot(session)
 	next.NodeStates = cloneNodeStates(session.NodeStates)
-	next.Variables = cloneMap(session.Variables)
+	if session.Mode == DebugSessionModeNodeOnly {
+		next.Variables = cloneMap(session.DebugVariables)
+	} else {
+		next.Variables = cloneMap(session.Variables)
+	}
 	next.WaitingInput = nil
 	next.LastTargetInput = nil
 	next.LastTargetOutput = nil
@@ -219,6 +311,9 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 	next.Error = ""
 	next.UpdatedAt = NowISO()
 	ensureReservedVariableRoots(next.Variables, next.WorkflowDSL)
+	if session.Mode == DebugSessionModeNodeOnly {
+		next.DebugVariables = cloneMap(next.Variables)
+	}
 	resetDebugTargetState(&next)
 
 	queue := []string{}
@@ -302,6 +397,8 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 	if options.ResumedNodeID != "" {
 		queue = append(queue, options.ResumedNodeID)
 		pushed[options.ResumedNodeID] = true
+	} else if session.Mode == DebugSessionModeNodeOnly {
+		enqueue(next.TargetNodeID)
 	} else {
 		for _, nodeID := range plan {
 			state := next.NodeStates[nodeID]
@@ -419,11 +516,15 @@ func (runtime *Runtime) runDebugSession(ctx context.Context, session WorkflowDeb
 			succeededState.EndedAt = NowISO()
 			next.NodeStates[nodeID] = succeededState
 			output := defaultMap(result.Output)
-			next.Variables[nodeID] = output
-			next.applyDebugWritebacks(result.Writebacks)
+			mappedOutput := mapOutputByWritebacks(output, result.Writebacks)
+			next.Variables[nodeID] = mappedOutput
+			applyWritebacks(next.Variables, result.Writebacks, writebackApplyOptions{ProtectReservedRoots: true})
 			ensureReservedVariableRoots(next.Variables, next.WorkflowDSL)
+			if next.Mode == DebugSessionModeNodeOnly {
+				next.DebugVariables = cloneMap(next.Variables)
+			}
 			if nodeID == next.TargetNodeID {
-				next.LastTargetOutput = cloneMap(output)
+				next.LastTargetOutput = mappedOutput
 				next.LastWritebacks = append([]Writeback{}, result.Writebacks...)
 				next.Status = DebugSessionStatusTargetSucceeded
 				next.UpdatedAt = NowISO()
@@ -507,34 +608,4 @@ func resetDebugTargetState(session *WorkflowDebugSession) {
 	state.EndedAt = ""
 	state.Error = ""
 	session.NodeStates[session.TargetNodeID] = state
-}
-
-func (session *WorkflowDebugSession) applyDebugWritebacks(writebacks []Writeback) {
-	for _, mapping := range writebacks {
-		targetPath := strings.TrimSpace(mapping.TargetPath)
-		if targetPath == "" || targetPath == "workflow" || targetPath == "global" || targetPath == "user" {
-			continue
-		}
-		if strings.HasSuffix(targetPath, "[]") {
-			if incoming, ok := mapping.Value.([]any); ok {
-				appendPath := strings.TrimSuffix(strings.TrimSuffix(targetPath, "[]"), ".")
-				existing, found := getByPath(session.Variables, appendPath)
-				switch typed := existing.(type) {
-				case []any:
-					combined := make([]any, 0, len(typed)+len(incoming))
-					combined = append(combined, typed...)
-					combined = append(combined, incoming...)
-					setByPath(session.Variables, appendPath, combined)
-				default:
-					if found {
-						setByPath(session.Variables, appendPath, incoming)
-					} else {
-						setByPath(session.Variables, appendPath, incoming)
-					}
-				}
-				continue
-			}
-		}
-		setByPath(session.Variables, targetPath, mapping.Value)
-	}
 }

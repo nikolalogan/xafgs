@@ -138,6 +138,7 @@ export const demoDSL: DifyWorkflowDSL = {
         type: BlockEnum.Iteration,
         config: {
           iteratorSource: '{{workflow.items}}',
+          outputSource: '{{iter-code.result}}',
           outputVar: 'results',
           itemVar: 'item',
           indexVar: 'index',

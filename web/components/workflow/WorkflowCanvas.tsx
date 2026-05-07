@@ -337,6 +337,10 @@ function WorkflowCanvasInner({ initialDSL, workflowId, currentPublishedVersionNo
   const [runSnapshot, setRunSnapshot] = useState<WorkflowRunSnapshot>({ workflowId, nodes: [], edges: [], objectTypes: [], globalVariables: [], workflowParameters: [] })
   const [debugModalOpen, setDebugModalOpen] = useState(false)
   const [debugSnapshot, setDebugSnapshot] = useState<WorkflowDebugSnapshot>({ workflowId, workflowDsl: null, targetNode: null })
+  const [debugVariableOpen, setDebugVariableOpen] = useState(false)
+  const [debugVariables, setDebugVariables] = useState<Record<string, unknown>>({})
+  const [recentDebugVariables, setRecentDebugVariables] = useState<Record<string, unknown> | null>(null)
+  const [debugExecutedNodeIds, setDebugExecutedNodeIds] = useState<Set<string>>(new Set())
   const [nodeConfigOpen, setNodeConfigOpen] = useState(false)
   const [nodesForPanel, setNodesForPanel] = useState<DifyNode[]>([])
   const [llmModelOptions, setLLMModelOptions] = useState<Array<{ name: string; label: string }>>([{ name: 'gpt-4o-mini', label: 'GPT-4o mini' }])
@@ -765,7 +769,13 @@ function WorkflowCanvasInner({ initialDSL, workflowId, currentPublishedVersionNo
     const mergedNodes: DifyNode[] = []
     nodes.forEach((node) => {
       if (node.data.type !== BlockEnum.Iteration) {
-        mergedNodes.push(node)
+        mergedNodes.push({
+          ...node,
+          data: {
+            ...node.data,
+            _debugExecuted: debugExecutedNodeIds.has(node.id),
+          },
+        })
         return
       }
 
@@ -782,6 +792,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, currentPublishedVersionNo
         data: {
           ...node.data,
           _iterationRole: 'container',
+          _debugExecuted: debugExecutedNodeIds.has(node.id),
         },
       })
 
@@ -809,7 +820,7 @@ function WorkflowCanvasInner({ initialDSL, workflowId, currentPublishedVersionNo
       })
     })
     return mergedNodes
-  }, [iterationLayouts, nodes])
+  }, [debugExecutedNodeIds, iterationLayouts, nodes])
 
   const renderEdges = useMemo(() => {
     const mergedEdges: DifyEdge[] = edges.map(edge => ({
@@ -1409,6 +1420,8 @@ function WorkflowCanvasInner({ initialDSL, workflowId, currentPublishedVersionNo
             title="工作流工作台"
             subtitle="保留现有 Dify DSL、右键菜单、运行与保存链路，只重做核心画布工作区。"
             activeNodeTitle={activeNode?.data.title}
+            debugTargetNode={debugTargetNode}
+            onDebugNode={openDebugModal}
             statusBadges={[
               `${nodes.length} 个节点`,
               `${edges.length} 条连线`,
@@ -1429,7 +1442,6 @@ function WorkflowCanvasInner({ initialDSL, workflowId, currentPublishedVersionNo
                 onChange={setActiveNode}
                 onChangeScopes={setWorkflowVariableScopes}
                 onFocusIterationRegion={handleFocusIterationRegion}
-                onDebugNode={openDebugModal}
                 onSave={handleSaveActiveNode}
               />
             )}
@@ -1456,17 +1468,20 @@ function WorkflowCanvasInner({ initialDSL, workflowId, currentPublishedVersionNo
                 }}
                 onOpenGlobalParams={() => {
                   setWorkflowParamsOpen(false)
+                  setDebugVariableOpen(false)
                   setChecklistOpen(false)
                   setGlobalVariableOpen(true)
                 }}
                 onOpenWorkflowParams={() => {
                   setGlobalVariableOpen(false)
+                  setDebugVariableOpen(false)
                   setChecklistOpen(false)
                   setWorkflowParamsOpen(true)
                 }}
                 onOpenChecklist={() => {
                   setGlobalVariableOpen(false)
                   setWorkflowParamsOpen(false)
+                  setDebugVariableOpen(false)
                   setChecklistOpen(true)
                 }}
                 onOpenAINodeGenerate={() => setAINodeGenerateOpen(true)}
@@ -1537,31 +1552,50 @@ function WorkflowCanvasInner({ initialDSL, workflowId, currentPublishedVersionNo
               quickPanel: {
                 globalVariableOpen,
                 workflowParamsOpen,
+                debugVariableOpen,
                 checklistOpen,
                 issueCount: issues.length,
                 objectTypes,
                 globalVariables,
                 workflowParameters,
+                debugVariables,
+                recentDebugVariables,
                 issues,
                 onOpenGlobalVariables: () => {
                   setWorkflowParamsOpen(false)
+                  setDebugVariableOpen(false)
                   setChecklistOpen(false)
                   setGlobalVariableOpen(true)
                 },
                 onOpenWorkflowParams: () => {
                   setGlobalVariableOpen(false)
+                  setDebugVariableOpen(false)
                   setChecklistOpen(false)
                   setWorkflowParamsOpen(true)
+                },
+                onOpenDebugVariables: () => {
+                  setGlobalVariableOpen(false)
+                  setWorkflowParamsOpen(false)
+                  setChecklistOpen(false)
+                  setDebugVariableOpen(true)
                 },
                 onOpenChecklist: () => {
                   setGlobalVariableOpen(false)
                   setWorkflowParamsOpen(false)
+                  setDebugVariableOpen(false)
                   setChecklistOpen(true)
                 },
                 onCloseGlobalVariables: () => setGlobalVariableOpen(false),
                 onCloseWorkflowParams: () => setWorkflowParamsOpen(false),
+                onCloseDebugVariables: () => setDebugVariableOpen(false),
                 onChangeObjectTypes: setObjectTypes,
                 onChangeWorkflowParams: setWorkflowParameters,
+                onChangeDebugVariables: setDebugVariables,
+                onFillDebugVariablesFromRecent: () => {
+                  if (recentDebugVariables)
+                    setDebugVariables(JSON.parse(JSON.stringify(recentDebugVariables)) as Record<string, unknown>)
+                },
+                onClearDebugVariables: () => setDebugVariables({}),
                 onCloseChecklist: () => setChecklistOpen(false),
                 onLocateIssueNode: handleLocateNode,
               },
@@ -1611,6 +1645,18 @@ function WorkflowCanvasInner({ initialDSL, workflowId, currentPublishedVersionNo
         workflowId={debugSnapshot.workflowId}
         workflowDsl={debugSnapshot.workflowDsl}
         targetNode={debugSnapshot.targetNode}
+        debugVariables={debugVariables}
+        onUpdateDebugVariables={setDebugVariables}
+        onSessionDebugVariables={(vars) => setRecentDebugVariables(vars)}
+        onDebugSuccess={(nodeId) => {
+          setDebugExecutedNodeIds((prev) => {
+            if (prev.has(nodeId))
+              return prev
+            const next = new Set(prev)
+            next.add(nodeId)
+            return next
+          })
+        }}
         onClose={() => setDebugModalOpen(false)}
       />
     </div>

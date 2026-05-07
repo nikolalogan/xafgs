@@ -18,7 +18,7 @@ export default function GlobalVariablePanel({
 
   if (mode === 'panel') {
     return (
-      <div className="w-[360px] rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
+      <div className="w-[360px] rounded-[28px] border border-white/80 bg-white/90 p-3 shadow-[0_28px_80px_-40px_rgba(15,23,42,0.5)] backdrop-blur">
         <div className="mb-2 flex items-center justify-between">
           <div className="text-sm font-semibold">全局参数</div>
           <button onClick={onClose} className="rounded border border-gray-300 px-2 py-1 text-xs">关闭</button>

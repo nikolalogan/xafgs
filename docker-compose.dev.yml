@@ -64,7 +64,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: docker.1panel.live/library/postgres:17-alpine
+    image: docker.1panel.live/pgvector/pgvector:pg17
     ports:
       - "5432:5432"
     environment:

@@ -8,6 +8,7 @@ import 'reactflow/dist/style.css'
 import { CUSTOM_EDGE, CUSTOM_NODE } from '../core/constants'
 import { type DynamicField } from '../core/dynamic-form-rules'
 import { ensureNodeConfig } from '../core/node-config'
+import { buildInitialFormValues } from '../core/runtime-template'
 import { edgeTypes, nodeTypes } from '../config/workflowPreset'
 import { validateWorkflow } from '../core/validation'
 import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowGlobalVariable, type WorkflowObjectType, type WorkflowParameter } from '../core/types'
@@ -861,20 +862,12 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], glob
   }, [])
 
   useEffect(() => {
-    const nextInput: Record<string, unknown> = {}
-    startFields.forEach((field) => {
-      nextInput[field.name] = field.defaultValue ?? (field.type === 'checkbox' ? false : '')
-    })
-    setStartInput(nextInput)
-  }, [startFields])
+    setStartInput(buildInitialFormValues(startFields, (execution?.variables ?? {}) as Record<string, unknown>))
+  }, [execution?.variables, startFields])
 
   useEffect(() => {
-    const nextInput: Record<string, unknown> = {}
-    waitingFields.forEach((field) => {
-      nextInput[field.name] = field.defaultValue ?? (field.type === 'checkbox' ? false : '')
-    })
-    setWaitingInput(nextInput)
-  }, [waitingFields])
+    setWaitingInput(buildInitialFormValues(waitingFields, (execution?.variables ?? {}) as Record<string, unknown>))
+  }, [execution?.variables, waitingFields])
 
   useEffect(() => {
     setEndRendered({})

@@ -40,7 +40,6 @@ type NodeConfigPanelProps = {
   onChange: (node: DifyNode) => void
   onChangeScopes: (scopes: Record<string, WorkflowVariableScope>) => void
   onFocusIterationRegion: (nodeId: string) => void
-  onDebugNode?: (node: DifyNode) => void
   onSave: () => void
 }
 
@@ -683,9 +682,9 @@ export default function NodeConfigPanel({
   onChange,
   onChangeScopes,
   onFocusIterationRegion,
-  onDebugNode,
   onSave,
 }: NodeConfigPanelProps) {
+  const panelRef = useRef<HTMLDivElement | null>(null)
   const [templateOptions, setTemplateOptions] = useState<TemplateOption[]>([])
   const [apiRoutes, setApiRoutes] = useState<APIRouteDoc[]>([])
   const [apiRoutesError, setApiRoutesError] = useState('')
@@ -3144,7 +3143,19 @@ export default function NodeConfigPanel({
   }
 
   return (
-    <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.35)]">
+    <div
+      ref={panelRef}
+      className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.35)]"
+      onBlurCapture={(event) => {
+        const nextFocused = event.relatedTarget
+        const container = panelRef.current
+        if (!container)
+          return
+        if (nextFocused instanceof Node && container.contains(nextFocused))
+          return
+        onSave()
+      }}
+    >
       <div className="mb-2 text-sm font-semibold">节点配置</div>
       <div className="space-y-2">
         <label className={labelClass}>标题</label>
@@ -3162,10 +3173,6 @@ export default function NodeConfigPanel({
         {renderJoinModeConfig()}
         {renderFanOutModeConfig()}
         {renderNodeSpecificConfig()}
-        {activeNode.data._iterationRole !== 'child' && (
-          <button type="button" onClick={() => activeNode && onDebugNode?.(activeNode)} className="w-full rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 hover:bg-amber-100">调试当前节点</button>
-        )}
-        <button type="button" onClick={onSave} className="w-full rounded bg-blue-600 px-3 py-2 text-xs text-white hover:bg-blue-700">保存节点配置</button>
       </div>
     </div>
   )

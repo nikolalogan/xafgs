@@ -95,6 +95,10 @@ func NewApp() (*fiber.App, Config) {
 	fileRepository := repository.NewFileRepository()
 	templateRepository := repository.NewTemplateRepository()
 	chatRepository := repository.NewChatRepository()
+	reportingRepository := repository.NewReportingRepository()
+	adminDivisionRepository := repository.NewAdminDivisionRepository()
+	debugFeedbackRepository := repository.NewDebugFeedbackRepository()
+	var knowledgeRepository repository.KnowledgeRepository
 	authRepository := repository.NewAuthRepository(cfg.APIToken)
 
 	dsnConfigured := strings.TrimSpace(os.Getenv("DATABASE_URL")) != ""
@@ -123,6 +127,9 @@ func NewApp() (*fiber.App, Config) {
 			fileRepository = repository.NewPostgresFileRepository(result.DB)
 			templateRepository = repository.NewPostgresTemplateRepository(result.DB)
 			chatRepository = repository.NewPostgresChatRepository(result.DB)
+			adminDivisionRepository = repository.NewPostgresAdminDivisionRepository(result.DB)
+			debugFeedbackRepository = repository.NewPostgresDebugFeedbackRepository(result.DB)
+			knowledgeRepository = repository.NewPostgresKnowledgeRepository(result.DB)
 			if err := db.Seed(ctx, result.DB); err != nil {
 				log.Printf("PostgreSQL Seed 失败: %v", err)
 			}
@@ -138,11 +145,20 @@ func NewApp() (*fiber.App, Config) {
 	regionService := service.NewRegionService(regionRepository)
 	fileStorage := service.NewLocalFileStorage(cfg.FileStorageRoot)
 	fileService := service.NewFileService(fileRepository, fileStorage)
+	ocrClient := service.NewHTTPOCRClient()
+	ocrTaskService := service.NewOCRTaskService(fileRepository, ocrClient)
+	ocrProvider := service.NewNoopOCRProvider()
+	documentParseService := service.NewDocumentParseService(fileService, ocrProvider, ocrTaskService)
+	embeddingClient := ai.NewOpenAICompatEmbeddingClient(nil)
+	knowledgeService := service.NewKnowledgeService(knowledgeRepository, fileRepository, fileService, userConfigService, documentParseService, embeddingClient)
+	reportingService := service.NewReportingService(reportingRepository, fileRepository, documentParseService)
+	adminDivisionService := service.NewAdminDivisionService(adminDivisionRepository)
+	debugFeedbackService := service.NewDebugFeedbackService(debugFeedbackRepository, userRepository, fileRepository, fileService)
 	templateRenderer := service.NewGonjaTemplateRenderer()
 	templateService := service.NewTemplateService(templateRepository, templateRenderer)
 	aiClient := ai.NewOpenAICompatClient(nil)
 	webSearchClient := service.NewTavilySearchClient(nil)
-	chatService := service.NewChatService(chatRepository, systemConfigService, userConfigService, fileService, webSearchClient, aiClient)
+	chatService := service.NewChatService(chatRepository, systemConfigService, userConfigService, fileService, webSearchClient, aiClient, knowledgeService)
 	workflowCodeGenerateService := service.NewWorkflowCodeGenerateService(userConfigService, systemConfigService, aiClient)
 	workflowNodeGenerateService := service.NewWorkflowNodeGenerateService(userConfigService, systemConfigService, aiClient)
 	workflowDSLGenerateService := service.NewWorkflowDSLGenerateService(userConfigService, systemConfigService, fileService, aiClient)
@@ -166,11 +182,15 @@ func NewApp() (*fiber.App, Config) {
 	workflowHandler := handler.NewWorkflowHandler(workflowService, apiRegistry)
 	enterpriseHandler := handler.NewEnterpriseHandler(enterpriseService, apiRegistry)
 	regionHandler := handler.NewRegionHandler(regionService, apiRegistry)
+	adminDivisionHandler := handler.NewAdminDivisionHandler(adminDivisionService, apiRegistry)
 	workflowExecutionHandler := handler.NewWorkflowExecutionHandler(workflowExecutionService, workflowService, workflowExecutionRateLimiter, userConfigService, apiRegistry)
 	workflowDebugHandler := handler.NewWorkflowDebugHandler(workflowDebugService, workflowService, userConfigService, apiRegistry)
-	fileHandler := handler.NewFileHandler(fileService, apiRegistry)
+	fileHandler := handler.NewFileHandler(fileService, documentParseService, ocrTaskService, apiRegistry)
 	templateHandler := handler.NewTemplateHandler(templateService, apiRegistry)
+	reportingHandler := handler.NewReportingHandler(reportingService, apiRegistry)
 	chatHandler := handler.NewChatHandler(chatService, apiRegistry)
+	knowledgeHandler := handler.NewKnowledgeHandler(knowledgeService, apiRegistry)
+	debugFeedbackHandler := handler.NewDebugFeedbackHandler(debugFeedbackService, apiRegistry)
 	workflowCodeGenerateHandler := handler.NewWorkflowCodeGenerateHandler(workflowCodeGenerateService, apiRegistry)
 	workflowNodeGenerateHandler := handler.NewWorkflowNodeGenerateHandler(workflowNodeGenerateService, apiRegistry)
 	workflowDSLGenerateHandler := handler.NewWorkflowDSLGenerateHandler(workflowDSLGenerateService, apiRegistry)
@@ -180,7 +200,7 @@ func NewApp() (*fiber.App, Config) {
 	app.Use(traceMiddleware.Handler())
 
 	apiMetaHandler := handler.NewAPIMetaHandler(apiRegistry, traceStore)
-	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, workflowDebugHandler, fileHandler, templateHandler, enterpriseHandler, regionHandler, apiMetaHandler, userConfigHandler, chatHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
+	handler.RegisterRoutes(api, healthHandler, authHandler, userHandler, systemConfigHandler, workflowCodeGenerateHandler, workflowNodeGenerateHandler, workflowDSLGenerateHandler, workflowHandler, workflowExecutionHandler, workflowDebugHandler, fileHandler, templateHandler, reportingHandler, enterpriseHandler, regionHandler, adminDivisionHandler, apiMetaHandler, userConfigHandler, chatHandler, knowledgeHandler, debugFeedbackHandler, authMiddleware.Require, authMiddleware.RequireAdmin)
 
 	return app, cfg
 }
