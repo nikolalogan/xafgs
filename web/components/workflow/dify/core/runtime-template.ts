@@ -67,3 +67,34 @@ export const buildInitialFormValues = (
   })
   return nextInput
 }
+
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
+
+type ResolveTemplatePreviewContextInput = {
+  endNodeId?: string
+  preferredEndOutput?: unknown
+  outputs?: unknown
+  variables?: unknown
+}
+
+export const resolveTemplatePreviewContext = (input: ResolveTemplatePreviewContextInput): Record<string, unknown> => {
+  const outputs = isObject(input.outputs) ? input.outputs : {}
+  const variables = isObject(input.variables) ? input.variables : {}
+  const endNodeID = String(input.endNodeId || '').trim()
+
+  const endNodeOutput = endNodeID ? outputs[endNodeID] : undefined
+  const variablesEndNodeOutput = endNodeID ? variables[endNodeID] : undefined
+  const outputsEnd = outputs.end
+
+  if (isObject(endNodeOutput))
+    return endNodeOutput
+  if (isObject(variablesEndNodeOutput))
+    return variablesEndNodeOutput
+  if (isObject(outputsEnd))
+    return outputsEnd
+  if (isObject(input.outputs))
+    return outputs
+  if (isObject(input.preferredEndOutput))
+    return input.preferredEndOutput
+  return { output: input.outputs }
+}

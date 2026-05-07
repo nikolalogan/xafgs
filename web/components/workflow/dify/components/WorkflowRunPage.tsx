@@ -8,7 +8,7 @@ import 'reactflow/dist/style.css'
 import { CUSTOM_EDGE, CUSTOM_NODE } from '../core/constants'
 import { type DynamicField } from '../core/dynamic-form-rules'
 import { ensureNodeConfig } from '../core/node-config'
-import { buildInitialFormValues } from '../core/runtime-template'
+import { buildInitialFormValues, resolveTemplatePreviewContext } from '../core/runtime-template'
 import { edgeTypes, nodeTypes } from '../config/workflowPreset'
 import { validateWorkflow } from '../core/validation'
 import { BlockEnum, NodeRunningStatus, type DifyEdge, type DifyNode, type IterationNodeConfig, type WorkflowGlobalVariable, type WorkflowObjectType, type WorkflowParameter } from '../core/types'
@@ -35,6 +35,7 @@ type WorkflowExecution = {
   status: 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled'
   nodeStates: Record<string, ExecutionNodeState>
   variables: Record<string, unknown>
+  outputs?: Record<string, unknown>
   events?: Array<{
     id: string
     type: string
@@ -1629,11 +1630,12 @@ function WorkflowRunPageInner({ workflowId, nodes, edges, objectTypes = [], glob
         throw new Error(detailPayload.message || '加载模板失败')
 
       const detail = detailPayload.data
-      const runtimeContext = (() => {
-        if (isObject(output))
-          return output
-        return { output }
-      })()
+      const runtimeContext = resolveTemplatePreviewContext({
+        endNodeId: String(node.id || ''),
+        preferredEndOutput: output,
+        outputs: execution.outputs,
+        variables: execution.variables,
+      })
 
       const previewResponse = await fetch('/api/templates/preview', {
         method: 'POST',
