@@ -26,3 +26,6 @@ server/tmp
 /gocache
 /ocr-service/wheels
 *.pyc
+/ocr-table-service/tests
+/ocr-table-service/app/__pycache__
+/ocr-table-service/model_cache

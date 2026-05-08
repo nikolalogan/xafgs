@@ -1,8 +1,9 @@
-.PHONY: help menu dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-model-cache-init ocr-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback
+.PHONY: help menu dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-table-wheels-sync ocr-table-wheels-verify ocr-table-build ocr-table-build-offline ocr-table-build-online-fallback ocr-table-model-cache-init ocr-table-rebuild-image ocr-table-cache-warm ocr-table-model-cache-warm ocr-table-layout-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback
 
 ifeq ($(OS),Windows_NT)
 UNAME_S := Windows_NT
 DEV_COMPOSE_FILE := docker-compose.dev.win.yml
+MSYS_NO_PATHCONV_RUN := MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL=*
 else
 UNAME_S := $(shell uname -s 2>/dev/null || echo Unknown)
 ifeq ($(UNAME_S),Darwin)
@@ -10,6 +11,7 @@ DEV_COMPOSE_FILE := docker-compose.dev.mac.yml
 else
 DEV_COMPOSE_FILE := docker-compose.dev.yml
 endif
+MSYS_NO_PATHCONV_RUN :=
 endif
 
 help:
@@ -27,13 +29,19 @@ help:
 	@echo "  make dev-fresh # 兼容旧命令，等同 macdev-fresh"
 	@echo "  make dev-rebuild-backend # 缓存重建开发后端镜像"
 	@echo "  make dev-rebuild-backend-fresh # 无缓存重建开发后端镜像"
-	@echo "  make ocr-wheels-sync # 同步 OCR 依赖到本地 wheels 缓存目录"
-	@echo "  make ocr-wheels-verify # 校验 wheels 是否可离线覆盖依赖闭包"
-	@echo "  make ocr-model-cache-init # 初始化本地 OCR 模型缓存目录"
-	@echo "  make ocr-model-cache-warm # 预热本地 OCR 模型缓存到 model_cache"
-	@echo "  make ocr-build # 自动同步+校验 wheels，再离线构建 OCR 镜像（推荐）"
-	@echo "  make ocr-build-offline # 仅使用本地 wheels 构建 OCR 镜像（缺包即失败）"
-	@echo "  make ocr-build-online-fallback # 自动同步 wheels 后构建 OCR 镜像（允许缺包回源）"
+	@echo "  make ocr-wheels-sync # 同步主 OCR 依赖到本地 wheels 缓存目录"
+	@echo "  make ocr-wheels-verify # 校验主 OCR wheels 是否可离线覆盖依赖闭包"
+	@echo "  make ocr-build # 自动同步+校验 wheels，再离线构建主 OCR 镜像（推荐）"
+	@echo "  make ocr-build-offline # 仅使用本地 wheels 构建主 OCR 镜像（缺包即失败）"
+	@echo "  make ocr-build-online-fallback # 自动同步 wheels 后构建主 OCR 镜像（允许缺包回源）"
+	@echo "  make ocr-table-wheels-sync # 同步表格提取依赖到本地 wheels 缓存目录"
+	@echo "  make ocr-table-wheels-verify # 校验表格提取 wheels 是否可离线覆盖依赖闭包"
+	@echo "  make ocr-table-cache-warm # 预热表格提取模型缓存（layout + structure）"
+	@echo "  make ocr-table-layout-model-cache-warm # 预热 DocLayout-YOLO layout 模型缓存"
+	@echo "  make ocr-table-model-cache-warm # 预热 TATR v1.1-pub 表格结构模型缓存"
+	@echo "  make ocr-table-build # 自动同步+校验 wheels，再离线构建表格提取镜像（推荐）"
+	@echo "  make ocr-table-build-offline # 仅使用本地 wheels 构建表格提取镜像"
+	@echo "  make ocr-table-build-online-fallback # 自动同步 wheels 后构建表格提取镜像（允许缺包回源）"
 	@echo "  make docling-wheels-sync # 同步 Docling Python 依赖到本地 wheels 缓存目录"
 	@echo "  make docling-model-cache-init # 初始化本地 Docling 模型缓存目录"
 	@echo "  make docling-model-cache-warm # 预热本地 Docling 模型缓存到 model_cache"
@@ -103,20 +111,43 @@ ocr-wheels-sync:
 ocr-wheels-verify:
 	bash ocr-service/scripts/verify_wheels.sh
 
-ocr-model-cache-init:
-	mkdir -p ocr-service/model_cache
-
-ocr-model-cache-warm: ocr-model-cache-init
-	docker compose -f $(DEV_COMPOSE_FILE) run --rm ocr-service python /app/scripts/preload_models.py
-
-ocr-build: ocr-model-cache-init ocr-wheels-sync ocr-wheels-verify
+ocr-build: ocr-wheels-sync ocr-wheels-verify
 	OCR_WHEELS_ONLY=1 docker compose -f $(DEV_COMPOSE_FILE) build ocr-service
 
-ocr-build-offline: ocr-model-cache-init ocr-wheels-verify
+ocr-build-offline: ocr-wheels-verify
 	OCR_WHEELS_ONLY=1 docker compose -f $(DEV_COMPOSE_FILE) build ocr-service
 
-ocr-build-online-fallback: ocr-model-cache-init ocr-wheels-sync
+ocr-build-online-fallback: ocr-wheels-sync
 	OCR_WHEELS_ONLY=0 docker compose -f $(DEV_COMPOSE_FILE) build ocr-service
+
+ocr-table-wheels-sync:
+	bash ocr-table-service/scripts/download_wheels.sh
+
+ocr-table-wheels-verify:
+	bash ocr-table-service/scripts/verify_wheels.sh
+
+ocr-table-model-cache-init:
+	mkdir -p ocr-table-service/model_cache
+
+ocr-table-rebuild-image:
+	OCR_TABLE_WHEELS_ONLY=1 docker compose -f $(DEV_COMPOSE_FILE) build ocr-table-service
+
+ocr-table-cache-warm: ocr-table-layout-model-cache-warm ocr-table-model-cache-warm
+
+ocr-table-layout-model-cache-warm: ocr-table-model-cache-init ocr-table-rebuild-image
+	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} ocr-table-service python /app/scripts/preload_table_layout_model.py
+
+ocr-table-model-cache-warm: ocr-table-model-cache-init ocr-table-rebuild-image
+	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} ocr-table-service python /app/scripts/preload_table_structure_model.py
+
+ocr-table-build: ocr-table-model-cache-init ocr-table-wheels-sync ocr-table-wheels-verify
+	OCR_TABLE_WHEELS_ONLY=1 docker compose -f $(DEV_COMPOSE_FILE) build ocr-table-service
+
+ocr-table-build-offline: ocr-table-model-cache-init ocr-table-wheels-verify
+	OCR_TABLE_WHEELS_ONLY=1 docker compose -f $(DEV_COMPOSE_FILE) build ocr-table-service
+
+ocr-table-build-online-fallback: ocr-table-model-cache-init ocr-table-wheels-sync
+	OCR_TABLE_WHEELS_ONLY=0 docker compose -f $(DEV_COMPOSE_FILE) build ocr-table-service
 
 docling-wheels-sync:
 	bash docling-service/scripts/download_wheels.sh
@@ -126,7 +157,7 @@ docling-model-cache-init:
 
 docling-model-cache-warm: docling-model-cache-init docling-wheels-sync
 	DOCLING_WHEELS_ONLY=0 docker compose -f $(DEV_COMPOSE_FILE) build docling-service
-	docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} docling-service python scripts/preload_models.py
+	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} docling-service python scripts/preload_models.py
 
 docling-build: docling-model-cache-init docling-wheels-sync docling-model-cache-warm
 	DOCLING_WHEELS_ONLY=1 docker compose -f $(DEV_COMPOSE_FILE) build docling-service

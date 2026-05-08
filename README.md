@@ -120,13 +120,19 @@ make down
 - `make windev`：Windows 开发模式启动（缓存重建 + 热更新）
 - `make dev-rebuild-backend`：缓存重建开发后端镜像
 - `make dev-rebuild-backend-fresh`：无缓存重建开发后端镜像
-- `make ocr-wheels-sync`：同步 OCR Python 依赖到本地 `ocr-service/wheels/`（增量缓存）
-- `make ocr-wheels-verify`：校验 `wheels` 是否可离线覆盖依赖闭包
-- `make ocr-model-cache-init`：初始化本地 OCR 模型缓存目录 `ocr-service/model_cache`
-- `make ocr-model-cache-warm`：预热 OCR 模型到本地 `model_cache`（避免首个请求触发下载）
-- `make ocr-build`：自动同步+校验 `wheels`，再离线构建 OCR 镜像（推荐）
-- `make ocr-build-offline`：仅使用本地 `wheels` 构建 OCR 镜像（缺失依赖直接失败）
-- `make ocr-build-online-fallback`：自动同步 `wheels` 后构建 OCR 镜像（允许缺失依赖回源下载）
+- `make ocr-wheels-sync`：同步主 OCR Python 依赖到本地 `ocr-service/wheels/`（增量缓存）
+- `make ocr-wheels-verify`：校验主 OCR `wheels` 是否可离线覆盖依赖闭包
+- `make ocr-table-wheels-sync`：同步表格提取依赖到本地 `ocr-table-service/wheels/`（增量缓存）
+- `make ocr-table-wheels-verify`：校验表格提取 `wheels` 是否可离线覆盖依赖闭包
+- `make ocr-table-layout-model-cache-warm`：单独预热 `DocLayout-YOLO` layout 模型缓存
+- `make ocr-table-model-cache-warm`：单独预热 TATR `v1.1-pub` 表格结构模型缓存
+- `make ocr-table-cache-warm`：一次性预热表格提取全部模型缓存（layout + structure）
+- `make ocr-build`：自动同步+校验 `wheels`，再离线构建主 OCR 镜像（推荐）
+- `make ocr-build-offline`：仅使用本地 `wheels` 构建主 OCR 镜像（缺失依赖直接失败）
+- `make ocr-build-online-fallback`：自动同步 `wheels` 后构建主 OCR 镜像（允许缺失依赖回源下载）
+- `make ocr-table-build`：自动同步+校验 `wheels`，再离线构建表格提取镜像（推荐）
+- `make ocr-table-build-offline`：仅使用本地 `wheels` 构建表格提取镜像
+- `make ocr-table-build-online-fallback`：自动同步 `wheels` 后构建表格提取镜像（允许缺失依赖回源）
 - `make docling-wheels-sync`：同步 Docling Python 依赖到本地 `docling-service/wheels/`
 - `make docling-model-cache-init`：初始化本地 Docling 模型缓存目录 `docling-service/model_cache`
 - `make docling-model-cache-warm`：预热 Docling 模型到本地 `model_cache`
@@ -139,41 +145,56 @@ make down
 
 ## OCR 依赖缓存（wheels）
 
-为避免每次构建 OCR 镜像都全量下载大包（如 `paddlepaddle`、`paddleocr`），项目支持本地 `wheels` 增量缓存：
+为避免每次构建 OCR 镜像或表格提取镜像都重复下载依赖，项目支持按服务拆分的本地 `wheels` 增量缓存：
 
 ```bash
-make ocr-wheels-sync
-make ocr-wheels-verify
 make ocr-build
-make ocr-model-cache-warm
+make ocr-table-wheels-sync
+make ocr-table-wheels-verify
+make ocr-table-build
+make ocr-table-cache-warm
+make ocr-table-layout-model-cache-warm
+make ocr-table-model-cache-warm
 ```
 
 说明：
 
-- `make ocr-wheels-sync` 会将依赖下载到 `ocr-service/wheels/`，已存在文件会复用；
-- `ocr-service/wheels/` 仅作为宿主机构建缓存目录，Docker 构建时通过 BuildKit bind mount 挂载，不会被 `COPY` 进最终镜像；
-- 若 `paddlepaddle` 在默认索引不可用，可设置 `PADDLE_WHEEL_INDEX_URL`（默认 `https://www.paddlepaddle.org.cn/packages/stable/cpu/`）补充下载源；
-- `paddlepaddle` 的 wheel 补拉采用 `--no-deps`，仅确保关键 wheel 文件落地，避免主机跨平台依赖解析干扰缓存同步；
-- 已将 `protobuf==4.25.8` 显式纳入 OCR 依赖与离线关键检查，避免 `paddlepaddle` 在离线安装阶段因传递依赖缺失失败；
-- `make ocr-wheels-verify` 默认按 `manylinux_2_17_x86_64 + py311` 离线校验依赖闭包；如需扩展平台可通过 `WHEEL_PLATFORMS_VERIFY` 覆盖；
-- `make ocr-model-cache-warm` 会将 PaddleX 模型下载到本地 `ocr-service/model_cache/`；
-- `make ocr-build` 会先自动同步本地 wheels，再做离线校验与构建，保证可复现；如需临时回源，使用 `make ocr-build-online-fallback`。
-- `docker-compose` 中 `OCR_WHEELS_ONLY` 默认已设为 `1`（本地 wheel 优先且不回源）；仅 `make ocr-build-online-fallback` 会显式传入 `OCR_WHEELS_ONLY=0` 允许回源。
+- 首次启动 `ocr-table-service` 前，必须先执行 `make ocr-table-cache-warm`；若只想分步恢复，至少要依次执行 `make ocr-table-layout-model-cache-warm` 和 `make ocr-table-model-cache-warm`；
+- `make ocr-table-cache-warm` 会一次性预热 `DocLayout-YOLO` layout 与 TATR structure 默认模型；
+- `make ocr-table-layout-model-cache-warm` 会将 `doclayout_yolo_docstructbench_imgsz1024.pt` 预热到宿主机 `ocr-table-service/model_cache/table_extract/layout/`；
+- `make ocr-table-model-cache-warm` 会将 TATR 所需 `config.json`、`preprocessor_config.json`、`processor_config.json`、`model.safetensors` 预热到宿主机 `ocr-table-service/model_cache/table_extract/structure/`；
+- Windows 开发环境对应仓库路径为 `E:\code\xafgs\ocr-table-service\model_cache\table_extract\layout\doclayout_yolo_docstructbench_imgsz1024.pt`；
+- Windows 开发环境对应 structure 路径为 `E:\code\xafgs\ocr-table-service\model_cache\table_extract\structure\`；
+- 预热后可先用 `Get-ChildItem ocr-table-service/model_cache/table_extract/layout -Filter doclayout_yolo_docstructbench_imgsz1024.pt` 或 `find ocr-table-service/model_cache/table_extract/layout -name doclayout_yolo_docstructbench_imgsz1024.pt` 验证 layout 文件存在；
+- 再用 `Get-ChildItem ocr-table-service/model_cache/table_extract/structure -Filter config.json`、`Get-ChildItem ocr-table-service/model_cache/table_extract/structure -Filter preprocessor_config.json`、`Get-ChildItem ocr-table-service/model_cache/table_extract/structure -Filter processor_config.json`、`Get-ChildItem ocr-table-service/model_cache/table_extract/structure -Filter model.safetensors`，或 `find ocr-table-service/model_cache/table_extract/structure -maxdepth 1 \( -name config.json -o -name preprocessor_config.json -o -name processor_config.json -o -name model.safetensors \)` 验证 structure 四个关键文件存在，再启动或重启 `ocr-table-service`；
+- `make ocr-wheels-sync` 会将主 OCR 依赖下载到 `ocr-service/wheels/`，已存在文件会复用；
+- `ocr-service/wheels/` 仅用于主 `ocr-service` 构建缓存；`ocr-table-service/wheels/` 单独缓存表格提取重依赖；
+- `make ocr-wheels-verify` / `make ocr-table-wheels-verify` 默认按 `manylinux_2_17_x86_64 + py311` 离线校验依赖闭包；如需扩展平台可通过 `WHEEL_PLATFORMS_VERIFY` 覆盖；
+- `POST /ocr/table-extract` 当前默认表格结构识别模型为 `microsoft/table-transformer-structure-recognition-v1.1-pub`；
+- 表格提取链路为：整页输入 -> `DocLayout-YOLO` 检测 `table` -> 裁表 -> Hugging Face TATR `v1.1-pub` 结构识别；
+- `make ocr-table-layout-model-cache-warm` 会将 `juliozhao/DocLayout-YOLO-DocStructBench` 的 `doclayout_yolo_docstructbench_imgsz1024.pt` 预热到 `ocr-table-service/model_cache/table_extract/layout/`；
+- `make ocr-table-model-cache-warm` 会将 TATR 所需 `config.json`、`preprocessor_config.json`、`processor_config.json`、`model.safetensors` 预热到 `ocr-table-service/model_cache/table_extract/structure/`；
+- `make ocr-table-cache-warm` 是推荐的首次启动命令，用于一次性补齐 layout + structure 两套默认模型缓存；
+- `ocr-table-service/model_cache/hf/` 用于表格提取链路的 Transformers 缓存；不复用 Docling 的 artifacts 目录；
+- 默认策略改为“预热后运行”：`DocLayout-YOLO` 与默认 TATR structure 模型都不再运行时在线拉取；
+- `ocr-table-service` 现会在启动前预检默认 layout 与默认 structure 缓存；任一缺失都会直接启动失败，并给出 `make ocr-table-layout-model-cache-warm`、`make ocr-table-model-cache-warm`、`make ocr-table-cache-warm`、目标目录和缺失文件名；
+- 若默认 structure 缓存缺少 `processor_config.json`，典型症状是网关 `/ocr/table-extract` 返回 `504`，同时 `ocr-table-service` 日志出现指向 Hugging Face `processor_config.json` 的 `Network is unreachable`；
+- 如果 layout/TATR 模型文件缺失、相关依赖未就绪，或模型加载失败，`/ocr/table-extract` 会明确报错，不做旧模型自动回退；
+- `make ocr-build` 会先自动同步主 OCR wheels，再做离线校验与构建；`make ocr-table-build` 只在需要表格提取时单独构建重型服务。
+- `docker-compose` 中 `OCR_WHEELS_ONLY` 与 `OCR_TABLE_WHEELS_ONLY` 默认均为 `1`（本地 wheel 优先且不回源）；在线回源仅在对应 `*-online-fallback` 命令下显式开启。
 - OCR 不默认采用运行时安装依赖，避免容器启动变慢且将失败暴露到更晚阶段。
 - `ocr-service` 已切换为 GLM OCR 适配服务，默认走项目内 `vllm`（`GLM_BASE_URL` 默认 `http://vllm:8000`），入口保持 `POST /layout-parsing`。
 - `ocr-service` 额外提供 `POST /markdown-ocr`，用于返回可直接嵌入 Docling 结果的 Markdown；同时暴露 KServe v2 兼容端点 `/v2/models/{model}/infer`，供 Docling 远程 OCR 试验接入。
+- `POST /ocr/table-extract` 现在由独立的 `ocr-table-service` 提供；网关按路径透明转发，示例页面仍为 `http://localhost:325/app/table-extract-demo`。
 - 新增 `docling-service`，提供 `POST /convert` 文档转换接口，并通过网关暴露为 `/docling/convert`。
 - CPU 稳定性参数默认启用：`FLAGS_use_mkldnn=0`、`FLAGS_enable_pir_api=0`、`FLAGS_enable_pir_in_executor=0`、`OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`。
 
 ## OCR 模型调用（GLM）
 
-为避免模型每次重新下载，已启用两层缓存：
+GLM OCR 主服务本身不再内置重模型缓存；模型由项目内 `vllm` 容器负责加载和复用。表格提取链路继续使用独立缓存目录，不与 Docling 的 `tableformer` artifacts 共用目录。
 
-- **构建期缓存**：`Dockerfile` 使用 BuildKit cache mount 挂载 `/root/.paddlex`；
-- **运行期缓存**：`docker-compose` 挂载 `./ocr-service/model_cache:/root/.paddlex`。
-
-首次构建/运行会下载模型，后续重建会直接复用本地缓存目录。
-当前 `docker-compose` 默认设置 `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=False`，会执行模型源连通性探测。
+- `./ocr-table-service/model_cache/table_extract/layout`：`DocLayout-YOLO` layout 模型
+- `./ocr-table-service/model_cache/table_extract/structure`：Hugging Face TATR `v1.1-pub` 结构模型
 
 ### 项目内 vLLM（默认）
 
@@ -224,6 +245,7 @@ make docling-build
 - Redis 默认使用 `docker.1panel.live/library/redis:8-alpine`，以兼容 Redis 8 写入的 RDB/AOF 数据格式；如需使用其他镜像源，可通过 `REDIS_IMAGE=可用镜像源/library/redis:8-alpine` 单独覆盖；
 - Nginx 默认使用兼容的 `nginx:alpine`，以匹配当前免登录镜像源可用 tag；
 - Docling 默认启用表格结构识别，财务报表等 PDF 会优先输出结构化表格而不是线性文本；
+- Docling 的表格能力来自自身 `tableformer` artifacts；`/ocr/table-extract` 使用的是独立的 Hugging Face TATR `v1.1-pub`，两者缓存目录和预热命令不同；
 - `docling-service` 默认启用文档内图片区域的 GLM OCR 补充，可通过环境变量调节并发、超时和单文档图片数上限；
 - `make docling-build` 默认使用本地 `wheels` 离线构建；
 - Docling 不默认采用运行时安装依赖，避免启动更慢且失败更晚暴露；

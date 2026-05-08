@@ -39,8 +39,12 @@ function Show-Menu {
     Write-Host "  3) 停止开发环境"
     Write-Host "  4) 查看开发日志"
     Write-Host "  5) 查看容器状态"
-    Write-Host "  6) 同步 OCR wheels"
-    Write-Host "  7) 同步 Docling wheels"
+    Write-Host "  6) 同步主 OCR wheels"
+    Write-Host "  7) 同步表格提取 wheels"
+    Write-Host "  8) 同步 Docling wheels"
+    Write-Host "  9) 预热表格 layout 模型"
+    Write-Host "  10) 预热表格 structure 模型"
+    Write-Host "  11) 预热表格全部模型"
     Write-Host "  0) 退出"
     Write-Host ""
 }
@@ -218,7 +222,23 @@ while ($true) {
             Pause-Menu
         }
         "7" {
+            & bash ocr-table-service/scripts/download_wheels.sh
+            Pause-Menu
+        }
+        "8" {
             & bash docling-service/scripts/download_wheels.sh
+            Pause-Menu
+        }
+        "9" {
+            & make ocr-table-layout-model-cache-warm
+            Pause-Menu
+        }
+        "10" {
+            & make ocr-table-model-cache-warm
+            Pause-Menu
+        }
+        "11" {
+            & make ocr-table-cache-warm
             Pause-Menu
         }
         "0" {

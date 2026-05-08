@@ -25,8 +25,12 @@ show_menu() {
   echo "  3) 停止开发环境"
   echo "  4) 查看开发日志"
   echo "  5) 查看容器状态"
-  echo "  6) 同步 OCR wheels"
-  echo "  7) 同步 Docling wheels"
+  echo "  6) 同步主 OCR wheels"
+  echo "  7) 同步表格提取 wheels"
+  echo "  8) 同步 Docling wheels"
+  echo "  9) 预热表格 layout 模型"
+  echo "  10) 预热表格 structure 模型"
+  echo "  11) 预热表格全部模型"
   echo "  0) 退出"
   echo
 }
@@ -177,7 +181,23 @@ while true; do
       pause_menu
       ;;
     7)
+      bash ocr-table-service/scripts/download_wheels.sh
+      pause_menu
+      ;;
+    8)
       bash docling-service/scripts/download_wheels.sh
+      pause_menu
+      ;;
+    9)
+      make ocr-table-layout-model-cache-warm
+      pause_menu
+      ;;
+    10)
+      make ocr-table-model-cache-warm
+      pause_menu
+      ;;
+    11)
+      make ocr-table-cache-warm
       pause_menu
       ;;
     0)
