@@ -2,6 +2,7 @@ from typing import Any
 
 from app.table_detect import DocLayoutYoloDetector, get_layout_detector, nms_detections, sort_boxes_top_left
 from app.table_extract_shared import (
+    BorderTrimOptions,
     DEFAULT_LAYOUT_MODEL,
     DEFAULT_LAYOUT_MODEL_FILE,
     DEFAULT_STRUCTURE_MODEL,
@@ -13,6 +14,7 @@ from app.table_extract_shared import (
     TableImageVariant,
     add_crop_padding,
     ensure_layout_model_source,
+    env_bool,
     env_float,
     env_int,
     image_to_data_url,
@@ -48,6 +50,13 @@ def extract_tables(payload: dict[str, Any]) -> dict[str, Any]:
     detector_threshold = float(payload.get("detectorThreshold") or env_float("TABLE_EXTRACT_DETECTOR_THRESHOLD", 0.25))
     structure_threshold = float(payload.get("structureThreshold") or env_float("TABLE_EXTRACT_STRUCTURE_THRESHOLD", 0.35))
     max_tables_per_page = int(payload.get("maxTablesPerPage") or env_int("TABLE_EXTRACT_MAX_TABLES_PER_PAGE", 24))
+    border_trim_options = BorderTrimOptions(
+        enabled=bool(payload.get("borderTrimEnabled")) if isinstance(payload.get("borderTrimEnabled"), bool) else env_bool("TABLE_EXTRACT_BORDER_TRIM_ENABLED", True),
+        min_projection_ratio=float(payload.get("borderTrimMinProjectionRatio") or env_float("TABLE_EXTRACT_BORDER_TRIM_MIN_PROJECTION_RATIO", 0.1)),
+        margin_px=int(payload.get("borderTrimMarginPx") or env_int("TABLE_EXTRACT_BORDER_TRIM_MARGIN_PX", 3)),
+        min_size_ratio=float(payload.get("borderTrimMinSizeRatio") or env_float("TABLE_EXTRACT_BORDER_TRIM_MIN_SIZE_RATIO", 0.65)),
+        max_inset_ratio=float(payload.get("borderTrimMaxInsetRatio") or env_float("TABLE_EXTRACT_BORDER_TRIM_MAX_INSET_RATIO", 0.2)),
+    )
     pages = load_pages(file, file_type)
     detector = get_layout_detector()
     recognizer = get_structure_recognizer()
@@ -70,7 +79,7 @@ def extract_tables(payload: dict[str, Any]) -> dict[str, Any]:
                 env_int("TABLE_EXTRACT_CROP_PADDING_MIN_PX", 8),
             )
             crop_image = page.image.crop(tuple(candidate_roi_bbox))
-            variants = build_table_image_variants(crop_image, candidate_roi_bbox)
+            variants = build_table_image_variants(crop_image, candidate_roi_bbox, border_trim_options)
             best_variant, structure_items = recognize_best_table_variant(recognizer, variants, structure_threshold)
             tables.append(build_table_result(page.image, page.page_no, index, detection, structure_items, table_variant=best_variant))
             total_tables += 1

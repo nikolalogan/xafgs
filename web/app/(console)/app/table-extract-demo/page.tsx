@@ -72,6 +72,10 @@ type ExtractedTable = {
     rectifyInterpolation?: string
     rectifiedWidth?: number
     rectifiedHeight?: number
+    borderTrimApplied?: boolean
+    borderTrimBBox?: number[]
+    borderTrimMarginPx?: number
+    borderTrimMinProjectionRatio?: number
     rotationApplied?: number
     deskewAngle?: number
     quadScore?: number
@@ -101,6 +105,14 @@ type TableExtractResponse = {
   tableCount: number
   durationMs: number
   pages: ExtractedPage[]
+}
+
+type BorderTrimConfig = {
+  borderTrimEnabled: boolean
+  borderTrimMinProjectionRatio: number
+  borderTrimMarginPx: number
+  borderTrimMinSizeRatio: number
+  borderTrimMaxInsetRatio: number
 }
 
 type ManualReviewState = {
@@ -156,6 +168,13 @@ const dataUrlToBase64 = (dataUrl: string) => {
 
 const MANUAL_RECTIFY_SCALE = 1.5
 const MANUAL_RECTIFY_MAX_EDGE = 4096
+const DEFAULT_BORDER_TRIM_CONFIG: BorderTrimConfig = {
+  borderTrimEnabled: true,
+  borderTrimMinProjectionRatio: 0.1,
+  borderTrimMarginPx: 3,
+  borderTrimMinSizeRatio: 0.65,
+  borderTrimMaxInsetRatio: 0.2,
+}
 
 const computePaddedBBox = (bbox: number[], width: number, height: number, paddingRatio = 0.02, minPaddingPx = 8) => {
   const padX = Math.max(minPaddingPx, Math.round((bbox[2] - bbox[0]) * paddingRatio))
@@ -532,6 +551,9 @@ function TableRectifyPreview({
         <Typography.Text>rectifyScale: {table.meta.rectifyScale || 1}</Typography.Text>
         <Typography.Text>rectifyInterpolation: {table.meta.rectifyInterpolation || 'linear'}</Typography.Text>
         <Typography.Text>rectifiedSize: {(table.meta.rectifiedWidth || table.meta.cropWidth)} x {(table.meta.rectifiedHeight || table.meta.cropHeight)}</Typography.Text>
+        <Typography.Text>borderTrim: {table.meta.borderTrimApplied ? '是' : '否'}</Typography.Text>
+        <Typography.Text>borderTrimMargin: {table.meta.borderTrimMarginPx || 0}px</Typography.Text>
+        <Typography.Text>borderTrimRatio: {table.meta.borderTrimMinProjectionRatio || 0}</Typography.Text>
         <Typography.Text>rotationApplied: {table.meta.rotationApplied || 0}°</Typography.Text>
         <Typography.Text>deskewAngle: {table.meta.deskewAngle || 0}°</Typography.Text>
         <Typography.Text>quadScore: {table.meta.quadScore || 0}</Typography.Text>
@@ -579,6 +601,11 @@ function TableRectifyPreview({
           {manualPreviewMeta ? (
             <Typography.Text type="secondary">
               手动预览: {manualPreviewMeta.width} x {manualPreviewMeta.height} / scale {manualPreviewMeta.rectifyScale} / {manualPreviewMeta.rectifyInterpolation}
+            </Typography.Text>
+          ) : null}
+          {Array.isArray(table.meta.borderTrimBBox) ? (
+            <Typography.Text type="secondary">
+              自动裁边框: {table.meta.borderTrimBBox.join(', ')}
             </Typography.Text>
           ) : null}
           {currentReview ? (
@@ -721,6 +748,11 @@ export default function TableExtractDemoPage() {
   const [detectorThreshold, setDetectorThreshold] = useState(0.25)
   const [structureThreshold, setStructureThreshold] = useState(0.35)
   const [maxTablesPerPage, setMaxTablesPerPage] = useState(24)
+  const [borderTrimEnabled, setBorderTrimEnabled] = useState(DEFAULT_BORDER_TRIM_CONFIG.borderTrimEnabled)
+  const [borderTrimMinProjectionRatio, setBorderTrimMinProjectionRatio] = useState(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMinProjectionRatio)
+  const [borderTrimMarginPx, setBorderTrimMarginPx] = useState(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMarginPx)
+  const [borderTrimMinSizeRatio, setBorderTrimMinSizeRatio] = useState(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMinSizeRatio)
+  const [borderTrimMaxInsetRatio, setBorderTrimMaxInsetRatio] = useState(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMaxInsetRatio)
   const [submitting, setSubmitting] = useState(false)
   const [lastRequest, setLastRequest] = useState<Record<string, unknown> | null>(null)
   const [result, setResult] = useState<TableExtractResponse | null>(null)
@@ -754,6 +786,11 @@ export default function TableExtractDemoPage() {
     setDetectorThreshold(0.25)
     setStructureThreshold(0.35)
     setMaxTablesPerPage(24)
+    setBorderTrimEnabled(DEFAULT_BORDER_TRIM_CONFIG.borderTrimEnabled)
+    setBorderTrimMinProjectionRatio(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMinProjectionRatio)
+    setBorderTrimMarginPx(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMarginPx)
+    setBorderTrimMinSizeRatio(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMinSizeRatio)
+    setBorderTrimMaxInsetRatio(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMaxInsetRatio)
     setManualReview(null)
   }
 
@@ -776,6 +813,11 @@ export default function TableExtractDemoPage() {
         detectorThreshold,
         structureThreshold,
         maxTablesPerPage,
+        borderTrimEnabled,
+        borderTrimMinProjectionRatio,
+        borderTrimMarginPx,
+        borderTrimMinSizeRatio,
+        borderTrimMaxInsetRatio,
       }
       setLastRequest(payload)
       const response = await fetch('/ocr/table-extract', {
@@ -813,6 +855,11 @@ export default function TableExtractDemoPage() {
         detectorThreshold,
         structureThreshold,
         maxTablesPerPage: 1,
+        borderTrimEnabled,
+        borderTrimMinProjectionRatio,
+        borderTrimMarginPx,
+        borderTrimMinSizeRatio,
+        borderTrimMaxInsetRatio,
       }
       const response = await fetch('/ocr/table-extract', {
         method: 'POST',
@@ -906,6 +953,34 @@ export default function TableExtractDemoPage() {
           <div style={{ minWidth: 180 }}>
             <Typography.Text>每页最大表数</Typography.Text>
             <InputNumber min={1} max={64} step={1} value={maxTablesPerPage} onChange={value => setMaxTablesPerPage(Number(value || 24))} style={{ width: '100%' }} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>自动裁边</Typography.Text>
+            <Select
+              value={borderTrimEnabled ? 'on' : 'off'}
+              style={{ width: '100%' }}
+              options={[
+                { label: '开启', value: 'on' },
+                { label: '关闭', value: 'off' },
+              ]}
+              onChange={value => setBorderTrimEnabled(value === 'on')}
+            />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>裁边投影阈值</Typography.Text>
+            <InputNumber min={0.01} max={0.5} step={0.01} value={borderTrimMinProjectionRatio} onChange={value => setBorderTrimMinProjectionRatio(Number(value || 0.1))} style={{ width: '100%' }} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>裁边 margin(px)</Typography.Text>
+            <InputNumber min={0} max={24} step={1} value={borderTrimMarginPx} onChange={value => setBorderTrimMarginPx(Number(value || 3))} style={{ width: '100%' }} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>最小保留比例</Typography.Text>
+            <InputNumber min={0.2} max={1} step={0.05} value={borderTrimMinSizeRatio} onChange={value => setBorderTrimMinSizeRatio(Number(value || 0.65))} style={{ width: '100%' }} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>最大内缩比例</Typography.Text>
+            <InputNumber min={0.02} max={0.45} step={0.01} value={borderTrimMaxInsetRatio} onChange={value => setBorderTrimMaxInsetRatio(Number(value || 0.2))} style={{ width: '100%' }} />
           </div>
           <Space>
             <Button type="primary" onClick={runExtract} loading={submitting} disabled={!canSubmit}>开始提取</Button>

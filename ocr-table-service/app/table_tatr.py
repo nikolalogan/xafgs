@@ -217,6 +217,7 @@ def build_table_cells(
     crop_size: tuple[int, int],
     crop_offset: list[int],
     inverse_matrix: list[list[float]],
+    rectified_crop_offset: list[float],
 ) -> list[dict[str, Any]]:
     if not rows or not columns:
         return []
@@ -234,9 +235,15 @@ def build_table_cells(
             rows[row_end].bbox[3],
         ]
         crop_bbox = [round(value, 2) for value in crop_bbox]
+        rectified_crop_bbox = [
+            round(crop_bbox[0] + rectified_crop_offset[0], 2),
+            round(crop_bbox[1] + rectified_crop_offset[1], 2),
+            round(crop_bbox[2] + rectified_crop_offset[0], 2),
+            round(crop_bbox[3] + rectified_crop_offset[1], 2),
+        ]
         page_cell_polygon = [
             [round(point[0] + crop_offset[0], 2), round(point[1] + crop_offset[1], 2)]
-            for point in transform_polygon(bbox_to_polygon(crop_bbox), inverse_matrix)
+            for point in transform_polygon(bbox_to_polygon(rectified_crop_bbox), inverse_matrix)
         ]
         page_cell_bbox = polygon_to_bbox(page_cell_polygon)
         is_column_header, is_projected_row_header = cell_flags(crop_bbox, column_headers, projected_row_headers)
@@ -311,6 +318,7 @@ def build_table_result(
         crop_size=(crop_width, crop_height),
         crop_offset=[candidate_roi_bbox[0], candidate_roi_bbox[1]],
         inverse_matrix=table_variant.inverse_matrix,
+        rectified_crop_offset=table_variant.rectified_crop_offset,
     )
     return {
         "tableId": f"p{page_no}-t{table_no}",
@@ -345,6 +353,10 @@ def build_table_result(
             "rectifyInterpolation": table_variant.rectify_interpolation,
             "rectifiedWidth": table_variant.rectified_width,
             "rectifiedHeight": table_variant.rectified_height,
+            "borderTrimApplied": table_variant.border_trim_applied,
+            "borderTrimBBox": table_variant.border_trim_bbox,
+            "borderTrimMarginPx": table_variant.border_trim_margin_px,
+            "borderTrimMinProjectionRatio": table_variant.border_trim_min_projection_ratio,
             "rotationApplied": table_variant.rotation_applied,
             "deskewAngle": table_variant.deskew_angle,
             "quadScore": table_variant.quad_score,

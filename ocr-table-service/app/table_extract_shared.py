@@ -46,6 +46,17 @@ def env_str(name: str, default: str) -> str:
     return raw or default
 
 
+def env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 @dataclass(frozen=True)
 class DetectionBox:
     label: str
@@ -81,6 +92,11 @@ class TableImageVariant:
     rectify_interpolation: str
     rectified_width: int
     rectified_height: int
+    rectified_crop_offset: list[float]
+    border_trim_applied: bool
+    border_trim_bbox: list[float] | None
+    border_trim_margin_px: int
+    border_trim_min_projection_ratio: float
 
 
 @dataclass(frozen=True)
@@ -91,6 +107,15 @@ class RectifyDetection:
     quad_score: float
     line_coverage_horizontal: float
     line_coverage_vertical: float
+
+
+@dataclass(frozen=True)
+class BorderTrimOptions:
+    enabled: bool
+    min_projection_ratio: float
+    margin_px: int
+    min_size_ratio: float
+    max_inset_ratio: float
 
 
 class TableExtractError(RuntimeError):

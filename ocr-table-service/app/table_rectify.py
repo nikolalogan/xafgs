@@ -3,8 +3,10 @@ from typing import Any
 from PIL import Image
 
 from app.table_extract_shared import (
+    BorderTrimOptions,
     RectifyDetection,
     TableImageVariant,
+    clamp_crop_bbox,
     env_float,
     env_int,
     env_str,
@@ -27,6 +29,11 @@ DEFAULT_LINE_MASK_BLOCK_SIZE = 31
 DEFAULT_LINE_MASK_THRESHOLD_C = 15
 DEFAULT_LINE_MASK_KERNEL_DIVISOR = 18
 DEFAULT_LINE_MASK_KERNEL_MIN = 12
+DEFAULT_BORDER_TRIM_ENABLED = True
+DEFAULT_BORDER_TRIM_MIN_PROJECTION_RATIO = 0.1
+DEFAULT_BORDER_TRIM_MARGIN_PX = 3
+DEFAULT_BORDER_TRIM_MIN_SIZE_RATIO = 0.65
+DEFAULT_BORDER_TRIM_MAX_INSET_RATIO = 0.2
 
 
 def resolve_rectify_scale() -> float:
@@ -48,6 +55,18 @@ def resolve_rectify_interpolation() -> tuple[str, int]:
         "lanczos4": cv2.INTER_LANCZOS4,
     }
     return (name if name in mapping else DEFAULT_RECTIFY_INTERPOLATION), mapping.get(name, cv2.INTER_LANCZOS4)
+
+
+def resolve_default_border_trim_options() -> BorderTrimOptions:
+    from app.table_extract_shared import env_bool
+
+    return BorderTrimOptions(
+        enabled=env_bool("TABLE_EXTRACT_BORDER_TRIM_ENABLED", DEFAULT_BORDER_TRIM_ENABLED),
+        min_projection_ratio=max(0.01, min(env_float("TABLE_EXTRACT_BORDER_TRIM_MIN_PROJECTION_RATIO", DEFAULT_BORDER_TRIM_MIN_PROJECTION_RATIO), 0.5)),
+        margin_px=max(0, env_int("TABLE_EXTRACT_BORDER_TRIM_MARGIN_PX", DEFAULT_BORDER_TRIM_MARGIN_PX)),
+        min_size_ratio=max(0.2, min(env_float("TABLE_EXTRACT_BORDER_TRIM_MIN_SIZE_RATIO", DEFAULT_BORDER_TRIM_MIN_SIZE_RATIO), 1.0)),
+        max_inset_ratio=max(0.02, min(env_float("TABLE_EXTRACT_BORDER_TRIM_MAX_INSET_RATIO", DEFAULT_BORDER_TRIM_MAX_INSET_RATIO), 0.45)),
+    )
 
 
 def compute_rectified_size(width: float, height: float) -> tuple[int, int, float]:
@@ -89,6 +108,117 @@ def find_projection_bounds(mask: Any, axis: str, min_ratio: float) -> tuple[int,
     if indexes.size == 0:
         return None
     return int(indexes[0]), int(indexes[-1])
+
+
+def trim_table_border(image: Image.Image, options: BorderTrimOptions) -> tuple[Image.Image, list[float], bool]:
+    if not options.enabled:
+        return image, full_crop_bbox(image.size[0], image.size[1]), False
+    horizontal, vertical = build_table_line_masks(image)
+    horizontal_coverage = estimate_line_coverage(horizontal, "horizontal")
+    vertical_coverage = estimate_line_coverage(vertical, "vertical")
+    if horizontal_coverage <= 0.0 or vertical_coverage <= 0.0:
+        return image, full_crop_bbox(image.size[0], image.size[1]), False
+    top_bottom = find_projection_bounds(horizontal, "horizontal", options.min_projection_ratio)
+    left_right = find_projection_bounds(vertical, "vertical", options.min_projection_ratio)
+    if top_bottom is None or left_right is None:
+        return image, full_crop_bbox(image.size[0], image.size[1]), False
+    left, right = left_right
+    top, bottom = top_bottom
+    width, height = image.size
+    if right <= left or bottom <= top:
+        return image, full_crop_bbox(width, height), False
+    trimmed = clamp_crop_bbox(
+        [
+            float(left - options.margin_px),
+            float(top - options.margin_px),
+            float(right + options.margin_px + 1),
+            float(bottom + options.margin_px + 1),
+        ],
+        width,
+        height,
+    )
+    trim_width = trimmed[2] - trimmed[0]
+    trim_height = trimmed[3] - trimmed[1]
+    if trim_width <= 1 or trim_height <= 1:
+        return image, full_crop_bbox(width, height), False
+    if (trim_width / max(width, 1)) < options.min_size_ratio or (trim_height / max(height, 1)) < options.min_size_ratio:
+        return image, full_crop_bbox(width, height), False
+    if (trimmed[0] / max(width, 1)) > options.max_inset_ratio:
+        return image, full_crop_bbox(width, height), False
+    if ((width - trimmed[2]) / max(width, 1)) > options.max_inset_ratio:
+        return image, full_crop_bbox(width, height), False
+    if (trimmed[1] / max(height, 1)) > options.max_inset_ratio:
+        return image, full_crop_bbox(width, height), False
+    if ((height - trimmed[3]) / max(height, 1)) > options.max_inset_ratio:
+        return image, full_crop_bbox(width, height), False
+    crop_box = [float(trimmed[0]), float(trimmed[1]), float(trimmed[2]), float(trimmed[3])]
+    trimmed_image = image.crop(tuple(trimmed))
+    return trimmed_image, crop_box, True
+
+
+def build_trimmed_variant(
+    image: Image.Image,
+    candidate_roi_bbox: list[int],
+    base_variant: TableImageVariant,
+    border_trim_options: BorderTrimOptions,
+) -> TableImageVariant:
+    trimmed_image, trim_bbox, applied = trim_table_border(base_variant.image, border_trim_options)
+    if not applied:
+        return TableImageVariant(
+            image=base_variant.image,
+            candidate_roi_bbox=candidate_roi_bbox,
+            final_crop_bbox=full_crop_bbox(base_variant.image.size[0], base_variant.image.size[1]),
+            roi_quad=base_variant.roi_quad,
+            forward_matrix=base_variant.forward_matrix,
+            inverse_matrix=base_variant.inverse_matrix,
+            rectified=base_variant.rectified,
+            rectify_mode=base_variant.rectify_mode,
+            rotation_applied=base_variant.rotation_applied,
+            original_crop_width=base_variant.original_crop_width,
+            original_crop_height=base_variant.original_crop_height,
+            deskew_angle=base_variant.deskew_angle,
+            quad_score=base_variant.quad_score,
+            line_coverage_horizontal=base_variant.line_coverage_horizontal,
+            line_coverage_vertical=base_variant.line_coverage_vertical,
+            rectify_scale=base_variant.rectify_scale,
+            rectify_interpolation=base_variant.rectify_interpolation,
+            rectified_width=base_variant.rectified_width,
+            rectified_height=base_variant.rectified_height,
+            rectified_crop_offset=base_variant.rectified_crop_offset,
+            border_trim_applied=False,
+            border_trim_bbox=None,
+            border_trim_margin_px=border_trim_options.margin_px,
+            border_trim_min_projection_ratio=border_trim_options.min_projection_ratio,
+        )
+    return TableImageVariant(
+        image=trimmed_image,
+        candidate_roi_bbox=candidate_roi_bbox,
+        final_crop_bbox=full_crop_bbox(trimmed_image.size[0], trimmed_image.size[1]),
+        roi_quad=base_variant.roi_quad,
+        forward_matrix=base_variant.forward_matrix,
+        inverse_matrix=base_variant.inverse_matrix,
+        rectified=base_variant.rectified,
+        rectify_mode=base_variant.rectify_mode,
+        rotation_applied=base_variant.rotation_applied,
+        original_crop_width=base_variant.original_crop_width,
+        original_crop_height=base_variant.original_crop_height,
+        deskew_angle=base_variant.deskew_angle,
+        quad_score=base_variant.quad_score,
+        line_coverage_horizontal=base_variant.line_coverage_horizontal,
+        line_coverage_vertical=base_variant.line_coverage_vertical,
+        rectify_scale=base_variant.rectify_scale,
+        rectify_interpolation=base_variant.rectify_interpolation,
+        rectified_width=base_variant.rectified_width,
+        rectified_height=base_variant.rectified_height,
+        rectified_crop_offset=[
+            base_variant.rectified_crop_offset[0] + trim_bbox[0],
+            base_variant.rectified_crop_offset[1] + trim_bbox[1],
+        ],
+        border_trim_applied=True,
+        border_trim_bbox=trim_bbox,
+        border_trim_margin_px=border_trim_options.margin_px,
+        border_trim_min_projection_ratio=border_trim_options.min_projection_ratio,
+    )
 
 
 def rotate_matrix_clockwise(width: int, height: int) -> list[list[float]]:
@@ -268,15 +398,20 @@ def detect_table_quad(image: Image.Image) -> RectifyDetection:
     return RectifyDetection("line_quad", original_quad, deskew_angle, quad_score, rotated_horizontal_coverage, rotated_vertical_coverage)
 
 
-def rectify_table_crop(image: Image.Image, candidate_roi_bbox: list[int]) -> TableImageVariant:
+def rectify_table_crop(
+    image: Image.Image,
+    candidate_roi_bbox: list[int],
+    border_trim_options: BorderTrimOptions | None = None,
+) -> TableImageVariant:
     detection = detect_table_quad(image)
     interpolation_name, _ = resolve_rectify_interpolation()
     rectify_scale = resolve_rectify_scale()
+    trim_options = border_trim_options or resolve_default_border_trim_options()
     if detection.rectify_mode == "line_quad" and detection.quad is not None:
         rectified_image, forward_matrix, inverse_matrix, rectify_scale, interpolation_name, rectified_width, rectified_height = (
             warp_perspective_image(image, detection.quad)
         )
-        return TableImageVariant(
+        base_variant = TableImageVariant(
             image=rectified_image,
             candidate_roi_bbox=candidate_roi_bbox,
             final_crop_bbox=full_crop_bbox(rectified_image.size[0], rectified_image.size[1]),
@@ -296,13 +431,19 @@ def rectify_table_crop(image: Image.Image, candidate_roi_bbox: list[int]) -> Tab
             rectify_interpolation=interpolation_name,
             rectified_width=rectified_width,
             rectified_height=rectified_height,
+            rectified_crop_offset=[0.0, 0.0],
+            border_trim_applied=False,
+            border_trim_bbox=None,
+            border_trim_margin_px=trim_options.margin_px,
+            border_trim_min_projection_ratio=trim_options.min_projection_ratio,
         )
+        return build_trimmed_variant(image, candidate_roi_bbox, base_variant, trim_options)
     if detection.rectify_mode == "deskew_only" and abs(detection.deskew_angle) >= 0.2:
         forward_matrix = rotation_matrix(-detection.deskew_angle, image.size[0], image.size[1])
         inverse_matrix = matrix_inverse(forward_matrix)
         deskewed_image = warp_affine_image(image, forward_matrix)
         width, height = deskewed_image.size
-        return TableImageVariant(
+        base_variant = TableImageVariant(
             image=deskewed_image,
             candidate_roi_bbox=candidate_roi_bbox,
             final_crop_bbox=full_crop_bbox(width, height),
@@ -322,9 +463,15 @@ def rectify_table_crop(image: Image.Image, candidate_roi_bbox: list[int]) -> Tab
             rectify_interpolation=interpolation_name,
             rectified_width=width,
             rectified_height=height,
+            rectified_crop_offset=[0.0, 0.0],
+            border_trim_applied=False,
+            border_trim_bbox=None,
+            border_trim_margin_px=trim_options.margin_px,
+            border_trim_min_projection_ratio=trim_options.min_projection_ratio,
         )
+        return build_trimmed_variant(image, candidate_roi_bbox, base_variant, trim_options)
     width, height = image.size
-    return TableImageVariant(
+    base_variant = TableImageVariant(
         image=image,
         candidate_roi_bbox=candidate_roi_bbox,
         final_crop_bbox=full_crop_bbox(width, height),
@@ -344,7 +491,13 @@ def rectify_table_crop(image: Image.Image, candidate_roi_bbox: list[int]) -> Tab
         rectify_interpolation=interpolation_name,
         rectified_width=width,
         rectified_height=height,
+        rectified_crop_offset=[0.0, 0.0],
+        border_trim_applied=False,
+        border_trim_bbox=None,
+        border_trim_margin_px=trim_options.margin_px,
+        border_trim_min_projection_ratio=trim_options.min_projection_ratio,
     )
+    return build_trimmed_variant(image, candidate_roi_bbox, base_variant, trim_options)
 
 
 def rotate_table_variant_clockwise(variant: TableImageVariant) -> TableImageVariant:
@@ -375,12 +528,22 @@ def rotate_table_variant_clockwise(variant: TableImageVariant) -> TableImageVari
         rectify_interpolation=variant.rectify_interpolation,
         rectified_width=rotated_image.size[0],
         rectified_height=rotated_image.size[1],
+        rectified_crop_offset=[0.0, 0.0],
+        border_trim_applied=False,
+        border_trim_bbox=None,
+        border_trim_margin_px=variant.border_trim_margin_px,
+        border_trim_min_projection_ratio=variant.border_trim_min_projection_ratio,
     )
 
 
-def build_table_image_variants(image: Image.Image, candidate_roi_bbox: list[int]) -> list[TableImageVariant]:
-    rectified = rectify_table_crop(image, candidate_roi_bbox)
+def build_table_image_variants(
+    image: Image.Image,
+    candidate_roi_bbox: list[int],
+    border_trim_options: BorderTrimOptions | None = None,
+) -> list[TableImageVariant]:
+    rectified = rectify_table_crop(image, candidate_roi_bbox, border_trim_options)
     variants = [rectified]
     if rectified.image.height > rectified.image.width * 1.15:
-        variants.append(rotate_table_variant_clockwise(rectified))
+        rotated = rotate_table_variant_clockwise(rectified)
+        variants.append(build_trimmed_variant(image, candidate_roi_bbox, rotated, border_trim_options or resolve_default_border_trim_options()))
     return variants
