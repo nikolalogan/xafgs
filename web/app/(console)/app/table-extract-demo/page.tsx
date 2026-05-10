@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Empty, InputNumber, Select, Space, Table, Tabs, Typography, Upload, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { UploadFile } from 'antd/es/upload/interface'
@@ -8,6 +8,7 @@ import { CopyOutlined, DownloadOutlined, ReloadOutlined, UploadOutlined } from '
 import { isSingleUploadOversized, MAX_SINGLE_UPLOAD_TEXT } from '@/lib/upload-limit'
 
 type BoxPolygon = number[][]
+type Point = { x: number; y: number }
 
 type BoxLike = {
   bbox: number[]
@@ -90,6 +91,13 @@ type TableExtractResponse = {
   pages: ExtractedPage[]
 }
 
+type ManualReviewState = {
+  sourceTableId: string
+  rectifiedImageDataUrl: string
+  response: TableExtractResponse
+  table: ExtractedTable
+}
+
 const toBase64 = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
@@ -122,6 +130,11 @@ const detectFileType = (file: File, base64: string): 0 | 1 => {
 
 const pretty = (value: unknown) => JSON.stringify(value, null, 2)
 
+const dataUrlToBase64 = (dataUrl: string) => {
+  const raw = String(dataUrl || '')
+  return raw.includes(',') ? raw.split(',')[1] || '' : raw
+}
+
 const computePaddedBBox = (bbox: number[], width: number, height: number, paddingRatio = 0.02, minPaddingPx = 8) => {
   const padX = Math.max(minPaddingPx, Math.round((bbox[2] - bbox[0]) * paddingRatio))
   const padY = Math.max(minPaddingPx, Math.round((bbox[3] - bbox[1]) * paddingRatio))
@@ -131,6 +144,156 @@ const computePaddedBBox = (bbox: number[], width: number, height: number, paddin
     Math.max(0, Math.min(width, Math.round(bbox[2] + padX))),
     Math.max(0, Math.min(height, Math.round(bbox[3] + padY))),
   ]
+}
+
+const distanceBetween = (left: Point, right: Point) => Math.hypot(left.x - right.x, left.y - right.y)
+
+const orderQuadPoints = (points: Point[]) => {
+  const sortedBySum = [...points].sort((left, right) => left.x + left.y - (right.x + right.y))
+  const topLeft = sortedBySum[0]
+  const bottomRight = sortedBySum[3]
+  const remaining = sortedBySum.slice(1, 3).sort((left, right) => left.y - left.x - (right.y - right.x))
+  const topRight = remaining[0]
+  const bottomLeft = remaining[1]
+  return [topLeft, topRight, bottomRight, bottomLeft]
+}
+
+const solveLinearSystem = (matrix: number[][], values: number[]) => {
+  const size = values.length
+  const augmented = matrix.map((row, rowIndex) => [...row, values[rowIndex]])
+  for (let pivot = 0; pivot < size; pivot += 1) {
+    let maxRow = pivot
+    for (let row = pivot + 1; row < size; row += 1) {
+      if (Math.abs(augmented[row][pivot]) > Math.abs(augmented[maxRow][pivot])) {
+        maxRow = row
+      }
+    }
+    if (Math.abs(augmented[maxRow][pivot]) < 1e-8) {
+      throw new Error('无法计算透视变换矩阵')
+    }
+    ;[augmented[pivot], augmented[maxRow]] = [augmented[maxRow], augmented[pivot]]
+    const pivotValue = augmented[pivot][pivot]
+    for (let column = pivot; column <= size; column += 1) {
+      augmented[pivot][column] /= pivotValue
+    }
+    for (let row = 0; row < size; row += 1) {
+      if (row === pivot) continue
+      const factor = augmented[row][pivot]
+      for (let column = pivot; column <= size; column += 1) {
+        augmented[row][column] -= factor * augmented[pivot][column]
+      }
+    }
+  }
+  return augmented.map(row => row[size])
+}
+
+const buildPerspectiveMatrix = (sourcePoints: Point[], destinationPoints: Point[]) => {
+  const matrix: number[][] = []
+  const values: number[] = []
+  for (let index = 0; index < 4; index += 1) {
+    const source = sourcePoints[index]
+    const destination = destinationPoints[index]
+    matrix.push([source.x, source.y, 1, 0, 0, 0, -destination.x * source.x, -destination.x * source.y])
+    values.push(destination.x)
+    matrix.push([0, 0, 0, source.x, source.y, 1, -destination.y * source.x, -destination.y * source.y])
+    values.push(destination.y)
+  }
+  const [a, b, c, d, e, f, g, h] = solveLinearSystem(matrix, values)
+  return [
+    [a, b, c],
+    [d, e, f],
+    [g, h, 1],
+  ]
+}
+
+const invert3x3 = (matrix: number[][]) => {
+  const [[a, b, c], [d, e, f], [g, h, i]] = matrix
+  const determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+  if (Math.abs(determinant) < 1e-8) {
+    throw new Error('透视矩阵不可逆')
+  }
+  const scale = 1 / determinant
+  return [
+    [(e * i - f * h) * scale, (c * h - b * i) * scale, (b * f - c * e) * scale],
+    [(f * g - d * i) * scale, (a * i - c * g) * scale, (c * d - a * f) * scale],
+    [(d * h - e * g) * scale, (b * g - a * h) * scale, (a * e - b * d) * scale],
+  ]
+}
+
+const projectPoint = (matrix: number[][], point: Point) => {
+  const denominator = matrix[2][0] * point.x + matrix[2][1] * point.y + matrix[2][2]
+  if (Math.abs(denominator) < 1e-8) {
+    return point
+  }
+  return {
+    x: (matrix[0][0] * point.x + matrix[0][1] * point.y + matrix[0][2]) / denominator,
+    y: (matrix[1][0] * point.x + matrix[1][1] * point.y + matrix[1][2]) / denominator,
+  }
+}
+
+const loadImageElement = (src: string) =>
+  new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('加载图像失败'))
+    image.src = src
+  })
+
+const warpImageByQuad = async (src: string, rawPoints: Point[]) => {
+  const image = await loadImageElement(src)
+  const sourcePoints = orderQuadPoints(rawPoints)
+  const targetWidth = Math.max(
+    1,
+    Math.round(Math.max(distanceBetween(sourcePoints[0], sourcePoints[1]), distanceBetween(sourcePoints[3], sourcePoints[2])))
+  )
+  const targetHeight = Math.max(
+    1,
+    Math.round(Math.max(distanceBetween(sourcePoints[0], sourcePoints[3]), distanceBetween(sourcePoints[1], sourcePoints[2])))
+  )
+  const destinationPoints = [
+    { x: 0, y: 0 },
+    { x: targetWidth - 1, y: 0 },
+    { x: targetWidth - 1, y: targetHeight - 1 },
+    { x: 0, y: targetHeight - 1 },
+  ]
+  const matrix = buildPerspectiveMatrix(sourcePoints, destinationPoints)
+  const inverseMatrix = invert3x3(matrix)
+  const sourceCanvas = document.createElement('canvas')
+  sourceCanvas.width = image.naturalWidth
+  sourceCanvas.height = image.naturalHeight
+  const sourceContext = sourceCanvas.getContext('2d')
+  if (!sourceContext) {
+    throw new Error('无法创建源图上下文')
+  }
+  sourceContext.drawImage(image, 0, 0)
+  const sourceData = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height)
+  const outputCanvas = document.createElement('canvas')
+  outputCanvas.width = targetWidth
+  outputCanvas.height = targetHeight
+  const outputContext = outputCanvas.getContext('2d')
+  if (!outputContext) {
+    throw new Error('无法创建目标图上下文')
+  }
+  const outputImage = outputContext.createImageData(targetWidth, targetHeight)
+  for (let y = 0; y < targetHeight; y += 1) {
+    for (let x = 0; x < targetWidth; x += 1) {
+      const sourcePoint = projectPoint(inverseMatrix, { x, y })
+      const sourceX = Math.max(0, Math.min(sourceCanvas.width - 1, Math.round(sourcePoint.x)))
+      const sourceY = Math.max(0, Math.min(sourceCanvas.height - 1, Math.round(sourcePoint.y)))
+      const sourceIndex = (sourceY * sourceCanvas.width + sourceX) * 4
+      const targetIndex = (y * targetWidth + x) * 4
+      outputImage.data[targetIndex] = sourceData.data[sourceIndex]
+      outputImage.data[targetIndex + 1] = sourceData.data[sourceIndex + 1]
+      outputImage.data[targetIndex + 2] = sourceData.data[sourceIndex + 2]
+      outputImage.data[targetIndex + 3] = sourceData.data[sourceIndex + 3]
+    }
+  }
+  outputContext.putImageData(outputImage, 0, 0)
+  return {
+    dataUrl: outputCanvas.toDataURL('image/jpeg', 0.92),
+    width: targetWidth,
+    height: targetHeight,
+  }
 }
 
 const buildOverlayStyle = (bbox: number[], width: number, height: number, color: string, lineWidth = 2) => ({
@@ -209,8 +372,27 @@ function PagePreview({ page, selectedTableId }: { page: ExtractedPage; selectedT
   )
 }
 
-function TableRectifyPreview({ page, table }: { page: ExtractedPage; table: ExtractedTable }) {
+function TableRectifyPreview({
+  page,
+  table,
+  manualReview,
+  onApplyManualReview,
+  reviewSubmitting,
+}: {
+  page: ExtractedPage
+  table: ExtractedTable
+  manualReview: ManualReviewState | null
+  onApplyManualReview: (dataUrl: string) => Promise<void>
+  reviewSubmitting: boolean
+}) {
   const [beforeImageUrl, setBeforeImageUrl] = useState<string>('')
+  const [beforeSize, setBeforeSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
+  const [manualPoints, setManualPoints] = useState<Point[]>([])
+  const [manualPreviewUrl, setManualPreviewUrl] = useState<string>('')
+  const [manualWarping, setManualWarping] = useState(false)
+  const imageBoxRef = useRef<HTMLDivElement | null>(null)
+  const currentReview = manualReview?.sourceTableId === table.tableId ? manualReview : null
+  const afterImageUrl = currentReview?.rectifiedImageDataUrl || manualPreviewUrl || table.tableImageDataUrl
 
   useEffect(() => {
     let cancelled = false
@@ -230,6 +412,7 @@ function TableRectifyPreview({ page, table }: { page: ExtractedPage; table: Extr
       context.drawImage(source, paddedBBox[0], paddedBBox[1], cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
       if (!cancelled) {
         setBeforeImageUrl(canvas.toDataURL('image/jpeg', 0.92))
+        setBeforeSize({ width: cropWidth, height: cropHeight })
       }
     }
     source.src = page.pageImageDataUrl
@@ -238,15 +421,80 @@ function TableRectifyPreview({ page, table }: { page: ExtractedPage; table: Extr
     }
   }, [page.pageImageDataUrl, page.height, page.width, table.bbox])
 
+  useEffect(() => {
+    setManualPoints([])
+    setManualPreviewUrl(currentReview?.rectifiedImageDataUrl || '')
+  }, [currentReview?.rectifiedImageDataUrl, table.tableId])
+
+  const handlePickPoint = (event: { clientX: number; clientY: number }) => {
+    if (!imageBoxRef.current || !beforeSize.width || !beforeSize.height) return
+    const bounds = imageBoxRef.current.getBoundingClientRect()
+    const relativeX = Math.max(0, Math.min(bounds.width, event.clientX - bounds.left))
+    const relativeY = Math.max(0, Math.min(bounds.height, event.clientY - bounds.top))
+    const point = {
+      x: Number(((relativeX / bounds.width) * beforeSize.width).toFixed(2)),
+      y: Number(((relativeY / bounds.height) * beforeSize.height).toFixed(2)),
+    }
+    setManualPreviewUrl('')
+    setManualPoints(previous => (previous.length >= 4 ? [point] : [...previous, point]))
+  }
+
+  const buildManualPreview = async () => {
+    if (manualPoints.length !== 4 || !beforeImageUrl) return
+    setManualWarping(true)
+    try {
+      const warped = await warpImageByQuad(beforeImageUrl, manualPoints)
+      setManualPreviewUrl(warped.dataUrl)
+    } finally {
+      setManualWarping(false)
+    }
+  }
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Space wrap size={12}>
-        <Typography.Text>rectifyMode: {table.meta.rectifyMode || 'fallback_none'}</Typography.Text>
-        <Typography.Text>rectified: {table.meta.rectified ? '是' : '否'}</Typography.Text>
+        <Typography.Text>默认模式: {table.meta.rectifyMode || 'fallback_none'}</Typography.Text>
+        <Typography.Text>自动矫正: {table.meta.rectified ? '是' : '否'}</Typography.Text>
         <Typography.Text>rotationApplied: {table.meta.rotationApplied || 0}°</Typography.Text>
         <Typography.Text>deskewAngle: {table.meta.deskewAngle || 0}°</Typography.Text>
         <Typography.Text>quadScore: {table.meta.quadScore || 0}</Typography.Text>
       </Space>
+      <Card size="small" title="手动四点矫正">
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Typography.Text type="secondary">
+            默认先使用自动矫正。如果对第 3 步检查结果不满意，可在左图按顺时针点选 4 个角点，生成手动矫正图后再点“基于手动矫正重新检查”。
+          </Typography.Text>
+          <Space wrap size={12}>
+            <Button onClick={() => { setManualPoints([]); setManualPreviewUrl(currentReview?.rectifiedImageDataUrl || '') }}>
+              清空点位
+            </Button>
+            <Button onClick={buildManualPreview} disabled={manualPoints.length !== 4 || !beforeImageUrl} loading={manualWarping}>
+              生成手动矫正预览
+            </Button>
+            <Button
+              type="primary"
+              onClick={() => void onApplyManualReview(manualPreviewUrl)}
+              disabled={!manualPreviewUrl}
+              loading={reviewSubmitting}
+            >
+              基于手动矫正重新检查
+            </Button>
+          </Space>
+          <Space wrap size={8}>
+            {manualPoints.map((point, index) => (
+              <Typography.Text key={`${point.x}-${point.y}-${index}`}>P{index + 1}: ({point.x}, {point.y})</Typography.Text>
+            ))}
+            {!manualPoints.length ? <Typography.Text type="secondary">尚未选择点位</Typography.Text> : null}
+          </Space>
+          {currentReview ? (
+            <Alert
+              type="success"
+              showIcon
+              message="当前表格裁剪与 Cells 已切换到手动矫正后的复检结果"
+            />
+          ) : null}
+        </Space>
+      </Card>
       <div
         style={{
           display: 'grid',
@@ -257,13 +505,41 @@ function TableRectifyPreview({ page, table }: { page: ExtractedPage; table: Extr
       >
         <Card size="small" title="矫正前">
           {beforeImageUrl ? (
-            <img src={beforeImageUrl} alt={`${table.tableId}-before-rectify`} style={{ display: 'block', width: '100%', borderRadius: 8 }} />
+            <div
+              ref={imageBoxRef}
+              style={{ position: 'relative', cursor: 'crosshair' }}
+              onClick={handlePickPoint}
+            >
+              <img src={beforeImageUrl} alt={`${table.tableId}-before-rectify`} style={{ display: 'block', width: '100%', borderRadius: 8 }} />
+              {manualPoints.map((point, index) => (
+                <div
+                  key={`${point.x}-${point.y}-${index}`}
+                  style={{
+                    position: 'absolute',
+                    left: `calc(${(point.x / beforeSize.width) * 100}% - 9px)`,
+                    top: `calc(${(point.y / beforeSize.height) * 100}% - 9px)`,
+                    width: 18,
+                    height: 18,
+                    borderRadius: '50%',
+                    background: '#1677ff',
+                    color: '#fff',
+                    fontSize: 11,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.24)',
+                  }}
+                >
+                  {index + 1}
+                </div>
+              ))}
+            </div>
           ) : (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在生成矫正前裁剪图" />
           )}
         </Card>
         <Card size="small" title="矫正后">
-          <img src={table.tableImageDataUrl} alt={`${table.tableId}-after-rectify`} style={{ display: 'block', width: '100%', borderRadius: 8 }} />
+          <img src={afterImageUrl} alt={`${table.tableId}-after-rectify`} style={{ display: 'block', width: '100%', borderRadius: 8 }} />
         </Card>
       </div>
     </Space>
@@ -355,10 +631,24 @@ export default function TableExtractDemoPage() {
   const [result, setResult] = useState<TableExtractResponse | null>(null)
   const [selectedPageNo, setSelectedPageNo] = useState<number | null>(null)
   const [selectedTableId, setSelectedTableId] = useState<string>('')
+  const [manualReview, setManualReview] = useState<ManualReviewState | null>(null)
+  const [reviewSubmitting, setReviewSubmitting] = useState(false)
 
   const canSubmit = useMemo(() => !!uploadFile?.originFileObj && !submitting, [uploadFile, submitting])
   const selectedPage = useMemo(() => result?.pages.find(page => page.pageNo === selectedPageNo) || result?.pages[0] || null, [result, selectedPageNo])
   const selectedTable = useMemo(() => selectedPage?.tables.find(table => table.tableId === selectedTableId) || selectedPage?.tables[0] || null, [selectedPage, selectedTableId])
+  const inspectedTable = useMemo(() => {
+    if (!selectedTable || manualReview?.sourceTableId !== selectedTable.tableId) {
+      return selectedTable
+    }
+    return manualReview.table
+  }, [manualReview, selectedTable])
+  const inspectedRaw = useMemo(() => {
+    if (!selectedTable || manualReview?.sourceTableId !== selectedTable.tableId) {
+      return result
+    }
+    return manualReview.response
+  }, [manualReview, result, selectedTable])
 
   const resetState = () => {
     setUploadFile(null)
@@ -369,6 +659,7 @@ export default function TableExtractDemoPage() {
     setDetectorThreshold(0.25)
     setStructureThreshold(0.35)
     setMaxTablesPerPage(24)
+    setManualReview(null)
   }
 
   const runExtract = async () => {
@@ -401,6 +692,7 @@ export default function TableExtractDemoPage() {
       if (!response.ok) {
         throw new Error(raw.detail || `请求失败(${response.status})`)
       }
+      setManualReview(null)
       setResult(raw)
       const firstPage = raw.pages[0] || null
       setSelectedPageNo(firstPage?.pageNo || null)
@@ -410,6 +702,55 @@ export default function TableExtractDemoPage() {
       msgApi.error(error instanceof Error ? error.message : '提取失败')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const runManualReview = async (dataUrl: string) => {
+    if (!selectedTable) {
+      msgApi.warning('当前没有可复检的表格')
+      return
+    }
+    setReviewSubmitting(true)
+    try {
+      const payload = {
+        file: dataUrlToBase64(dataUrl),
+        fileType: 1,
+        detectorThreshold,
+        structureThreshold,
+        maxTablesPerPage: 1,
+      }
+      const response = await fetch('/ocr/table-extract', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const raw = await response.json() as TableExtractResponse & { detail?: string }
+      if (!response.ok) {
+        throw new Error(raw.detail || `手动复检失败(${response.status})`)
+      }
+      const reviewedTable = raw.pages[0]?.tables[0]
+      if (!reviewedTable) {
+        throw new Error('手动矫正后的图像未检出表格')
+      }
+      setManualReview({
+        sourceTableId: selectedTable.tableId,
+        rectifiedImageDataUrl: dataUrl,
+        response: raw,
+        table: {
+          ...reviewedTable,
+          tableImageDataUrl: dataUrl,
+          meta: {
+            ...reviewedTable.meta,
+            rectified: true,
+            rectifyMode: 'manual_quad',
+          },
+        },
+      })
+      msgApi.success('已基于手动矫正结果重新检查，表格裁剪和 Cells 已切换')
+    } catch (error) {
+      msgApi.error(error instanceof Error ? error.message : '手动复检失败')
+    } finally {
+      setReviewSubmitting(false)
     }
   }
 
@@ -482,7 +823,7 @@ export default function TableExtractDemoPage() {
           <Empty description="请先上传文件并执行表格提取" />
         ) : (
           <Tabs
-            defaultActiveKey="preview"
+            defaultActiveKey="locate"
             items={[
               {
                 key: 'locate',
@@ -534,7 +875,14 @@ export default function TableExtractDemoPage() {
                 key: 'rectify',
                 label: '2. 矩形矫正',
                 children: selectedPage && selectedTable ? (
-                  <TableRectifyPreview page={selectedPage} table={selectedTable} />
+                  <TableRectifyPreview
+                    key={selectedTable.tableId}
+                    page={selectedPage}
+                    table={selectedTable}
+                    manualReview={manualReview}
+                    onApplyManualReview={runManualReview}
+                    reviewSubmitting={reviewSubmitting}
+                  />
                 ) : (
                   <Empty description={selectedPage ? '当前页面未检测到表格' : '当前没有可预览页面'} />
                 ),
@@ -542,8 +890,8 @@ export default function TableExtractDemoPage() {
               {
                 key: 'crop',
                 label: '3. 表格裁剪',
-                children: selectedTable ? (
-                  <CropPreview table={selectedTable} />
+                children: inspectedTable ? (
+                  <CropPreview table={inspectedTable} />
                 ) : (
                   <Empty description={selectedPage ? '当前页面未检测到表格' : '当前没有可预览表格'} />
                 ),
@@ -551,11 +899,11 @@ export default function TableExtractDemoPage() {
               {
                 key: 'cells',
                 label: 'Cells',
-                children: selectedTable ? (
+                children: inspectedTable ? (
                   <Table<TableCell>
                     rowKey={(record, index) => `${record.rowIndex}-${record.colIndex}-${index}`}
                     columns={cellColumns}
-                    dataSource={selectedTable.cells}
+                    dataSource={inspectedTable.cells}
                     pagination={{ pageSize: 10 }}
                     size="small"
                     scroll={{ x: 1000 }}
@@ -569,7 +917,7 @@ export default function TableExtractDemoPage() {
                 label: '原始响应',
                 children: (
                   <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflow: 'auto', fontSize: 12 }}>
-                    {pretty(result)}
+                    {pretty(inspectedRaw)}
                   </pre>
                 ),
               },
