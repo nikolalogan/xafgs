@@ -41,6 +41,11 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
+def env_str(name: str, default: str) -> str:
+    raw = os.getenv(name, "").strip()
+    return raw or default
+
+
 @dataclass(frozen=True)
 class DetectionBox:
     label: str
@@ -72,6 +77,10 @@ class TableImageVariant:
     quad_score: float
     line_coverage_horizontal: float
     line_coverage_vertical: float
+    rectify_scale: float
+    rectify_interpolation: str
+    rectified_width: int
+    rectified_height: int
 
 
 @dataclass(frozen=True)

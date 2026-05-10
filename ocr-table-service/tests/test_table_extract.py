@@ -6,6 +6,7 @@ from app.table_extract import (
     DEFAULT_LAYOUT_MODEL,
     DEFAULT_LAYOUT_MODEL_FILE,
     DetectionBox,
+    RectifyDetection,
     TableExtractError,
     TableImageVariant,
     build_table_cells,
@@ -14,6 +15,7 @@ from app.table_extract import (
     ensure_layout_model_source,
     recognize_best_table_variant,
 )
+from app.table_rectify import rectify_table_crop
 from PIL import Image
 
 
@@ -95,6 +97,10 @@ class TableExtractGeometryTestCase(unittest.TestCase):
             quad_score=0.0,
             line_coverage_horizontal=0.01,
             line_coverage_vertical=0.01,
+            rectify_scale=1.5,
+            rectify_interpolation="lanczos4",
+            rectified_width=220,
+            rectified_height=140,
         )
 
         table = build_table_result(
@@ -116,6 +122,8 @@ class TableExtractGeometryTestCase(unittest.TestCase):
         self.assertEqual(first["pageBBox"], [40.0, 50.0, 150.0, 120.0])
         self.assertEqual(table["cropBBox"], [0.0, 0.0, 220.0, 140.0])
         self.assertEqual(table["meta"]["rectifyMode"], "fallback_none")
+        self.assertEqual(table["meta"]["rectifiedWidth"], 220)
+        self.assertEqual(table["meta"]["rectifiedHeight"], 140)
 
     def test_build_table_result_maps_page_polygon_via_inverse_matrix(self) -> None:
         image = Image.new("RGB", (300, 200), "white")
@@ -140,6 +148,10 @@ class TableExtractGeometryTestCase(unittest.TestCase):
             quad_score=0.66,
             line_coverage_horizontal=0.15,
             line_coverage_vertical=0.12,
+            rectify_scale=1.5,
+            rectify_interpolation="lanczos4",
+            rectified_width=150,
+            rectified_height=75,
         )
 
         table = build_table_result(image, 1, 1, detection, structure_items, table_variant)
@@ -149,6 +161,8 @@ class TableExtractGeometryTestCase(unittest.TestCase):
         self.assertTrue(table["meta"]["rectified"])
         self.assertEqual(table["meta"]["rectifyMode"], "line_quad")
         self.assertEqual(table["meta"]["originalCropWidth"], 120)
+        self.assertEqual(table["meta"]["rectifyScale"], 1.5)
+        self.assertEqual(table["meta"]["rectifyInterpolation"], "lanczos4")
 
     def test_build_table_image_variants_rotates_after_rectify(self) -> None:
         base_variant = TableImageVariant(
@@ -167,12 +181,18 @@ class TableExtractGeometryTestCase(unittest.TestCase):
             quad_score=0.75,
             line_coverage_horizontal=0.2,
             line_coverage_vertical=0.2,
+            rectify_scale=1.5,
+            rectify_interpolation="lanczos4",
+            rectified_width=100,
+            rectified_height=180,
         )
         with mock.patch("app.table_rectify.rectify_table_crop", return_value=base_variant):
             variants = build_table_image_variants(Image.new("RGB", (100, 180), "white"), [0, 0, 100, 180])
         self.assertEqual(len(variants), 2)
         self.assertEqual(variants[0].rectify_mode, "line_quad")
         self.assertEqual(variants[1].rotation_applied, 90)
+        self.assertEqual(variants[1].rectified_width, 180)
+        self.assertEqual(variants[1].rectified_height, 100)
 
     def test_recognize_best_table_variant_prefers_higher_structure_score(self) -> None:
         wide = TableImageVariant(
@@ -191,6 +211,10 @@ class TableExtractGeometryTestCase(unittest.TestCase):
             quad_score=0.0,
             line_coverage_horizontal=0.0,
             line_coverage_vertical=0.0,
+            rectify_scale=1.5,
+            rectify_interpolation="lanczos4",
+            rectified_width=180,
+            rectified_height=100,
         )
         tall = TableImageVariant(
             image=Image.new("RGB", (100, 180), "white"),
@@ -208,6 +232,10 @@ class TableExtractGeometryTestCase(unittest.TestCase):
             quad_score=0.0,
             line_coverage_horizontal=0.0,
             line_coverage_vertical=0.0,
+            rectify_scale=1.5,
+            rectify_interpolation="lanczos4",
+            rectified_width=100,
+            rectified_height=180,
         )
         recognizer = mock.Mock()
         recognizer.recognize.side_effect = [
@@ -222,6 +250,76 @@ class TableExtractGeometryTestCase(unittest.TestCase):
         best_variant, items = recognize_best_table_variant(recognizer, [wide, tall], 0.35)
         self.assertIs(best_variant, tall)
         self.assertEqual(len(items), 4)
+
+    def test_rectify_table_crop_line_quad_reports_scaled_rectified_meta(self) -> None:
+        image = Image.new("RGB", (200, 120), "white")
+        detection = RectifyDetection(
+            rectify_mode="line_quad",
+            quad=[[10.0, 10.0], [170.0, 10.0], [170.0, 90.0], [10.0, 90.0]],
+            deskew_angle=0.4,
+            quad_score=0.81,
+            line_coverage_horizontal=0.14,
+            line_coverage_vertical=0.16,
+        )
+        with mock.patch("app.table_rectify.detect_table_quad", return_value=detection):
+            variant = rectify_table_crop(image, [0, 0, 200, 120])
+        self.assertEqual(variant.rectify_mode, "line_quad")
+        self.assertGreater(variant.rectified_width, 160)
+        self.assertGreater(variant.rectified_height, 80)
+        self.assertEqual(variant.rectify_scale, 1.5)
+        self.assertEqual(variant.rectify_interpolation, "lanczos4")
+
+    def test_rectify_table_crop_deskew_only_reports_rectify_meta(self) -> None:
+        image = Image.new("RGB", (200, 120), "white")
+        detection = RectifyDetection(
+            rectify_mode="deskew_only",
+            quad=None,
+            deskew_angle=1.5,
+            quad_score=0.2,
+            line_coverage_horizontal=0.08,
+            line_coverage_vertical=0.09,
+        )
+        with mock.patch("app.table_rectify.detect_table_quad", return_value=detection):
+            variant = rectify_table_crop(image, [0, 0, 200, 120])
+        self.assertEqual(variant.rectify_mode, "deskew_only")
+        self.assertEqual(variant.rectified_width, 200)
+        self.assertEqual(variant.rectified_height, 120)
+        self.assertEqual(variant.rectify_scale, 1.5)
+        self.assertEqual(variant.rectify_interpolation, "lanczos4")
+
+    def test_rectify_table_crop_honors_rectify_scale_env(self) -> None:
+        image = Image.new("RGB", (200, 120), "white")
+        detection = RectifyDetection(
+            rectify_mode="line_quad",
+            quad=[[0.0, 0.0], [100.0, 0.0], [100.0, 60.0], [0.0, 60.0]],
+            deskew_angle=0.0,
+            quad_score=0.91,
+            line_coverage_horizontal=0.2,
+            line_coverage_vertical=0.2,
+        )
+        with mock.patch("app.table_rectify.detect_table_quad", return_value=detection):
+            baseline = rectify_table_crop(image, [0, 0, 200, 120])
+        with mock.patch.dict("os.environ", {"TABLE_EXTRACT_RECTIFY_SCALE": "2.0"}, clear=False):
+            with mock.patch("app.table_rectify.detect_table_quad", return_value=detection):
+                scaled = rectify_table_crop(image, [0, 0, 200, 120])
+        self.assertGreater(scaled.rectified_width, baseline.rectified_width)
+        self.assertGreater(scaled.rectified_height, baseline.rectified_height)
+        self.assertEqual(scaled.rectify_scale, 2.0)
+
+    def test_rectify_table_crop_honors_rectify_max_edge_env(self) -> None:
+        image = Image.new("RGB", (200, 120), "white")
+        detection = RectifyDetection(
+            rectify_mode="line_quad",
+            quad=[[0.0, 0.0], [300.0, 0.0], [300.0, 100.0], [0.0, 100.0]],
+            deskew_angle=0.0,
+            quad_score=0.91,
+            line_coverage_horizontal=0.2,
+            line_coverage_vertical=0.2,
+        )
+        with mock.patch.dict("os.environ", {"TABLE_EXTRACT_RECTIFY_SCALE": "2.0", "TABLE_EXTRACT_RECTIFY_MAX_EDGE": "256"}, clear=False):
+            with mock.patch("app.table_rectify.detect_table_quad", return_value=detection):
+                variant = rectify_table_crop(image, [0, 0, 200, 120])
+        self.assertLessEqual(max(variant.rectified_width, variant.rectified_height), 256)
 
 
 if __name__ == "__main__":

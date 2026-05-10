@@ -31,6 +31,14 @@ type TableCell = {
   cropPolygon: BoxPolygon
 }
 
+type WarpPreviewResult = {
+  dataUrl: string
+  width: number
+  height: number
+  rectifyScale: number
+  rectifyInterpolation: string
+}
+
 type ExtractedTable = {
   tableId: string
   pageNo: number
@@ -60,6 +68,10 @@ type ExtractedTable = {
     originalCropHeight?: number
     rectified?: boolean
     rectifyMode?: string
+    rectifyScale?: number
+    rectifyInterpolation?: string
+    rectifiedWidth?: number
+    rectifiedHeight?: number
     rotationApplied?: number
     deskewAngle?: number
     quadScore?: number
@@ -98,6 +110,13 @@ type ManualReviewState = {
   table: ExtractedTable
 }
 
+type ManualPreviewMeta = {
+  width: number
+  height: number
+  rectifyScale: number
+  rectifyInterpolation: string
+}
+
 const toBase64 = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
@@ -134,6 +153,9 @@ const dataUrlToBase64 = (dataUrl: string) => {
   const raw = String(dataUrl || '')
   return raw.includes(',') ? raw.split(',')[1] || '' : raw
 }
+
+const MANUAL_RECTIFY_SCALE = 1.5
+const MANUAL_RECTIFY_MAX_EDGE = 4096
 
 const computePaddedBBox = (bbox: number[], width: number, height: number, paddingRatio = 0.02, minPaddingPx = 8) => {
   const padX = Math.max(minPaddingPx, Math.round((bbox[2] - bbox[0]) * paddingRatio))
@@ -231,6 +253,44 @@ const projectPoint = (matrix: number[][], point: Point) => {
   }
 }
 
+const computeRectifiedSize = (width: number, height: number, scale = MANUAL_RECTIFY_SCALE, maxEdge = MANUAL_RECTIFY_MAX_EDGE) => {
+  let targetWidth = Math.max(1, width) * scale
+  let targetHeight = Math.max(1, height) * scale
+  const longestEdge = Math.max(targetWidth, targetHeight)
+  if (longestEdge > maxEdge) {
+    const ratio = maxEdge / longestEdge
+    targetWidth *= ratio
+    targetHeight *= ratio
+  }
+  return {
+    width: Math.max(1, Math.round(targetWidth)),
+    height: Math.max(1, Math.round(targetHeight)),
+    scale,
+  }
+}
+
+const sampleBilinear = (data: Uint8ClampedArray, width: number, height: number, x: number, y: number) => {
+  const clampedX = Math.max(0, Math.min(width - 1, x))
+  const clampedY = Math.max(0, Math.min(height - 1, y))
+  const x0 = Math.floor(clampedX)
+  const y0 = Math.floor(clampedY)
+  const x1 = Math.min(width - 1, x0 + 1)
+  const y1 = Math.min(height - 1, y0 + 1)
+  const dx = clampedX - x0
+  const dy = clampedY - y0
+  const topLeftIndex = (y0 * width + x0) * 4
+  const topRightIndex = (y0 * width + x1) * 4
+  const bottomLeftIndex = (y1 * width + x0) * 4
+  const bottomRightIndex = (y1 * width + x1) * 4
+  const channels = [0, 0, 0, 0]
+  for (let channel = 0; channel < 4; channel += 1) {
+    const top = data[topLeftIndex + channel] * (1 - dx) + data[topRightIndex + channel] * dx
+    const bottom = data[bottomLeftIndex + channel] * (1 - dx) + data[bottomRightIndex + channel] * dx
+    channels[channel] = Math.round(top * (1 - dy) + bottom * dy)
+  }
+  return channels
+}
+
 const loadImageElement = (src: string) =>
   new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image()
@@ -239,16 +299,12 @@ const loadImageElement = (src: string) =>
     image.src = src
   })
 
-const warpImageByQuad = async (src: string, rawPoints: Point[]) => {
+const warpImageByQuad = async (src: string, rawPoints: Point[]): Promise<WarpPreviewResult> => {
   const image = await loadImageElement(src)
   const sourcePoints = orderQuadPoints(rawPoints)
-  const targetWidth = Math.max(
-    1,
-    Math.round(Math.max(distanceBetween(sourcePoints[0], sourcePoints[1]), distanceBetween(sourcePoints[3], sourcePoints[2])))
-  )
-  const targetHeight = Math.max(
-    1,
-    Math.round(Math.max(distanceBetween(sourcePoints[0], sourcePoints[3]), distanceBetween(sourcePoints[1], sourcePoints[2])))
+  const { width: targetWidth, height: targetHeight, scale } = computeRectifiedSize(
+    Math.max(distanceBetween(sourcePoints[0], sourcePoints[1]), distanceBetween(sourcePoints[3], sourcePoints[2])),
+    Math.max(distanceBetween(sourcePoints[0], sourcePoints[3]), distanceBetween(sourcePoints[1], sourcePoints[2]))
   )
   const destinationPoints = [
     { x: 0, y: 0 },
@@ -277,15 +333,13 @@ const warpImageByQuad = async (src: string, rawPoints: Point[]) => {
   const outputImage = outputContext.createImageData(targetWidth, targetHeight)
   for (let y = 0; y < targetHeight; y += 1) {
     for (let x = 0; x < targetWidth; x += 1) {
-      const sourcePoint = projectPoint(inverseMatrix, { x, y })
-      const sourceX = Math.max(0, Math.min(sourceCanvas.width - 1, Math.round(sourcePoint.x)))
-      const sourceY = Math.max(0, Math.min(sourceCanvas.height - 1, Math.round(sourcePoint.y)))
-      const sourceIndex = (sourceY * sourceCanvas.width + sourceX) * 4
+      const sourcePoint = projectPoint(inverseMatrix, { x: x + 0.5, y: y + 0.5 })
       const targetIndex = (y * targetWidth + x) * 4
-      outputImage.data[targetIndex] = sourceData.data[sourceIndex]
-      outputImage.data[targetIndex + 1] = sourceData.data[sourceIndex + 1]
-      outputImage.data[targetIndex + 2] = sourceData.data[sourceIndex + 2]
-      outputImage.data[targetIndex + 3] = sourceData.data[sourceIndex + 3]
+      const rgba = sampleBilinear(sourceData.data, sourceCanvas.width, sourceCanvas.height, sourcePoint.x, sourcePoint.y)
+      outputImage.data[targetIndex] = rgba[0]
+      outputImage.data[targetIndex + 1] = rgba[1]
+      outputImage.data[targetIndex + 2] = rgba[2]
+      outputImage.data[targetIndex + 3] = rgba[3]
     }
   }
   outputContext.putImageData(outputImage, 0, 0)
@@ -293,6 +347,8 @@ const warpImageByQuad = async (src: string, rawPoints: Point[]) => {
     dataUrl: outputCanvas.toDataURL('image/jpeg', 0.92),
     width: targetWidth,
     height: targetHeight,
+    rectifyScale: scale,
+    rectifyInterpolation: 'bilinear',
   }
 }
 
@@ -382,13 +438,14 @@ function TableRectifyPreview({
   page: ExtractedPage
   table: ExtractedTable
   manualReview: ManualReviewState | null
-  onApplyManualReview: (dataUrl: string) => Promise<void>
+  onApplyManualReview: (dataUrl: string, meta: ManualPreviewMeta | null) => Promise<void>
   reviewSubmitting: boolean
 }) {
   const [beforeImageUrl, setBeforeImageUrl] = useState<string>('')
   const [beforeSize, setBeforeSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
   const [manualPoints, setManualPoints] = useState<Point[]>([])
   const [manualPreviewUrl, setManualPreviewUrl] = useState<string>('')
+  const [manualPreviewMeta, setManualPreviewMeta] = useState<ManualPreviewMeta | null>(null)
   const [manualWarping, setManualWarping] = useState(false)
   const imageBoxRef = useRef<HTMLDivElement | null>(null)
   const currentReview = manualReview?.sourceTableId === table.tableId ? manualReview : null
@@ -424,6 +481,16 @@ function TableRectifyPreview({
   useEffect(() => {
     setManualPoints([])
     setManualPreviewUrl(currentReview?.rectifiedImageDataUrl || '')
+    setManualPreviewMeta(
+      currentReview
+        ? {
+            width: currentReview.table.meta.rectifiedWidth || currentReview.table.meta.cropWidth,
+            height: currentReview.table.meta.rectifiedHeight || currentReview.table.meta.cropHeight,
+            rectifyScale: currentReview.table.meta.rectifyScale || MANUAL_RECTIFY_SCALE,
+            rectifyInterpolation: currentReview.table.meta.rectifyInterpolation || 'bilinear',
+          }
+        : null
+    )
   }, [currentReview?.rectifiedImageDataUrl, table.tableId])
 
   const handlePickPoint = (event: { clientX: number; clientY: number }) => {
@@ -436,6 +503,7 @@ function TableRectifyPreview({
       y: Number(((relativeY / bounds.height) * beforeSize.height).toFixed(2)),
     }
     setManualPreviewUrl('')
+    setManualPreviewMeta(null)
     setManualPoints(previous => (previous.length >= 4 ? [point] : [...previous, point]))
   }
 
@@ -445,6 +513,12 @@ function TableRectifyPreview({
     try {
       const warped = await warpImageByQuad(beforeImageUrl, manualPoints)
       setManualPreviewUrl(warped.dataUrl)
+      setManualPreviewMeta({
+        width: warped.width,
+        height: warped.height,
+        rectifyScale: warped.rectifyScale,
+        rectifyInterpolation: warped.rectifyInterpolation,
+      })
     } finally {
       setManualWarping(false)
     }
@@ -455,6 +529,9 @@ function TableRectifyPreview({
       <Space wrap size={12}>
         <Typography.Text>默认模式: {table.meta.rectifyMode || 'fallback_none'}</Typography.Text>
         <Typography.Text>自动矫正: {table.meta.rectified ? '是' : '否'}</Typography.Text>
+        <Typography.Text>rectifyScale: {table.meta.rectifyScale || 1}</Typography.Text>
+        <Typography.Text>rectifyInterpolation: {table.meta.rectifyInterpolation || 'linear'}</Typography.Text>
+        <Typography.Text>rectifiedSize: {(table.meta.rectifiedWidth || table.meta.cropWidth)} x {(table.meta.rectifiedHeight || table.meta.cropHeight)}</Typography.Text>
         <Typography.Text>rotationApplied: {table.meta.rotationApplied || 0}°</Typography.Text>
         <Typography.Text>deskewAngle: {table.meta.deskewAngle || 0}°</Typography.Text>
         <Typography.Text>quadScore: {table.meta.quadScore || 0}</Typography.Text>
@@ -465,7 +542,20 @@ function TableRectifyPreview({
             默认先使用自动矫正。如果对第 3 步检查结果不满意，可在左图按顺时针点选 4 个角点，生成手动矫正图后再点“基于手动矫正重新检查”。
           </Typography.Text>
           <Space wrap size={12}>
-            <Button onClick={() => { setManualPoints([]); setManualPreviewUrl(currentReview?.rectifiedImageDataUrl || '') }}>
+            <Button onClick={() => {
+              setManualPoints([])
+              setManualPreviewUrl(currentReview?.rectifiedImageDataUrl || '')
+              setManualPreviewMeta(
+                currentReview
+                  ? {
+                      width: currentReview.table.meta.rectifiedWidth || currentReview.table.meta.cropWidth,
+                      height: currentReview.table.meta.rectifiedHeight || currentReview.table.meta.cropHeight,
+                      rectifyScale: currentReview.table.meta.rectifyScale || MANUAL_RECTIFY_SCALE,
+                      rectifyInterpolation: currentReview.table.meta.rectifyInterpolation || 'bilinear',
+                    }
+                  : null
+              )
+            }}>
               清空点位
             </Button>
             <Button onClick={buildManualPreview} disabled={manualPoints.length !== 4 || !beforeImageUrl} loading={manualWarping}>
@@ -473,7 +563,7 @@ function TableRectifyPreview({
             </Button>
             <Button
               type="primary"
-              onClick={() => void onApplyManualReview(manualPreviewUrl)}
+              onClick={() => void onApplyManualReview(manualPreviewUrl, manualPreviewMeta)}
               disabled={!manualPreviewUrl}
               loading={reviewSubmitting}
             >
@@ -486,6 +576,11 @@ function TableRectifyPreview({
             ))}
             {!manualPoints.length ? <Typography.Text type="secondary">尚未选择点位</Typography.Text> : null}
           </Space>
+          {manualPreviewMeta ? (
+            <Typography.Text type="secondary">
+              手动预览: {manualPreviewMeta.width} x {manualPreviewMeta.height} / scale {manualPreviewMeta.rectifyScale} / {manualPreviewMeta.rectifyInterpolation}
+            </Typography.Text>
+          ) : null}
           {currentReview ? (
             <Alert
               type="success"
@@ -705,7 +800,7 @@ export default function TableExtractDemoPage() {
     }
   }
 
-  const runManualReview = async (dataUrl: string) => {
+  const runManualReview = async (dataUrl: string, manualPreviewMeta: ManualPreviewMeta | null) => {
     if (!selectedTable) {
       msgApi.warning('当前没有可复检的表格')
       return
@@ -743,6 +838,10 @@ export default function TableExtractDemoPage() {
             ...reviewedTable.meta,
             rectified: true,
             rectifyMode: 'manual_quad',
+            rectifyScale: manualPreviewMeta?.rectifyScale || MANUAL_RECTIFY_SCALE,
+            rectifyInterpolation: manualPreviewMeta?.rectifyInterpolation || 'bilinear',
+            rectifiedWidth: manualPreviewMeta?.width || reviewedTable.meta.rectifiedWidth || reviewedTable.meta.cropWidth,
+            rectifiedHeight: manualPreviewMeta?.height || reviewedTable.meta.rectifiedHeight || reviewedTable.meta.cropHeight,
           },
         },
       })

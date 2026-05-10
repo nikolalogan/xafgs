@@ -5,6 +5,9 @@ from PIL import Image
 from app.table_extract_shared import (
     RectifyDetection,
     TableImageVariant,
+    env_float,
+    env_int,
+    env_str,
     full_crop_bbox,
     identity_matrix,
     load_cv2,
@@ -14,6 +17,52 @@ from app.table_extract_shared import (
     sort_quad_points,
     transform_polygon,
 )
+
+
+DEFAULT_RECTIFY_SCALE = 1.5
+DEFAULT_RECTIFY_MAX_EDGE = 4096
+DEFAULT_RECTIFY_INTERPOLATION = "lanczos4"
+DEFAULT_LINE_MASK_BLUR = 5
+DEFAULT_LINE_MASK_BLOCK_SIZE = 31
+DEFAULT_LINE_MASK_THRESHOLD_C = 15
+DEFAULT_LINE_MASK_KERNEL_DIVISOR = 18
+DEFAULT_LINE_MASK_KERNEL_MIN = 12
+
+
+def resolve_rectify_scale() -> float:
+    return max(1.0, min(env_float("TABLE_EXTRACT_RECTIFY_SCALE", DEFAULT_RECTIFY_SCALE), 4.0))
+
+
+def resolve_rectify_max_edge() -> int:
+    return max(64, env_int("TABLE_EXTRACT_RECTIFY_MAX_EDGE", DEFAULT_RECTIFY_MAX_EDGE))
+
+
+def resolve_rectify_interpolation() -> tuple[str, int]:
+    cv2, _ = load_cv2()
+    name = env_str("TABLE_EXTRACT_RECTIFY_INTERPOLATION", DEFAULT_RECTIFY_INTERPOLATION).strip().lower()
+    mapping = {
+        "nearest": cv2.INTER_NEAREST,
+        "linear": cv2.INTER_LINEAR,
+        "cubic": cv2.INTER_CUBIC,
+        "area": cv2.INTER_AREA,
+        "lanczos4": cv2.INTER_LANCZOS4,
+    }
+    return (name if name in mapping else DEFAULT_RECTIFY_INTERPOLATION), mapping.get(name, cv2.INTER_LANCZOS4)
+
+
+def compute_rectified_size(width: float, height: float) -> tuple[int, int, float]:
+    base_width = max(1.0, width)
+    base_height = max(1.0, height)
+    scale = resolve_rectify_scale()
+    max_edge = resolve_rectify_max_edge()
+    target_width = base_width * scale
+    target_height = base_height * scale
+    longest_edge = max(target_width, target_height)
+    if longest_edge > float(max_edge):
+        clamp_ratio = float(max_edge) / longest_edge
+        target_width *= clamp_ratio
+        target_height *= clamp_ratio
+    return max(1, int(round(target_width))), max(1, int(round(target_height))), scale
 
 
 def estimate_line_coverage(mask: Any, axis: str) -> float:
@@ -69,11 +118,14 @@ def warp_affine_image(image: Image.Image, matrix: list[list[float]]) -> Image.Im
     elif source.shape[2] == 4:
         source = cv2.cvtColor(source, cv2.COLOR_RGBA2RGB)
     affine = np.array(matrix[:2], dtype=np.float32)
-    warped = cv2.warpAffine(source, affine, image.size, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    _, interpolation = resolve_rectify_interpolation()
+    warped = cv2.warpAffine(source, affine, image.size, flags=interpolation, borderMode=cv2.BORDER_REPLICATE)
     return Image.fromarray(warped)
 
 
-def warp_perspective_image(image: Image.Image, quad: list[list[float]]) -> tuple[Image.Image, list[list[float]], list[list[float]]]:
+def warp_perspective_image(
+    image: Image.Image, quad: list[list[float]]
+) -> tuple[Image.Image, list[list[float]], list[list[float]], float, str, int, int]:
     cv2, np = load_cv2()
     source = np.array(image)
     if source.ndim == 2:
@@ -85,8 +137,7 @@ def warp_perspective_image(image: Image.Image, quad: list[list[float]]) -> tuple
     width_bottom = float(((points[2][0] - points[3][0]) ** 2 + (points[2][1] - points[3][1]) ** 2) ** 0.5)
     height_left = float(((points[3][0] - points[0][0]) ** 2 + (points[3][1] - points[0][1]) ** 2) ** 0.5)
     height_right = float(((points[2][0] - points[1][0]) ** 2 + (points[2][1] - points[1][1]) ** 2) ** 0.5)
-    target_width = max(1, int(round(max(width_top, width_bottom))))
-    target_height = max(1, int(round(max(height_left, height_right))))
+    target_width, target_height, rectify_scale = compute_rectified_size(max(width_top, width_bottom), max(height_left, height_right))
     destination = np.array(
         [
             [0.0, 0.0],
@@ -98,19 +149,29 @@ def warp_perspective_image(image: Image.Image, quad: list[list[float]]) -> tuple
     )
     forward = cv2.getPerspectiveTransform(points, destination)
     inverse = cv2.getPerspectiveTransform(destination, points)
-    warped = cv2.warpPerspective(source, forward, (target_width, target_height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-    return Image.fromarray(warped), forward.tolist(), inverse.tolist()
+    interpolation_name, interpolation = resolve_rectify_interpolation()
+    warped = cv2.warpPerspective(source, forward, (target_width, target_height), flags=interpolation, borderMode=cv2.BORDER_REPLICATE)
+    return Image.fromarray(warped), forward.tolist(), inverse.tolist(), rectify_scale, interpolation_name, target_width, target_height
 
 
 def build_table_line_masks(image: Image.Image) -> tuple[Any, Any]:
     cv2, np = load_cv2()
     rgb = np.array(image)
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 15)
+    blur_size = max(1, env_int("TABLE_EXTRACT_LINE_MASK_BLUR", DEFAULT_LINE_MASK_BLUR))
+    if blur_size % 2 == 0:
+        blur_size += 1
+    block_size = max(3, env_int("TABLE_EXTRACT_LINE_MASK_BLOCK_SIZE", DEFAULT_LINE_MASK_BLOCK_SIZE))
+    if block_size % 2 == 0:
+        block_size += 1
+    threshold_c = env_int("TABLE_EXTRACT_LINE_MASK_THRESHOLD_C", DEFAULT_LINE_MASK_THRESHOLD_C)
+    kernel_divisor = max(1, env_int("TABLE_EXTRACT_LINE_MASK_KERNEL_DIVISOR", DEFAULT_LINE_MASK_KERNEL_DIVISOR))
+    kernel_min = max(1, env_int("TABLE_EXTRACT_LINE_MASK_KERNEL_MIN", DEFAULT_LINE_MASK_KERNEL_MIN))
+    gray = cv2.GaussianBlur(gray, (blur_size, blur_size), 0)
+    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, block_size, threshold_c)
     height, width = gray.shape[:2]
-    horizontal_size = max(12, width // 18)
-    vertical_size = max(12, height // 18)
+    horizontal_size = max(kernel_min, width // kernel_divisor)
+    vertical_size = max(kernel_min, height // kernel_divisor)
     horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (horizontal_size, 1))
     vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, vertical_size))
     horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horizontal_kernel)
@@ -209,8 +270,12 @@ def detect_table_quad(image: Image.Image) -> RectifyDetection:
 
 def rectify_table_crop(image: Image.Image, candidate_roi_bbox: list[int]) -> TableImageVariant:
     detection = detect_table_quad(image)
+    interpolation_name, _ = resolve_rectify_interpolation()
+    rectify_scale = resolve_rectify_scale()
     if detection.rectify_mode == "line_quad" and detection.quad is not None:
-        rectified_image, forward_matrix, inverse_matrix = warp_perspective_image(image, detection.quad)
+        rectified_image, forward_matrix, inverse_matrix, rectify_scale, interpolation_name, rectified_width, rectified_height = (
+            warp_perspective_image(image, detection.quad)
+        )
         return TableImageVariant(
             image=rectified_image,
             candidate_roi_bbox=candidate_roi_bbox,
@@ -227,6 +292,10 @@ def rectify_table_crop(image: Image.Image, candidate_roi_bbox: list[int]) -> Tab
             quad_score=detection.quad_score,
             line_coverage_horizontal=detection.line_coverage_horizontal,
             line_coverage_vertical=detection.line_coverage_vertical,
+            rectify_scale=rectify_scale,
+            rectify_interpolation=interpolation_name,
+            rectified_width=rectified_width,
+            rectified_height=rectified_height,
         )
     if detection.rectify_mode == "deskew_only" and abs(detection.deskew_angle) >= 0.2:
         forward_matrix = rotation_matrix(-detection.deskew_angle, image.size[0], image.size[1])
@@ -249,6 +318,10 @@ def rectify_table_crop(image: Image.Image, candidate_roi_bbox: list[int]) -> Tab
             quad_score=detection.quad_score,
             line_coverage_horizontal=detection.line_coverage_horizontal,
             line_coverage_vertical=detection.line_coverage_vertical,
+            rectify_scale=rectify_scale,
+            rectify_interpolation=interpolation_name,
+            rectified_width=width,
+            rectified_height=height,
         )
     width, height = image.size
     return TableImageVariant(
@@ -267,6 +340,10 @@ def rectify_table_crop(image: Image.Image, candidate_roi_bbox: list[int]) -> Tab
         quad_score=detection.quad_score,
         line_coverage_horizontal=detection.line_coverage_horizontal,
         line_coverage_vertical=detection.line_coverage_vertical,
+        rectify_scale=rectify_scale,
+        rectify_interpolation=interpolation_name,
+        rectified_width=width,
+        rectified_height=height,
     )
 
 
@@ -294,6 +371,10 @@ def rotate_table_variant_clockwise(variant: TableImageVariant) -> TableImageVari
         quad_score=variant.quad_score,
         line_coverage_horizontal=variant.line_coverage_horizontal,
         line_coverage_vertical=variant.line_coverage_vertical,
+        rectify_scale=variant.rectify_scale,
+        rectify_interpolation=variant.rectify_interpolation,
+        rectified_width=rotated_image.size[0],
+        rectified_height=rotated_image.size[1],
     )
 
 
