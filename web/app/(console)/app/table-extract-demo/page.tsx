@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Card, Empty, InputNumber, Select, Space, Table, Tabs, Typography, Upload, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { UploadFile } from 'antd/es/upload/interface'
@@ -55,6 +55,15 @@ type ExtractedTable = {
   meta: {
     cropWidth: number
     cropHeight: number
+    originalCropWidth?: number
+    originalCropHeight?: number
+    rectified?: boolean
+    rectifyMode?: string
+    rotationApplied?: number
+    deskewAngle?: number
+    quadScore?: number
+    lineCoverageHorizontal?: number
+    lineCoverageVertical?: number
   }
 }
 
@@ -112,6 +121,17 @@ const detectFileType = (file: File, base64: string): 0 | 1 => {
 }
 
 const pretty = (value: unknown) => JSON.stringify(value, null, 2)
+
+const computePaddedBBox = (bbox: number[], width: number, height: number, paddingRatio = 0.02, minPaddingPx = 8) => {
+  const padX = Math.max(minPaddingPx, Math.round((bbox[2] - bbox[0]) * paddingRatio))
+  const padY = Math.max(minPaddingPx, Math.round((bbox[3] - bbox[1]) * paddingRatio))
+  return [
+    Math.max(0, Math.min(width, Math.round(bbox[0] - padX))),
+    Math.max(0, Math.min(height, Math.round(bbox[1] - padY))),
+    Math.max(0, Math.min(width, Math.round(bbox[2] + padX))),
+    Math.max(0, Math.min(height, Math.round(bbox[3] + padY))),
+  ]
+}
 
 const buildOverlayStyle = (bbox: number[], width: number, height: number, color: string, lineWidth = 2) => ({
   position: 'absolute' as const,
@@ -186,6 +206,67 @@ function PagePreview({ page, selectedTableId }: { page: ExtractedPage; selectedT
         <div key={table.tableId} style={buildOverlayStyle(table.bbox, page.width, page.height, '#1677ff', 3)} />
       ))}
     </div>
+  )
+}
+
+function TableRectifyPreview({ page, table }: { page: ExtractedPage; table: ExtractedTable }) {
+  const [beforeImageUrl, setBeforeImageUrl] = useState<string>('')
+
+  useEffect(() => {
+    let cancelled = false
+    const source = new Image()
+    source.onload = () => {
+      const paddedBBox = computePaddedBBox(table.bbox, page.width, page.height)
+      const cropWidth = Math.max(1, paddedBBox[2] - paddedBBox[0])
+      const cropHeight = Math.max(1, paddedBBox[3] - paddedBBox[1])
+      const canvas = document.createElement('canvas')
+      canvas.width = cropWidth
+      canvas.height = cropHeight
+      const context = canvas.getContext('2d')
+      if (!context) {
+        if (!cancelled) setBeforeImageUrl('')
+        return
+      }
+      context.drawImage(source, paddedBBox[0], paddedBBox[1], cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
+      if (!cancelled) {
+        setBeforeImageUrl(canvas.toDataURL('image/jpeg', 0.92))
+      }
+    }
+    source.src = page.pageImageDataUrl
+    return () => {
+      cancelled = true
+    }
+  }, [page.pageImageDataUrl, page.height, page.width, table.bbox])
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Space wrap size={12}>
+        <Typography.Text>rectifyMode: {table.meta.rectifyMode || 'fallback_none'}</Typography.Text>
+        <Typography.Text>rectified: {table.meta.rectified ? '是' : '否'}</Typography.Text>
+        <Typography.Text>rotationApplied: {table.meta.rotationApplied || 0}°</Typography.Text>
+        <Typography.Text>deskewAngle: {table.meta.deskewAngle || 0}°</Typography.Text>
+        <Typography.Text>quadScore: {table.meta.quadScore || 0}</Typography.Text>
+      </Space>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+          gap: 16,
+          width: '100%',
+        }}
+      >
+        <Card size="small" title="矫正前">
+          {beforeImageUrl ? (
+            <img src={beforeImageUrl} alt={`${table.tableId}-before-rectify`} style={{ display: 'block', width: '100%', borderRadius: 8 }} />
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在生成矫正前裁剪图" />
+          )}
+        </Card>
+        <Card size="small" title="矫正后">
+          <img src={table.tableImageDataUrl} alt={`${table.tableId}-after-rectify`} style={{ display: 'block', width: '100%', borderRadius: 8 }} />
+        </Card>
+      </div>
+    </Space>
   )
 }
 
@@ -366,7 +447,7 @@ export default function TableExtractDemoPage() {
         type="info"
         showIcon
         title="表格提取测试页"
-        description="链路为整页 PDF/图片 -> DocLayout-YOLO 检测 table 区域 -> Table Transformer 做结构识别 -> 返回完整结构对象和每个单元格的页坐标/局部坐标。"
+        description="链路为整页 PDF/图片 -> DocLayout-YOLO 表格定位 -> 矩形矫正/回退 -> Table Transformer 结构识别。下方按阶段拆分为表格定位、矩形矫正、表格裁剪三个主视图。"
       />
 
       <Card title="输入参数" extra={<Button icon={<ReloadOutlined />} onClick={resetState}>重置</Button>}>
@@ -404,8 +485,8 @@ export default function TableExtractDemoPage() {
             defaultActiveKey="preview"
             items={[
               {
-                key: 'preview',
-                label: '预览',
+                key: 'locate',
+                label: '1. 表格定位',
                 children: (
                   <Space orientation="vertical" size={16} style={{ width: '100%' }}>
                     <Space wrap size={12}>
@@ -450,6 +531,24 @@ export default function TableExtractDemoPage() {
                 ),
               },
               {
+                key: 'rectify',
+                label: '2. 矩形矫正',
+                children: selectedPage && selectedTable ? (
+                  <TableRectifyPreview page={selectedPage} table={selectedTable} />
+                ) : (
+                  <Empty description={selectedPage ? '当前页面未检测到表格' : '当前没有可预览页面'} />
+                ),
+              },
+              {
+                key: 'crop',
+                label: '3. 表格裁剪',
+                children: selectedTable ? (
+                  <CropPreview table={selectedTable} />
+                ) : (
+                  <Empty description={selectedPage ? '当前页面未检测到表格' : '当前没有可预览表格'} />
+                ),
+              },
+              {
                 key: 'cells',
                 label: 'Cells',
                 children: selectedTable ? (
@@ -476,14 +575,6 @@ export default function TableExtractDemoPage() {
               },
             ]}
           />
-        )}
-      </Card>
-
-      <Card title={selectedTable ? `表格裁剪 · T${selectedTable.tableIndex}` : '表格裁剪'}>
-        {selectedTable ? (
-          <CropPreview table={selectedTable} />
-        ) : (
-          <Empty description={selectedPage ? '当前页面未检测到表格' : '当前没有可预览表格'} />
         )}
       </Card>
     </Space>
