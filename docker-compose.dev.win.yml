@@ -163,6 +163,8 @@ services:
       TABLE_EXTRACT_STRUCTURE_MODEL: "${TABLE_EXTRACT_STRUCTURE_MODEL:-microsoft/table-transformer-structure-recognition}"
     command: >
       sh -c "uvicorn app.service:app --host 0.0.0.0 --port 8090"
+    volumes:
+      - ./ocr-table-service/model_cache:/app/model_cache
     expose:
       - "8090"
     ports:

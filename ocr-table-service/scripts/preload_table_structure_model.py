@@ -18,6 +18,20 @@ from app.structure_cache import (
 
 DEFAULT_MODEL_ID = "microsoft/table-transformer-structure-recognition"
 DEFAULT_TIMM_MODEL_ID = "timm/resnet18.a1_in1k"
+DEFAULT_HF_HUB_CACHE = "/app/model_cache/hf/hub"
+
+
+def _build_network_error_message(exc: Exception) -> str:
+    endpoint = (os.environ.get("HF_ENDPOINT") or "https://huggingface.co").strip()
+    hf_hub_offline = (os.environ.get("HF_HUB_OFFLINE") or "").strip()
+    transformers_offline = (os.environ.get("TRANSFORMERS_OFFLINE") or "").strip()
+    mode = "offline" if hf_hub_offline == "1" or transformers_offline == "1" else "online"
+    return (
+        "TATR structure/timm 模型预热失败，疑似网络或镜像源不可用: "
+        f"endpoint={endpoint}, mode={mode}, detail={exc}. "
+        "请检查网络后重试 `make ocr-table-model-cache-warm`，"
+        "或设置可用的 HF_ENDPOINT 后重试。"
+    )
 
 
 def main() -> None:
@@ -29,14 +43,18 @@ def main() -> None:
         )
     root = Path(os.environ.get("TABLE_EXTRACT_MODEL_CACHE_DIR", "/app/model_cache/table_extract").strip())
     target_dir = root / "structure"
+    hf_hub_cache_dir = Path((os.environ.get("HF_HUB_CACHE") or DEFAULT_HF_HUB_CACHE).strip() or DEFAULT_HF_HUB_CACHE)
     target_dir.mkdir(parents=True, exist_ok=True)
-    local_dir = snapshot_download(
-        repo_id=model_id,
-        local_dir=str(target_dir),
-        local_dir_use_symlinks=False,
-        allow_patterns=["config.json", "preprocessor_config.json", "processor_config.json", "model.safetensors", "pytorch_model.bin"],
-    )
-    snapshot_download(repo_id=DEFAULT_TIMM_MODEL_ID)
+    hf_hub_cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        local_dir = snapshot_download(
+            repo_id=model_id,
+            local_dir=str(target_dir),
+            allow_patterns=["config.json", "preprocessor_config.json", "processor_config.json", "model.safetensors", "pytorch_model.bin"],
+        )
+        snapshot_download(repo_id=DEFAULT_TIMM_MODEL_ID, cache_dir=str(hf_hub_cache_dir))
+    except Exception as exc:
+        raise SystemExit(_build_network_error_message(exc)) from exc
     ensure_default_structure_support_files(target_dir)
     missing_files = find_missing_default_structure_files(target_dir)
     if missing_files:

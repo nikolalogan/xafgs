@@ -37,10 +37,10 @@ help:
 	@echo "  make ocr-table-wheels-sync # 同步表格提取依赖到本地 wheels 缓存目录"
 	@echo "  make ocr-table-wheels-verify # 校验表格提取 wheels 是否可离线覆盖依赖闭包"
 	@echo "  make ocr-table-cache-warm # 预热表格提取模型缓存（detection + structure + timm）"
-	@echo "  make ocr-table-layout-model-cache-warm # 兼容命令：预热 TATR detection 模型缓存"
-	@echo "  make ocr-table-detection-model-cache-warm # 预热 TATR detection 模型缓存"
-	@echo "  make ocr-table-model-cache-warm # 预热 TATR structure + timm 模型缓存"
-	@echo "  make ocr-table-build # 自动同步+校验 wheels，并在构建阶段预热模型后离线构建表格提取镜像（推荐）"
+	@echo "  make ocr-table-layout-model-cache-warm # 兼容命令：联网预热 TATR detection 模型缓存"
+	@echo "  make ocr-table-detection-model-cache-warm # 联网预热 TATR detection 模型缓存"
+	@echo "  make ocr-table-model-cache-warm # 联网预热 TATR structure + timm 模型缓存"
+	@echo "  make ocr-table-build # 自动同步+校验 wheels 后离线构建表格提取镜像（推荐）"
 	@echo "  make ocr-table-build-offline # 仅使用本地 wheels 构建表格提取镜像"
 	@echo "  make ocr-table-build-online-fallback # 自动同步 wheels 后构建表格提取镜像（允许缺包回源）"
 	@echo "  make docling-wheels-sync # 同步 Docling Python 依赖到本地 wheels 缓存目录"
@@ -274,12 +274,15 @@ menu-build-redis:
 menu-preload-all: menu-preload-ocr-table-layout menu-preload-ocr-table-structure menu-preload-ocr-table-all menu-preload-docling
 
 menu-preload-ocr-table-layout:
+	@echo "提示: 该命令需要联网，用于下载 detection 模型缓存。"
 	$(MAKE) ocr-table-layout-model-cache-warm
 
 menu-preload-ocr-table-structure:
+	@echo "提示: 该命令需要联网，用于下载 structure+timm 模型缓存。"
 	$(MAKE) ocr-table-model-cache-warm
 
 menu-preload-ocr-table-all:
+	@echo "提示: 该命令需要联网，用于下载 detection+structure+timm 模型缓存。"
 	$(MAKE) ocr-table-cache-warm
 
 menu-preload-docling:
