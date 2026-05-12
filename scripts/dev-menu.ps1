@@ -1,63 +1,46 @@
-﻿param(
+param(
     [string]$DevComposeFile = "docker-compose.dev.yml"
 )
 
 $ErrorActionPreference = "Stop"
 
-$ServiceItems = @(
-    @{ Key = "1"; Name = "全部服务"; Service = "" }
-    @{ Key = "2"; Name = "frontend"; Service = "frontend" }
-    @{ Key = "3"; Name = "backend"; Service = "backend" }
-    @{ Key = "4"; Name = "ocr-service"; Service = "ocr-service" }
-    @{ Key = "5"; Name = "docling-service"; Service = "docling-service" }
-    @{ Key = "6"; Name = "vllm"; Service = "vllm" }
-    @{ Key = "7"; Name = "gateway"; Service = "gateway" }
-    @{ Key = "8"; Name = "postgres"; Service = "postgres" }
-    @{ Key = "9"; Name = "redis"; Service = "redis" }
+$StartItems = @(
+    @{ Name = "frontend"; Target = "menu-start-frontend" }
+    @{ Name = "backend"; Target = "menu-start-backend" }
+    @{ Name = "ocr-service"; Target = "menu-start-ocr-service" }
+    @{ Name = "ocr-table-service"; Target = "menu-start-ocr-table-service" }
+    @{ Name = "docling-service"; Target = "menu-start-docling-service" }
+    @{ Name = "vllm"; Target = "menu-start-vllm" }
+    @{ Name = "gateway"; Target = "menu-start-gateway" }
+    @{ Name = "postgres"; Target = "menu-start-postgres" }
+    @{ Name = "redis"; Target = "menu-start-redis" }
 )
 
-function Invoke-Compose {
-    param(
-        [Parameter(ValueFromRemainingArguments = $true)]
-        [string[]]$Args
-    )
+$BuildItems = @(
+    @{ Name = "frontend"; Target = "menu-build-frontend" }
+    @{ Name = "backend"; Target = "menu-build-backend" }
+    @{ Name = "ocr-service"; Target = "menu-build-ocr-service" }
+    @{ Name = "ocr-table-service"; Target = "menu-build-ocr-table-service" }
+    @{ Name = "docling-service"; Target = "menu-build-docling-service" }
+    @{ Name = "vllm"; Target = "menu-build-vllm" }
+    @{ Name = "gateway"; Target = "menu-build-gateway" }
+    @{ Name = "postgres"; Target = "menu-build-postgres" }
+    @{ Name = "redis"; Target = "menu-build-redis" }
+)
 
-    & docker compose -f $DevComposeFile @Args
-}
+$PreloadItems = @(
+    @{ Name = "ocr-table-layout"; Target = "menu-preload-ocr-table-layout" }
+    @{ Name = "ocr-table-structure"; Target = "menu-preload-ocr-table-structure" }
+    @{ Name = "ocr-table-all"; Target = "menu-preload-ocr-table-all" }
+    @{ Name = "docling-model"; Target = "menu-preload-docling" }
+)
 
-function Invoke-OcrTableWarm {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$ScriptPath
-    )
-
-    $hfEndpoint = if ([string]::IsNullOrWhiteSpace($env:HF_ENDPOINT)) { "https://hf-mirror.com" } else { $env:HF_ENDPOINT }
-    $composeArgs = @(
-        "run", "--rm",
-        "-e", "HF_HUB_OFFLINE=0",
-        "-e", "TRANSFORMERS_OFFLINE=0",
-        "-e", "HF_ENDPOINT=$hfEndpoint",
-        "ocr-table-service",
-        "python", $ScriptPath
-    )
-    Invoke-Compose @composeArgs
-}
-
-function Invoke-OcrTableWarmWithPrerequisites {
+function Invoke-MenuMake {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ScriptPath
+        [string]$Target
     )
-
-    New-Item -ItemType Directory -Force -Path ocr-table-service/model_cache | Out-Null
-    $env:OCR_TABLE_WHEELS_ONLY = "1"
-    try {
-        Invoke-Compose build ocr-table-service
-        Invoke-OcrTableWarm -ScriptPath $ScriptPath
-    }
-    finally {
-        Remove-Item Env:OCR_TABLE_WHEELS_ONLY -ErrorAction SilentlyContinue
-    }
+    & make "DEV_COMPOSE_FILE=$DevComposeFile" $Target
 }
 
 function Show-Header {
@@ -67,240 +50,160 @@ function Show-Header {
     Write-Host ""
 }
 
-function Show-Menu {
-    Write-Host "请选择操作:"
-    Write-Host "  1) 启动菜单"
-    Write-Host "  2) 打包菜单"
-    Write-Host "  3) 停止开发环境"
-    Write-Host "  4) 查看开发日志"
-    Write-Host "  5) 查看容器状态"
-    Write-Host "  6) 同步主 OCR wheels"
-    Write-Host "  7) 同步表格提取 wheels"
-    Write-Host "  8) 同步 Docling wheels"
-    Write-Host "  9) 预热表格 layout 模型"
-    Write-Host "  10) 预热表格 structure 模型"
-    Write-Host "  11) 预热表格全部模型"
-    Write-Host "  0) 退出"
-    Write-Host ""
-}
-
-function Show-Start-Menu {
-    Write-Host "请选择启动操作:"
-    foreach ($item in $ServiceItems) {
-        Write-Host ("  {0}) 启动 {1}" -f $item.Key, $item.Name)
-    }
-    Write-Host "  0) 返回上级"
-    Write-Host ""
-}
-
-function Show-Build-Menu {
-    Write-Host "请选择打包操作:"
-    Write-Host "  1) 打包所有"
-    Write-Host "  2) 打包并启动"
-    Write-Host "  3) 单独打包 OCR"
-    Write-Host "  4) 单独打包 Docling"
-    Write-Host "  5) 单独打包 OCR-Table"
-    Write-Host "  0) 返回上级"
-    Write-Host ""
-}
-
 function Pause-Menu {
     Write-Host ""
     Read-Host "按回车键返回菜单" | Out-Null
 }
 
-function Restart-All-Services {
-    Invoke-Compose down
-    Invoke-Compose up -d
+function Show-Main-Menu {
+    Write-Host "请选择操作:"
+    Write-Host "  1) 启动"
+    Write-Host "  2) 打包"
+    Write-Host "  3) 预加载"
+    Write-Host "  4) 停止"
+    Write-Host "  5) 日志"
+    Write-Host "  6) 状态"
+    Write-Host "  0) 退出"
+    Write-Host ""
 }
 
-function Restart-Single-Service {
+function Show-Submenu {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Service
+        [string]$Title,
+        [Parameter(Mandatory = $true)]
+        [array]$Items
     )
-
-    Invoke-Compose stop $Service
-    Invoke-Compose rm -f $Service
-    Invoke-Compose up -d $Service
+    Write-Host ("请选择{0}操作:" -f $Title)
+    Write-Host "  1) 全部"
+    Write-Host "  2) 单个"
+    Write-Host "  0) 返回上级"
+    Write-Host ""
+    Write-Host ("{0}可选项:" -f $Title)
+    for ($i = 0; $i -lt $Items.Count; $i++) {
+        Write-Host ("  {0}) {1}" -f ($i + 1), $Items[$i].Name)
+    }
+    Write-Host ""
 }
 
-function Invoke-Build-All {
-    New-Item -ItemType Directory -Force -Path ocr-service/model_cache | Out-Null
-    New-Item -ItemType Directory -Force -Path docling-service/model_cache | Out-Null
-    & bash ocr-service/scripts/verify_wheels.sh
-    $env:OCR_WHEELS_ONLY = "1"
-    $env:DOCLING_WHEELS_ONLY = "1"
-    try {
-        Invoke-Compose build
+function Select-SingleItem {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Title,
+        [Parameter(Mandatory = $true)]
+        [array]$Items
+    )
+    Write-Host ("请选择单个{0}项:" -f $Title)
+    for ($i = 0; $i -lt $Items.Count; $i++) {
+        Write-Host ("  {0}) {1}" -f ($i + 1), $Items[$i].Name)
     }
-    finally {
-        Remove-Item Env:OCR_WHEELS_ONLY -ErrorAction SilentlyContinue
-        Remove-Item Env:DOCLING_WHEELS_ONLY -ErrorAction SilentlyContinue
+    Write-Host "  0) 返回上级"
+    Write-Host ""
+    $choice = (Read-Host "输入选项编号").Trim()
+    if ($choice -eq "0") {
+        return
     }
+    if ($choice -notmatch '^\d+$') {
+        Write-Host "无效选项: $choice"
+        Pause-Menu
+        return
+    }
+    $index = [int]$choice
+    if ($index -lt 1 -or $index -gt $Items.Count) {
+        Write-Host "无效选项: $choice"
+        Pause-Menu
+        return
+    }
+    Invoke-MenuMake -Target $Items[$index - 1].Target
+    Pause-Menu
 }
 
-function Invoke-Build-Up {
-    New-Item -ItemType Directory -Force -Path ocr-service/model_cache | Out-Null
-    New-Item -ItemType Directory -Force -Path docling-service/model_cache | Out-Null
-    & bash ocr-service/scripts/verify_wheels.sh
-    $env:OCR_WHEELS_ONLY = "1"
-    $env:DOCLING_WHEELS_ONLY = "1"
-    try {
-        Invoke-Compose up --build -d
-    }
-    finally {
-        Remove-Item Env:OCR_WHEELS_ONLY -ErrorAction SilentlyContinue
-        Remove-Item Env:DOCLING_WHEELS_ONLY -ErrorAction SilentlyContinue
+function Show-Start-Submenu {
+    while ($true) {
+        Show-Header
+        Show-Submenu -Title "启动" -Items $StartItems
+        $choice = (Read-Host "输入选项编号").Trim()
+        switch ($choice) {
+            "1" {
+                Invoke-MenuMake -Target "menu-start-all"
+                Pause-Menu
+            }
+            "2" {
+                Select-SingleItem -Title "启动" -Items $StartItems
+            }
+            "0" { return }
+            default {
+                Write-Host "无效选项: $choice"
+                Pause-Menu
+            }
+        }
     }
 }
 
 function Show-Build-Submenu {
     while ($true) {
         Show-Header
-        Show-Build-Menu
-        $buildChoice = (Read-Host "输入打包选项编号").Trim()
-
-        switch ($buildChoice) {
+        Show-Submenu -Title "打包" -Items $BuildItems
+        $choice = (Read-Host "输入选项编号").Trim()
+        switch ($choice) {
             "1" {
-                Invoke-Build-All
+                Invoke-MenuMake -Target "menu-build-all"
                 Pause-Menu
             }
             "2" {
-                Invoke-Build-Up
+                Select-SingleItem -Title "打包" -Items $BuildItems
             }
-            "3" {
-                New-Item -ItemType Directory -Force -Path ocr-service/model_cache | Out-Null
-                & bash ocr-service/scripts/verify_wheels.sh
-                $env:OCR_WHEELS_ONLY = "1"
-                try {
-                    Invoke-Compose build ocr-service
-                }
-                finally {
-                    Remove-Item Env:OCR_WHEELS_ONLY -ErrorAction SilentlyContinue
-                }
-                Pause-Menu
-            }
-            "4" {
-                New-Item -ItemType Directory -Force -Path docling-service/model_cache | Out-Null
-                $env:DOCLING_WHEELS_ONLY = "1"
-                try {
-                    Invoke-Compose build docling-service
-                }
-                finally {
-                    Remove-Item Env:DOCLING_WHEELS_ONLY -ErrorAction SilentlyContinue
-                }
-                Pause-Menu
-            }
-            "5" {
-                New-Item -ItemType Directory -Force -Path ocr-table-service/model_cache | Out-Null
-                & bash ocr-table-service/scripts/verify_wheels.sh
-                $env:OCR_TABLE_WHEELS_ONLY = "1"
-                try {
-                    Invoke-Compose build ocr-table-service
-                }
-                finally {
-                    Remove-Item Env:OCR_TABLE_WHEELS_ONLY -ErrorAction SilentlyContinue
-                }
-                Pause-Menu
-            }
-            "0" {
-                return
-            }
+            "0" { return }
             default {
-                Write-Host "无效选项: $buildChoice"
+                Write-Host "无效选项: $choice"
                 Pause-Menu
             }
         }
     }
 }
 
-function Show-Start-Submenu {
+function Show-Preload-Submenu {
     while ($true) {
         Show-Header
-        Show-Start-Menu
-        $startChoice = (Read-Host "输入启动选项编号").Trim()
-
-        if ($startChoice -eq "0") {
-            return
-        }
-
-        $selectedItem = $ServiceItems | Where-Object { $_.Key -eq $startChoice } | Select-Object -First 1
-        if ($null -eq $selectedItem) {
-            Write-Host "无效选项: $startChoice"
-            Pause-Menu
-            continue
-        }
-
-        if ([string]::IsNullOrWhiteSpace($selectedItem.Service)) {
-            Restart-All-Services
-        }
-        else {
-            Restart-Single-Service -Service $selectedItem.Service
+        Show-Submenu -Title "预加载" -Items $PreloadItems
+        $choice = (Read-Host "输入选项编号").Trim()
+        switch ($choice) {
+            "1" {
+                Invoke-MenuMake -Target "menu-preload-all"
+                Pause-Menu
+            }
+            "2" {
+                Select-SingleItem -Title "预加载" -Items $PreloadItems
+            }
+            "0" { return }
+            default {
+                Write-Host "无效选项: $choice"
+                Pause-Menu
+            }
         }
     }
 }
 
 while ($true) {
     Show-Header
-    Show-Menu
+    Show-Main-Menu
     $choice = (Read-Host "输入选项编号").Trim()
-
     switch ($choice) {
-        "1" {
-            Show-Start-Submenu
-        }
-        "2" {
-            Show-Build-Submenu
-        }
-        "3" {
-            Invoke-Compose down
-            Pause-Menu
-        }
+        "1" { Show-Start-Submenu }
+        "2" { Show-Build-Submenu }
+        "3" { Show-Preload-Submenu }
         "4" {
-            Invoke-Compose logs -f
+            Invoke-MenuMake -Target "down"
+            Pause-Menu
         }
         "5" {
-            Invoke-Compose ps
-            & docker compose ps
-            Pause-Menu
+            Invoke-MenuMake -Target "logs"
         }
         "6" {
-            & bash ocr-service/scripts/download_wheels.sh
+            Invoke-MenuMake -Target "ps"
             Pause-Menu
         }
-        "7" {
-            & bash ocr-table-service/scripts/download_wheels.sh
-            Pause-Menu
-        }
-        "8" {
-            & bash docling-service/scripts/download_wheels.sh
-            Pause-Menu
-        }
-        "9" {
-            Invoke-OcrTableWarmWithPrerequisites -ScriptPath "/app/scripts/preload_table_layout_model.py"
-            Pause-Menu
-        }
-        "10" {
-            Invoke-OcrTableWarmWithPrerequisites -ScriptPath "/app/scripts/preload_table_structure_model.py"
-            Pause-Menu
-        }
-        "11" {
-            New-Item -ItemType Directory -Force -Path ocr-table-service/model_cache | Out-Null
-            $env:OCR_TABLE_WHEELS_ONLY = "1"
-            try {
-                Invoke-Compose build ocr-table-service
-                Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_layout_model.py"
-                Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_structure_model.py"
-            }
-            finally {
-                Remove-Item Env:OCR_TABLE_WHEELS_ONLY -ErrorAction SilentlyContinue
-            }
-            Pause-Menu
-        }
-        "0" {
-            exit 0
-        }
+        "0" { exit 0 }
         default {
             Write-Host "无效选项: $choice"
             Pause-Menu

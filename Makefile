@@ -1,4 +1,4 @@
-.PHONY: help menu dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-table-wheels-sync ocr-table-wheels-verify ocr-table-build ocr-table-build-offline ocr-table-build-online-fallback ocr-table-model-cache-init ocr-table-rebuild-image ocr-table-cache-warm ocr-table-model-cache-warm ocr-table-layout-model-cache-warm ocr-table-detection-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback
+.PHONY: help menu dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-table-wheels-sync ocr-table-wheels-verify ocr-table-build ocr-table-build-offline ocr-table-build-online-fallback ocr-table-model-cache-init ocr-table-rebuild-image ocr-table-cache-warm ocr-table-model-cache-warm ocr-table-layout-model-cache-warm ocr-table-detection-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback menu-start-all menu-start-frontend menu-start-backend menu-start-ocr-service menu-start-ocr-table-service menu-start-docling-service menu-start-vllm menu-start-gateway menu-start-postgres menu-start-redis menu-build-all menu-build-frontend menu-build-backend menu-build-ocr-service menu-build-ocr-table-service menu-build-docling-service menu-build-vllm menu-build-gateway menu-build-postgres menu-build-redis menu-preload-all menu-preload-ocr-table-layout menu-preload-ocr-table-structure menu-preload-ocr-table-all menu-preload-docling
 
 ifeq ($(OS),Windows_NT)
 UNAME_S := Windows_NT
@@ -55,6 +55,9 @@ help:
 	@echo "  make prod-down # 仅停止生产模式容器"
 	@echo "  make logs      # 查看开发模式日志"
 	@echo "  make ps        # 查看容器状态"
+	@echo "  make menu-start-all / menu-start-<service> # 菜单统一入口：全部/单服务启动"
+	@echo "  make menu-build-all / menu-build-<service> # 菜单统一入口：全部/单服务打包"
+	@echo "  make menu-preload-all / menu-preload-<item> # 菜单统一入口：模型相关预加载"
 
 ifeq ($(OS),Windows_NT)
 menu: SHELL := powershell.exe
@@ -188,3 +191,96 @@ logs:
 ps:
 	docker compose -f $(DEV_COMPOSE_FILE) ps
 	docker compose ps
+
+menu-start-all:
+	docker compose -f $(DEV_COMPOSE_FILE) down
+	docker compose -f $(DEV_COMPOSE_FILE) up -d
+
+menu-start-frontend:
+	docker compose -f $(DEV_COMPOSE_FILE) stop frontend
+	docker compose -f $(DEV_COMPOSE_FILE) rm -f frontend
+	docker compose -f $(DEV_COMPOSE_FILE) up -d frontend
+
+menu-start-backend:
+	docker compose -f $(DEV_COMPOSE_FILE) stop backend
+	docker compose -f $(DEV_COMPOSE_FILE) rm -f backend
+	docker compose -f $(DEV_COMPOSE_FILE) up -d backend
+
+menu-start-ocr-service:
+	docker compose -f $(DEV_COMPOSE_FILE) stop ocr-service
+	docker compose -f $(DEV_COMPOSE_FILE) rm -f ocr-service
+	docker compose -f $(DEV_COMPOSE_FILE) up -d ocr-service
+
+menu-start-ocr-table-service:
+	docker compose -f $(DEV_COMPOSE_FILE) stop ocr-table-service
+	docker compose -f $(DEV_COMPOSE_FILE) rm -f ocr-table-service
+	docker compose -f $(DEV_COMPOSE_FILE) up -d ocr-table-service
+
+menu-start-docling-service:
+	docker compose -f $(DEV_COMPOSE_FILE) stop docling-service
+	docker compose -f $(DEV_COMPOSE_FILE) rm -f docling-service
+	docker compose -f $(DEV_COMPOSE_FILE) up -d docling-service
+
+menu-start-vllm:
+	docker compose -f $(DEV_COMPOSE_FILE) stop vllm
+	docker compose -f $(DEV_COMPOSE_FILE) rm -f vllm
+	docker compose -f $(DEV_COMPOSE_FILE) up -d vllm
+
+menu-start-gateway:
+	docker compose -f $(DEV_COMPOSE_FILE) stop gateway
+	docker compose -f $(DEV_COMPOSE_FILE) rm -f gateway
+	docker compose -f $(DEV_COMPOSE_FILE) up -d gateway
+
+menu-start-postgres:
+	docker compose -f $(DEV_COMPOSE_FILE) stop postgres
+	docker compose -f $(DEV_COMPOSE_FILE) rm -f postgres
+	docker compose -f $(DEV_COMPOSE_FILE) up -d postgres
+
+menu-start-redis:
+	docker compose -f $(DEV_COMPOSE_FILE) stop redis
+	docker compose -f $(DEV_COMPOSE_FILE) rm -f redis
+	docker compose -f $(DEV_COMPOSE_FILE) up -d redis
+
+menu-build-all:
+	docker compose -f $(DEV_COMPOSE_FILE) build
+
+menu-build-frontend:
+	docker compose -f $(DEV_COMPOSE_FILE) build frontend
+
+menu-build-backend:
+	docker compose -f $(DEV_COMPOSE_FILE) build backend
+
+menu-build-ocr-service:
+	docker compose -f $(DEV_COMPOSE_FILE) build ocr-service
+
+menu-build-ocr-table-service:
+	docker compose -f $(DEV_COMPOSE_FILE) build ocr-table-service
+
+menu-build-docling-service:
+	docker compose -f $(DEV_COMPOSE_FILE) build docling-service
+
+menu-build-vllm:
+	docker compose -f $(DEV_COMPOSE_FILE) build vllm
+
+menu-build-gateway:
+	docker compose -f $(DEV_COMPOSE_FILE) build gateway
+
+menu-build-postgres:
+	docker compose -f $(DEV_COMPOSE_FILE) build postgres
+
+menu-build-redis:
+	docker compose -f $(DEV_COMPOSE_FILE) build redis
+
+menu-preload-all: menu-preload-ocr-table-layout menu-preload-ocr-table-structure menu-preload-ocr-table-all menu-preload-docling
+
+menu-preload-ocr-table-layout:
+	$(MAKE) ocr-table-layout-model-cache-warm
+
+menu-preload-ocr-table-structure:
+	$(MAKE) ocr-table-model-cache-warm
+
+menu-preload-ocr-table-all:
+	$(MAKE) ocr-table-cache-warm
+
+menu-preload-docling:
+	$(MAKE) docling-model-cache-warm

@@ -3,12 +3,40 @@
 set -euo pipefail
 
 DEV_COMPOSE_FILE="${1:-${DEV_COMPOSE_FILE:-docker-compose.dev.yml}}"
-SERVICE_KEYS=("1" "2" "3" "4" "5" "6" "7" "8" "9")
-SERVICE_NAMES=("全部服务" "frontend" "backend" "ocr-service" "docling-service" "vllm" "gateway" "postgres" "redis")
-SERVICE_VALUES=("" "frontend" "backend" "ocr-service" "docling-service" "vllm" "gateway" "postgres" "redis")
 
-run_compose() {
-  docker compose -f "$DEV_COMPOSE_FILE" "$@"
+START_ITEMS=(
+  "frontend:menu-start-frontend"
+  "backend:menu-start-backend"
+  "ocr-service:menu-start-ocr-service"
+  "ocr-table-service:menu-start-ocr-table-service"
+  "docling-service:menu-start-docling-service"
+  "vllm:menu-start-vllm"
+  "gateway:menu-start-gateway"
+  "postgres:menu-start-postgres"
+  "redis:menu-start-redis"
+)
+
+BUILD_ITEMS=(
+  "frontend:menu-build-frontend"
+  "backend:menu-build-backend"
+  "ocr-service:menu-build-ocr-service"
+  "ocr-table-service:menu-build-ocr-table-service"
+  "docling-service:menu-build-docling-service"
+  "vllm:menu-build-vllm"
+  "gateway:menu-build-gateway"
+  "postgres:menu-build-postgres"
+  "redis:menu-build-redis"
+)
+
+PRELOAD_ITEMS=(
+  "ocr-table-layout:menu-preload-ocr-table-layout"
+  "ocr-table-structure:menu-preload-ocr-table-structure"
+  "ocr-table-all:menu-preload-ocr-table-all"
+  "docling-model:menu-preload-docling"
+)
+
+run_make() {
+  make DEV_COMPOSE_FILE="$DEV_COMPOSE_FILE" "$@"
 }
 
 show_header() {
@@ -18,186 +46,172 @@ show_header() {
   echo
 }
 
-show_menu() {
-  echo "请选择操作:"
-  echo "  1) 启动菜单"
-  echo "  2) 打包菜单"
-  echo "  3) 停止开发环境"
-  echo "  4) 查看开发日志"
-  echo "  5) 查看容器状态"
-  echo "  6) 同步主 OCR wheels"
-  echo "  7) 同步表格提取 wheels"
-  echo "  8) 同步 Docling wheels"
-  echo "  9) 预热表格 layout 模型"
-  echo "  10) 预热表格 structure 模型"
-  echo "  11) 预热表格全部模型"
-  echo "  0) 退出"
-  echo
-}
-
-show_start_menu() {
-  echo "请选择启动操作:"
-  local index
-  for index in "${!SERVICE_KEYS[@]}"; do
-    echo "  ${SERVICE_KEYS[$index]}) 启动 ${SERVICE_NAMES[$index]}"
-  done
-  echo "  0) 返回上级"
-  echo
-}
-
-show_build_menu() {
-  echo "请选择打包操作:"
-  echo "  1) 打包所有"
-  echo "  2) 打包并启动"
-  echo "  3) 单独打包 OCR"
-  echo "  4) 单独打包 Docling"
-  echo "  0) 返回上级"
-  echo
-}
-
 pause_menu() {
   echo
   read -r -p "按回车键返回菜单..." _
 }
 
-restart_all_services() {
-  run_compose down
-  run_compose up -d
+show_main_menu() {
+  echo "请选择操作:"
+  echo "  1) 启动"
+  echo "  2) 打包"
+  echo "  3) 预加载"
+  echo "  4) 停止"
+  echo "  5) 日志"
+  echo "  6) 状态"
+  echo "  0) 退出"
+  echo
 }
 
-restart_single_service() {
-  local service="$1"
-  run_compose stop "$service"
-  run_compose rm -f "$service"
-  run_compose up -d "$service"
+show_submenu_with_items() {
+  local title="$1"
+  shift
+  local -n items_ref=$1
+  echo "请选择${title}操作:"
+  echo "  1) 全部"
+  echo "  2) 单个"
+  echo "  0) 返回上级"
+  echo
+  if [[ "${#items_ref[@]}" -gt 0 ]]; then
+    echo "${title}可选项:"
+    local idx=1
+    local entry
+    for entry in "${items_ref[@]}"; do
+      echo "  ${idx}) ${entry%%:*}"
+      idx=$((idx + 1))
+    done
+    echo
+  fi
 }
 
-build_all() {
-  mkdir -p ocr-service/model_cache docling-service/model_cache
-  bash ocr-service/scripts/verify_wheels.sh
-  OCR_WHEELS_ONLY=1 DOCLING_WHEELS_ONLY=1 run_compose build
+choose_single_and_run() {
+  local title="$1"
+  shift
+  local -n items_ref=$1
+  local choice entry target idx
+  echo "请选择单个${title}项:"
+  idx=1
+  for entry in "${items_ref[@]}"; do
+    echo "  ${idx}) ${entry%%:*}"
+    idx=$((idx + 1))
+  done
+  echo "  0) 返回上级"
+  echo
+  read -r -p "输入选项编号: " choice
+  choice="${choice%$'\r'}"
+  if [[ "$choice" == "0" ]]; then
+    return
+  fi
+  if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#items_ref[@]} )); then
+    echo "无效选项: $choice"
+    pause_menu
+    return
+  fi
+  entry="${items_ref[$((choice - 1))]}"
+  target="${entry#*:}"
+  run_make "$target"
+  pause_menu
 }
 
-build_up() {
-  mkdir -p ocr-service/model_cache docling-service/model_cache
-  bash ocr-service/scripts/verify_wheels.sh
-  OCR_WHEELS_ONLY=1 DOCLING_WHEELS_ONLY=1 run_compose up --build -d
-}
-
-show_build_submenu() {
+show_start_menu() {
   while true; do
     show_header
-    show_build_menu
-    read -r -p "输入打包选项编号: " build_choice
-    build_choice="${build_choice%$'\r'}"
-
-    case "$build_choice" in
+    show_submenu_with_items "启动" START_ITEMS
+    read -r -p "输入选项编号: " choice
+    choice="${choice%$'\r'}"
+    case "$choice" in
       1)
-        build_all
+        run_make menu-start-all
         pause_menu
         ;;
       2)
-        build_up
-        ;;
-      3)
-        mkdir -p ocr-service/model_cache
-        bash ocr-service/scripts/verify_wheels.sh
-        OCR_WHEELS_ONLY=1 run_compose build ocr-service
-        pause_menu
-        ;;
-      4)
-        mkdir -p docling-service/model_cache
-        DOCLING_WHEELS_ONLY=1 run_compose build docling-service
-        pause_menu
+        choose_single_and_run "启动" START_ITEMS
         ;;
       0)
         return
         ;;
       *)
-        echo "无效选项: $build_choice"
+        echo "无效选项: $choice"
         pause_menu
         ;;
     esac
   done
 }
 
-show_start_submenu() {
+show_build_menu() {
   while true; do
     show_header
-    show_start_menu
-    read -r -p "输入启动选项编号: " start_choice
-    start_choice="${start_choice%$'\r'}"
-
-    case "$start_choice" in
+    show_submenu_with_items "打包" BUILD_ITEMS
+    read -r -p "输入选项编号: " choice
+    choice="${choice%$'\r'}"
+    case "$choice" in
+      1)
+        run_make menu-build-all
+        pause_menu
+        ;;
+      2)
+        choose_single_and_run "打包" BUILD_ITEMS
+        ;;
       0)
         return
         ;;
+      *)
+        echo "无效选项: $choice"
+        pause_menu
+        ;;
     esac
+  done
+}
 
-    local index
-    for index in "${!SERVICE_KEYS[@]}"; do
-      if [[ "${SERVICE_KEYS[$index]}" == "$start_choice" ]]; then
-        if [[ -z "${SERVICE_VALUES[$index]}" ]]; then
-          restart_all_services
-        else
-          restart_single_service "${SERVICE_VALUES[$index]}"
-        fi
-        continue 2
-      fi
-    done
-
-    echo "无效选项: $start_choice"
-    pause_menu
+show_preload_menu() {
+  while true; do
+    show_header
+    show_submenu_with_items "预加载" PRELOAD_ITEMS
+    read -r -p "输入选项编号: " choice
+    choice="${choice%$'\r'}"
+    case "$choice" in
+      1)
+        run_make menu-preload-all
+        pause_menu
+        ;;
+      2)
+        choose_single_and_run "预加载" PRELOAD_ITEMS
+        ;;
+      0)
+        return
+        ;;
+      *)
+        echo "无效选项: $choice"
+        pause_menu
+        ;;
+    esac
   done
 }
 
 while true; do
   show_header
-  show_menu
+  show_main_menu
   read -r -p "输入选项编号: " choice
   choice="${choice%$'\r'}"
-
   case "$choice" in
     1)
-      show_start_submenu
+      show_start_menu
       ;;
     2)
-      show_build_submenu
+      show_build_menu
       ;;
     3)
-      run_compose down
-      pause_menu
+      show_preload_menu
       ;;
     4)
-      run_compose logs -f
+      run_make down
+      pause_menu
       ;;
     5)
-      run_compose ps
-      docker compose ps
-      pause_menu
+      run_make logs
       ;;
     6)
-      bash ocr-service/scripts/download_wheels.sh
-      pause_menu
-      ;;
-    7)
-      bash ocr-table-service/scripts/download_wheels.sh
-      pause_menu
-      ;;
-    8)
-      bash docling-service/scripts/download_wheels.sh
-      pause_menu
-      ;;
-    9)
-      make ocr-table-layout-model-cache-warm
-      pause_menu
-      ;;
-    10)
-      make ocr-table-model-cache-warm
-      pause_menu
-      ;;
-    11)
-      make ocr-table-cache-warm
+      run_make ps
       pause_menu
       ;;
     0)
