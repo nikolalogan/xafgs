@@ -95,7 +95,7 @@ def extract_tables(payload: dict[str, Any]) -> dict[str, Any]:
     line_detection_sensitivity = _to_float(payload, "line_detection_sensitivity", 0.56, 0.0, 1.0)
     min_line_support_ratio = _to_float(payload, "min_line_support_ratio", 0.25, 0.0, 1.0)
     use_table_deskew = _to_bool(payload, "use_table_deskew", True)
-    deskew_min_angle_deg = _to_float(payload, "deskew_min_angle_deg", 0.2, 0.0, 10.0)
+    deskew_min_angle_deg = _to_float(payload, "deskew_min_angle_deg", 0.2, -10.0, 10.0)
     deskew_max_angle_deg = _to_float(payload, "deskew_max_angle_deg", 5.0, 0.0, 10.0)
     deskew_min_confidence = _to_float(payload, "deskew_min_confidence", 0.45, 0.0, 1.0)
     use_post_sharpen = _to_bool(payload, "use_post_sharpen", True)

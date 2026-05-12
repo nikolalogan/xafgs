@@ -964,7 +964,7 @@ export default function TableExtractDemoPage() {
           </div>
           <div style={{ minWidth: 180 }}>
             <Typography.Text>deskew 最小角度</Typography.Text>
-            <InputNumber min={0} max={10} step={0.1} value={params.deskew_min_angle_deg} onChange={value => setParams(previous => ({ ...previous, deskew_min_angle_deg: Number(value || PARAM_DEFAULTS.deskew_min_angle_deg) }))} style={{ width: '100%' }} />
+            <InputNumber min={-10} max={10} step={0.1} value={params.deskew_min_angle_deg} onChange={value => setParams(previous => ({ ...previous, deskew_min_angle_deg: Number(value || PARAM_DEFAULTS.deskew_min_angle_deg) }))} style={{ width: '100%' }} />
           </div>
           <div style={{ minWidth: 180 }}>
             <Typography.Text>deskew 最大角度</Typography.Text>

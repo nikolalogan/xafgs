@@ -423,10 +423,12 @@ def rectify_table_crop(
     trim_options = border_trim_options or resolve_default_border_trim_options()
     coverage_confidence = min(1.0, (detection.line_coverage_horizontal + detection.line_coverage_vertical) * 5.0)
     angle_abs = abs(detection.deskew_angle)
+    min_angle_abs = abs(deskew_min_angle_deg)
+    max_angle_abs = abs(deskew_max_angle_deg)
     deskew_allowed = (
         use_table_deskew
-        and angle_abs >= max(0.0, deskew_min_angle_deg)
-        and angle_abs <= max(0.0, deskew_max_angle_deg)
+        and angle_abs >= min_angle_abs
+        and angle_abs <= max_angle_abs
         and coverage_confidence >= max(0.0, min(1.0, deskew_min_confidence))
     )
     if detection.rectify_mode == "line_quad" and detection.quad is not None:
