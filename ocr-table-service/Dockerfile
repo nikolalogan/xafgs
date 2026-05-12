@@ -10,6 +10,7 @@ ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
 ARG PIP_DEFAULT_TIMEOUT=600
 ARG PIP_RETRIES=10
 ARG OCR_TABLE_WHEELS_ONLY=1
+ARG OCR_TABLE_PRELOAD_MODELS=0
 ARG HF_ENDPOINT=https://hf-mirror.com
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -48,8 +49,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY app /app/app
 COPY scripts /app/scripts
-RUN python /app/scripts/preload_table_layout_model.py \
-    && python /app/scripts/preload_table_structure_model.py
+RUN if [ "${OCR_TABLE_PRELOAD_MODELS}" = "1" ]; then \
+      python /app/scripts/preload_table_layout_model.py \
+      && python /app/scripts/preload_table_structure_model.py; \
+    else \
+      echo "skip model preload during image build (OCR_TABLE_PRELOAD_MODELS=${OCR_TABLE_PRELOAD_MODELS})"; \
+    fi
 
 EXPOSE 8090
 
