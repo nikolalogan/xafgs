@@ -25,6 +25,20 @@ function Invoke-Compose {
     & docker compose -f $DevComposeFile @Args
 }
 
+function Invoke-OcrTableWarm {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ScriptPath
+    )
+
+    $hfEndpoint = if ([string]::IsNullOrWhiteSpace($env:HF_ENDPOINT)) { "https://hf-mirror.com" } else { $env:HF_ENDPOINT }
+    Invoke-Compose run --rm `
+        -e HF_HUB_OFFLINE=0 `
+        -e TRANSFORMERS_OFFLINE=0 `
+        -e "HF_ENDPOINT=$hfEndpoint" `
+        ocr-table-service python $ScriptPath
+}
+
 function Show-Header {
     Write-Host ""
     Write-Host "项目开发菜单"
@@ -230,15 +244,16 @@ while ($true) {
             Pause-Menu
         }
         "9" {
-            & make ocr-table-layout-model-cache-warm
+            Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_layout_model.py"
             Pause-Menu
         }
         "10" {
-            & make ocr-table-model-cache-warm
+            Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_structure_model.py"
             Pause-Menu
         }
         "11" {
-            & make ocr-table-cache-warm
+            Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_layout_model.py"
+            Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_structure_model.py"
             Pause-Menu
         }
         "0" {
