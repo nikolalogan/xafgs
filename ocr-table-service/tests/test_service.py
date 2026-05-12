@@ -6,11 +6,11 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 from app.service import app
-from app.startup_checks import ensure_startup_prerequisites
 from app.structure_cache import (
     normalize_default_structure_config,
     normalize_default_structure_processor_configs,
 )
+from app.table_extract_shared import ensure_layout_model_source, ensure_structure_model_source
 from app.table_extract import TableExtractError
 
 
@@ -64,129 +64,26 @@ class TableExtractRouteTestCase(unittest.TestCase):
         self.assertIn("file 不能为空", response.json()["detail"])
 
 
-class StartupCheckTestCase(unittest.TestCase):
-    def test_startup_check_passes_when_layout_model_exists(self) -> None:
-        with mock.patch("pathlib.Path.is_file", return_value=True):
-            with mock.patch("app.startup_checks.normalize_default_structure_config", return_value=False):
-                with mock.patch("app.startup_checks.normalize_default_structure_processor_configs", return_value=False):
-                    ensure_startup_prerequisites()
-
-    def test_startup_check_reports_actionable_instruction_when_layout_model_missing(self) -> None:
-        with mock.patch("app.startup_checks.resolve_layout_cache_dir", return_value="/app/model_cache/table_extract/layout"):
-            with mock.patch("app.startup_checks.resolve_layout_model_file_name", return_value="doclayout_yolo_docstructbench_imgsz1024.pt"):
-                with mock.patch("app.startup_checks.resolve_layout_model_name", return_value="juliozhao/DocLayout-YOLO-DocStructBench"):
-                    with mock.patch("pathlib.Path.is_file", return_value=False):
-                        with self.assertRaises(TableExtractError) as ctx:
-                            ensure_startup_prerequisites()
+class LazyModelResolutionTestCase(unittest.TestCase):
+    def test_layout_model_source_raises_actionable_error_when_default_cache_missing(self) -> None:
+        with mock.patch("app.table_extract_shared.resolve_layout_cache_dir", return_value="/app/model_cache/table_extract/layout"):
+            with mock.patch("pathlib.Path.is_file", return_value=False):
+                with self.assertRaises(TableExtractError) as ctx:
+                    ensure_layout_model_source("microsoft/table-transformer-detection")
         message = str(ctx.exception)
-        self.assertTrue(message.startswith("DocLayout-YOLO layout 模型未预热，ocr-table-service 无法启动"))
-        self.assertIn("make ocr-table-layout-model-cache-warm", message)
-        self.assertIn("juliozhao/DocLayout-YOLO-DocStructBench", message)
-        self.assertIn("/app/model_cache/table_extract/layout", message)
-        self.assertIn("ocr-table-service/model_cache/table_extract/layout/", message)
-        self.assertIn("doclayout_yolo_docstructbench_imgsz1024.pt", message)
+        self.assertIn("模型在首次使用时不可用", message)
+        self.assertIn("missing_files", message)
+        self.assertIn("make ocr-table-detection-model-cache-warm", message)
 
-    def test_startup_check_passes_when_default_structure_model_files_exist(self) -> None:
-        with mock.patch("app.startup_checks.resolve_layout_model_name", return_value="juliozhao/DocLayout-YOLO-DocStructBench"):
-            with mock.patch("app.startup_checks.resolve_layout_cache_dir", return_value="/app/model_cache/table_extract/layout"):
-                with mock.patch("app.startup_checks.resolve_layout_model_file_name", return_value="doclayout_yolo_docstructbench_imgsz1024.pt"):
-                    with mock.patch("app.startup_checks.resolve_structure_model_name", return_value="microsoft/table-transformer-structure-recognition-v1.1-pub"):
-                        with mock.patch("app.startup_checks.resolve_structure_cache_dir", return_value="/app/model_cache/table_extract/structure"):
-                            with mock.patch("pathlib.Path.is_file", return_value=True):
-                                with mock.patch("app.startup_checks.normalize_default_structure_config", return_value=False):
-                                    with mock.patch("app.startup_checks.normalize_default_structure_processor_configs", return_value=False):
-                                        ensure_startup_prerequisites()
-
-    def test_startup_check_normalizes_default_structure_config_before_pass(self) -> None:
-        config_payload = (
-            '{"dilation": null, "backbone": null, "use_pretrained_backbone": true, '
-            '"use_timm_backbone": false, "backbone_config": {"model_type": "resnet"}}\n'
-        )
-        with mock.patch("app.startup_checks.resolve_layout_model_name", return_value="juliozhao/DocLayout-YOLO-DocStructBench"):
-            with mock.patch("app.startup_checks.resolve_layout_cache_dir", return_value="/app/model_cache/table_extract/layout"):
-                with mock.patch("app.startup_checks.resolve_layout_model_file_name", return_value="doclayout_yolo_docstructbench_imgsz1024.pt"):
-                    with mock.patch("app.startup_checks.resolve_structure_model_name", return_value="microsoft/table-transformer-structure-recognition-v1.1-pub"):
-                        with mock.patch("app.startup_checks.resolve_structure_cache_dir", return_value="/app/model_cache/table_extract/structure"):
-                            with mock.patch("pathlib.Path.is_file", return_value=True):
-                                with mock.patch("app.startup_checks.normalize_default_structure_processor_configs", return_value=False):
-                                    with mock.patch("pathlib.Path.read_text", return_value=config_payload):
-                                        with mock.patch("pathlib.Path.write_text") as write_text:
-                                            ensure_startup_prerequisites()
-        write_text.assert_called_once()
-        normalized_payload = write_text.call_args.args[0]
-        self.assertIn('"dilation": false', normalized_payload)
-        self.assertIn('"backbone": "resnet50"', normalized_payload)
-        self.assertIn('"use_pretrained_backbone": false', normalized_payload)
-
-    def test_startup_check_normalizes_default_structure_processor_configs_before_pass(self) -> None:
-        processor_payload = (
-            '{"do_resize": true, "image_processor_type": "DetrImageProcessor", "size": {"longest_edge": 800}}\n'
-        )
-        with mock.patch("app.startup_checks.resolve_layout_model_name", return_value="juliozhao/DocLayout-YOLO-DocStructBench"):
-            with mock.patch("app.startup_checks.resolve_layout_cache_dir", return_value="/app/model_cache/table_extract/layout"):
-                with mock.patch("app.startup_checks.resolve_layout_model_file_name", return_value="doclayout_yolo_docstructbench_imgsz1024.pt"):
-                    with mock.patch("app.startup_checks.resolve_structure_model_name", return_value="microsoft/table-transformer-structure-recognition-v1.1-pub"):
-                        with mock.patch("app.startup_checks.resolve_structure_cache_dir", return_value="/app/model_cache/table_extract/structure"):
-                            with mock.patch("pathlib.Path.is_file", return_value=True):
-                                with mock.patch("app.startup_checks.normalize_default_structure_config", return_value=False):
-                                    with mock.patch("pathlib.Path.read_text", return_value=processor_payload):
-                                        with mock.patch("pathlib.Path.write_text") as write_text:
-                                            ensure_startup_prerequisites()
-        self.assertEqual(write_text.call_count, 2)
-        normalized_payload = write_text.call_args.args[0]
-        self.assertIn('"shortest_edge": 800', normalized_payload)
-        self.assertIn('"longest_edge": 800', normalized_payload)
-
-    def test_startup_check_reports_actionable_instruction_when_structure_model_missing(self) -> None:
-        def fake_is_file(path: object) -> bool:
-            path_name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
-            return path_name in {"doclayout_yolo_docstructbench_imgsz1024.pt", "config.json"}
-
-        with mock.patch("app.startup_checks.resolve_layout_model_name", return_value="juliozhao/DocLayout-YOLO-DocStructBench"):
-            with mock.patch("app.startup_checks.resolve_layout_cache_dir", return_value="/app/model_cache/table_extract/layout"):
-                with mock.patch("app.startup_checks.resolve_layout_model_file_name", return_value="doclayout_yolo_docstructbench_imgsz1024.pt"):
-                    with mock.patch("app.startup_checks.resolve_structure_model_name", return_value="microsoft/table-transformer-structure-recognition-v1.1-pub"):
-                        with mock.patch("app.startup_checks.resolve_structure_cache_dir", return_value="/app/model_cache/table_extract/structure"):
-                            with mock.patch("pathlib.Path.is_file", new=fake_is_file):
-                                with self.assertRaises(TableExtractError) as ctx:
-                                    ensure_startup_prerequisites()
+    def test_structure_model_source_raises_actionable_error_when_default_cache_missing(self) -> None:
+        with mock.patch("app.table_extract_shared.resolve_structure_cache_dir", return_value="/app/model_cache/table_extract/structure"):
+            with mock.patch("pathlib.Path.is_file", return_value=False):
+                with self.assertRaises(TableExtractError) as ctx:
+                    ensure_structure_model_source("microsoft/table-transformer-structure-recognition")
         message = str(ctx.exception)
-        self.assertTrue(message.startswith("TATR structure 模型未预热完整，ocr-table-service 无法启动"))
-        self.assertIn("microsoft/table-transformer-structure-recognition-v1.1-pub", message)
-        self.assertIn("/app/model_cache/table_extract/structure", message)
-        self.assertIn("ocr-table-service/model_cache/table_extract/structure/", message)
-        self.assertIn("preprocessor_config.json", message)
-        self.assertIn("processor_config.json", message)
-        self.assertIn("model.safetensors", message)
+        self.assertIn("模型在首次使用时不可用", message)
+        self.assertIn("missing_files", message)
         self.assertIn("make ocr-table-model-cache-warm", message)
-        self.assertIn("make ocr-table-cache-warm", message)
-
-    def test_startup_check_skips_default_structure_cache_precheck_for_custom_model(self) -> None:
-        def fake_is_file(path: object) -> bool:
-            return str(path).endswith("doclayout_yolo_docstructbench_imgsz1024.pt")
-
-        with mock.patch("app.startup_checks.resolve_layout_model_name", return_value="juliozhao/DocLayout-YOLO-DocStructBench"):
-            with mock.patch("app.startup_checks.resolve_layout_cache_dir", return_value="/app/model_cache/table_extract/layout"):
-                with mock.patch("app.startup_checks.resolve_layout_model_file_name", return_value="doclayout_yolo_docstructbench_imgsz1024.pt"):
-                    with mock.patch("app.startup_checks.resolve_structure_model_name", return_value="custom/structure-model"):
-                        with mock.patch("pathlib.Path.is_file", new=fake_is_file):
-                            ensure_startup_prerequisites()
-
-    def test_startup_check_reports_actionable_instruction_when_structure_config_invalid(self) -> None:
-        with mock.patch("app.startup_checks.resolve_layout_model_name", return_value="juliozhao/DocLayout-YOLO-DocStructBench"):
-            with mock.patch("app.startup_checks.resolve_layout_cache_dir", return_value="/app/model_cache/table_extract/layout"):
-                with mock.patch("app.startup_checks.resolve_layout_model_file_name", return_value="doclayout_yolo_docstructbench_imgsz1024.pt"):
-                    with mock.patch("app.startup_checks.resolve_structure_model_name", return_value="microsoft/table-transformer-structure-recognition-v1.1-pub"):
-                        with mock.patch("app.startup_checks.resolve_structure_cache_dir", return_value="/app/model_cache/table_extract/structure"):
-                            with mock.patch("pathlib.Path.is_file", return_value=True):
-                                with mock.patch("app.startup_checks.normalize_default_structure_config", side_effect=ValueError("bad json")):
-                                    with self.assertRaises(TableExtractError) as ctx:
-                                        ensure_startup_prerequisites()
-        message = str(ctx.exception)
-        self.assertTrue(message.startswith("TATR structure 模型缓存配置非法，ocr-table-service 无法启动"))
-        self.assertIn("bad json", message)
-        self.assertIn("make ocr-table-model-cache-warm", message)
-        self.assertIn("make ocr-table-cache-warm", message)
 
 
 class TableTransformerRecognizerTestCase(unittest.TestCase):

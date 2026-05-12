@@ -177,8 +177,8 @@ make ocr-table-model-cache-warm
 - `make ocr-table-cache-warm` 是推荐的首次启动命令，用于一次性补齐 detection + structure + timm 两套默认模型缓存；
 - `ocr-table-service/model_cache/hf/` 用于表格提取链路的 Transformers 缓存；不复用 Docling 的 artifacts 目录；
 - 默认策略改为“预热后运行”：`TATR detection` 与默认 TATR structure 模型都不再运行时在线拉取；
-- `ocr-table-service` 现会在启动前预检默认 layout 与默认 structure 缓存；任一缺失都会直接启动失败，并给出 `make ocr-table-layout-model-cache-warm`、`make ocr-table-model-cache-warm`、`make ocr-table-cache-warm`、目标目录和缺失文件名；
-- 若默认 structure 缓存缺少 `processor_config.json`，典型症状是网关 `/ocr/table-extract` 返回 `504`，同时 `ocr-table-service` 日志出现指向 Hugging Face `processor_config.json` 的 `Network is unreachable`；
+- `ocr-table-service` 启动阶段不再执行模型缓存预检与文件改写；`/healthz` 不因模型缓存缺失而失败；
+- 若默认 layout/structure 缓存缺失（例如缺少 `processor_config.json`），服务仍可启动，但首次调用 `/ocr/table-extract` 会快速失败并返回包含 `cache_dir`、`missing_files` 与预热命令的错误；
 - 如果 layout/TATR 模型文件缺失、相关依赖未就绪，或模型加载失败，`/ocr/table-extract` 会明确报错，不做旧模型自动回退；
 - `make ocr-build` 会先自动同步主 OCR wheels，再做离线校验与构建；`make ocr-table-build` 只在需要表格提取时单独构建重型服务。
 - `docker-compose` 中 `OCR_WHEELS_ONLY` 与 `OCR_TABLE_WHEELS_ONLY` 默认均为 `1`（本地 wheel 优先且不回源）；在线回源仅在对应 `*-online-fallback` 命令下显式开启。

@@ -1,12 +1,10 @@
 import os
 import time
-from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from app.startup_checks import ensure_startup_prerequisites
 from app.table_extract import TableExtractError, extract_tables
 
 
@@ -33,13 +31,7 @@ class TableExtractRequest(BaseModel):
     reduce_noise: bool | None = None
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    ensure_startup_prerequisites()
-    yield
-
-
-app = FastAPI(title="OCR Table Extract Service", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="OCR Table Extract Service", version="1.0.0")
 
 
 @app.get("/healthz")

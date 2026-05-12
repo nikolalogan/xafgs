@@ -58,4 +58,4 @@ RUN if [ "${OCR_TABLE_PRELOAD_MODELS}" = "1" ]; then \
 
 EXPOSE 8090
 
-CMD ["sh", "-c", "python /app/scripts/check_startup.py && uvicorn app.service:app --host 0.0.0.0 --port 8090"]
+CMD ["uvicorn", "app.service:app", "--host", "0.0.0.0", "--port", "8090"]

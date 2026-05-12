@@ -20,7 +20,7 @@ from app.table_extract_shared import (
     normalize_bbox,
     polygon_to_bbox,
     resolve_structure_cache_dir,
-    resolve_structure_local_model_dir,
+    ensure_structure_model_source,
     resolve_structure_model_name,
     transform_polygon,
     TableExtractError,
@@ -83,7 +83,7 @@ class TableTransformerRecognizer:
 def get_structure_recognizer() -> TableTransformerRecognizer:
     model_name = resolve_structure_model_name()
     return TableTransformerRecognizer(
-        model_id=resolve_structure_local_model_dir(model_name) or model_name,
+        model_id=ensure_structure_model_source(model_name),
         cache_dir=resolve_structure_cache_dir(),
     )
 

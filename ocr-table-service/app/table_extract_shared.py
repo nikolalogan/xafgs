@@ -136,7 +136,7 @@ def resolve_structure_cache_dir() -> str:
 
 
 def resolve_hf_cache_dir() -> str:
-    return os.getenv("HF_HOME", "/app/model_cache/hf").strip()
+    return os.getenv("HF_HUB_CACHE", "/app/model_cache/hf/hub").strip()
 
 
 def resolve_structure_model_name() -> str:
@@ -156,15 +156,27 @@ def resolve_layout_local_model_dir(model_name: str) -> str | None:
     return None
 
 
+def find_missing_layout_model_files(model_name: str) -> list[str]:
+    if model_name != DEFAULT_LAYOUT_MODEL:
+        return []
+    target = Path(resolve_layout_cache_dir())
+    missing = [name for name in DEFAULT_LAYOUT_MODEL_FILES if not (target / name).is_file()]
+    if "model.safetensors" in missing and (target / "pytorch_model.bin").is_file():
+        missing.remove("model.safetensors")
+    return missing
+
+
 def ensure_layout_model_source(model_name: str) -> str:
     local_model_dir = resolve_layout_local_model_dir(model_name)
     if local_model_dir:
         return local_model_dir
     if model_name == DEFAULT_LAYOUT_MODEL:
-        required_files = ", ".join(DEFAULT_LAYOUT_MODEL_FILES)
+        missing_files = find_missing_layout_model_files(model_name)
+        missing = ", ".join(missing_files) if missing_files else ", ".join(DEFAULT_LAYOUT_MODEL_FILES)
         raise TableExtractError(
-            f"TATR detection 模型未预热: model={model_name}, cache_dir={resolve_layout_cache_dir()}, "
-            f"required_files=[{required_files}]"
+            f"TATR detection 模型在首次使用时不可用: model={model_name}, cache_dir={resolve_layout_cache_dir()}, "
+            f"missing_files=[{missing}]. 请先执行 `make ocr-table-detection-model-cache-warm` "
+            "或 `make ocr-table-cache-warm`。"
         )
     return model_name
 
@@ -176,6 +188,31 @@ def resolve_structure_local_model_dir(model_name: str) -> str | None:
     if all((target / name).is_file() for name in DEFAULT_STRUCTURE_MODEL_FILES):
         return str(target)
     return None
+
+
+def find_missing_structure_model_files(model_name: str) -> list[str]:
+    if model_name != DEFAULT_STRUCTURE_MODEL:
+        return []
+    target = Path(resolve_structure_cache_dir())
+    missing = [name for name in DEFAULT_STRUCTURE_MODEL_FILES if not (target / name).is_file()]
+    if "model.safetensors" in missing and (target / "pytorch_model.bin").is_file():
+        missing.remove("model.safetensors")
+    return missing
+
+
+def ensure_structure_model_source(model_name: str) -> str:
+    local_model_dir = resolve_structure_local_model_dir(model_name)
+    if local_model_dir:
+        return local_model_dir
+    if model_name == DEFAULT_STRUCTURE_MODEL:
+        missing_files = find_missing_structure_model_files(model_name)
+        missing = ", ".join(missing_files) if missing_files else ", ".join(DEFAULT_STRUCTURE_MODEL_FILES)
+        raise TableExtractError(
+            f"TATR structure 模型在首次使用时不可用: model={model_name}, cache_dir={resolve_structure_cache_dir()}, "
+            f"missing_files=[{missing}]. 请先执行 `make ocr-table-model-cache-warm` "
+            "或 `make ocr-table-cache-warm`。"
+        )
+    return model_name
 
 
 def normalize_bbox(bbox: list[float], width: int, height: int) -> list[float]:
