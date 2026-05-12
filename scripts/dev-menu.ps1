@@ -78,6 +78,7 @@ function Show-Build-Menu {
     Write-Host "  2) 打包并启动"
     Write-Host "  3) 单独打包 OCR"
     Write-Host "  4) 单独打包 Docling"
+    Write-Host "  5) 单独打包 OCR-Table"
     Write-Host "  0) 返回上级"
     Write-Host ""
 }
@@ -167,6 +168,18 @@ function Show-Build-Submenu {
                 }
                 finally {
                     Remove-Item Env:DOCLING_WHEELS_ONLY -ErrorAction SilentlyContinue
+                }
+                Pause-Menu
+            }
+            "5" {
+                New-Item -ItemType Directory -Force -Path ocr-table-service/model_cache | Out-Null
+                & bash ocr-table-service/scripts/verify_wheels.sh
+                $env:OCR_TABLE_WHEELS_ONLY = "1"
+                try {
+                    Invoke-Compose build ocr-table-service
+                }
+                finally {
+                    Remove-Item Env:OCR_TABLE_WHEELS_ONLY -ErrorAction SilentlyContinue
                 }
                 Pause-Menu
             }
