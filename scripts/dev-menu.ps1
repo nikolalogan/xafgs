@@ -32,11 +32,15 @@ function Invoke-OcrTableWarm {
     )
 
     $hfEndpoint = if ([string]::IsNullOrWhiteSpace($env:HF_ENDPOINT)) { "https://hf-mirror.com" } else { $env:HF_ENDPOINT }
-    Invoke-Compose run --rm `
-        -e HF_HUB_OFFLINE=0 `
-        -e TRANSFORMERS_OFFLINE=0 `
-        -e "HF_ENDPOINT=$hfEndpoint" `
-        ocr-table-service python $ScriptPath
+    $composeArgs = @(
+        "run", "--rm",
+        "-e", "HF_HUB_OFFLINE=0",
+        "-e", "TRANSFORMERS_OFFLINE=0",
+        "-e", "HF_ENDPOINT=$hfEndpoint",
+        "ocr-table-service",
+        "python", $ScriptPath
+    )
+    Invoke-Compose @composeArgs
 }
 
 function Invoke-OcrTableWarmWithPrerequisites {
