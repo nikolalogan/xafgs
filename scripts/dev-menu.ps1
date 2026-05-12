@@ -39,6 +39,23 @@ function Invoke-OcrTableWarm {
         ocr-table-service python $ScriptPath
 }
 
+function Invoke-OcrTableWarmWithPrerequisites {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ScriptPath
+    )
+
+    New-Item -ItemType Directory -Force -Path ocr-table-service/model_cache | Out-Null
+    $env:OCR_TABLE_WHEELS_ONLY = "1"
+    try {
+        Invoke-Compose build ocr-table-service
+        Invoke-OcrTableWarm -ScriptPath $ScriptPath
+    }
+    finally {
+        Remove-Item Env:OCR_TABLE_WHEELS_ONLY -ErrorAction SilentlyContinue
+    }
+}
+
 function Show-Header {
     Write-Host ""
     Write-Host "项目开发菜单"
@@ -257,16 +274,24 @@ while ($true) {
             Pause-Menu
         }
         "9" {
-            Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_layout_model.py"
+            Invoke-OcrTableWarmWithPrerequisites -ScriptPath "/app/scripts/preload_table_layout_model.py"
             Pause-Menu
         }
         "10" {
-            Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_structure_model.py"
+            Invoke-OcrTableWarmWithPrerequisites -ScriptPath "/app/scripts/preload_table_structure_model.py"
             Pause-Menu
         }
         "11" {
-            Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_layout_model.py"
-            Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_structure_model.py"
+            New-Item -ItemType Directory -Force -Path ocr-table-service/model_cache | Out-Null
+            $env:OCR_TABLE_WHEELS_ONLY = "1"
+            try {
+                Invoke-Compose build ocr-table-service
+                Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_layout_model.py"
+                Invoke-OcrTableWarm -ScriptPath "/app/scripts/preload_table_structure_model.py"
+            }
+            finally {
+                Remove-Item Env:OCR_TABLE_WHEELS_ONLY -ErrorAction SilentlyContinue
+            }
             Pause-Menu
         }
         "0" {
