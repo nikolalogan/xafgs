@@ -253,6 +253,14 @@ def warp_affine_image(image: Image.Image, matrix: list[list[float]]) -> Image.Im
     return Image.fromarray(warped)
 
 
+def apply_post_sharpen(image: Image.Image, strength: float) -> Image.Image:
+    cv2, np = load_cv2()
+    source = np.array(image)
+    kernel = np.array([[0.0, -1.0, 0.0], [-1.0, 5.0 + max(0.0, min(1.0, strength)), -1.0], [0.0, -1.0, 0.0]], dtype=np.float32)
+    sharpened = cv2.filter2D(source, ddepth=-1, kernel=kernel, borderType=cv2.BORDER_REPLICATE)
+    return Image.fromarray(sharpened)
+
+
 def warp_perspective_image(
     image: Image.Image, quad: list[list[float]]
 ) -> tuple[Image.Image, list[list[float]], list[list[float]], float, str, int, int]:
@@ -402,11 +410,25 @@ def rectify_table_crop(
     image: Image.Image,
     candidate_roi_bbox: list[int],
     border_trim_options: BorderTrimOptions | None = None,
+    use_table_deskew: bool = True,
+    deskew_min_angle_deg: float = 0.2,
+    deskew_max_angle_deg: float = 5.0,
+    deskew_min_confidence: float = 0.45,
+    use_post_sharpen: bool = True,
+    post_sharpen_strength: float = 0.25,
 ) -> TableImageVariant:
     detection = detect_table_quad(image)
     interpolation_name, _ = resolve_rectify_interpolation()
     rectify_scale = resolve_rectify_scale()
     trim_options = border_trim_options or resolve_default_border_trim_options()
+    coverage_confidence = min(1.0, (detection.line_coverage_horizontal + detection.line_coverage_vertical) * 5.0)
+    angle_abs = abs(detection.deskew_angle)
+    deskew_allowed = (
+        use_table_deskew
+        and angle_abs >= max(0.0, deskew_min_angle_deg)
+        and angle_abs <= max(0.0, deskew_max_angle_deg)
+        and coverage_confidence >= max(0.0, min(1.0, deskew_min_confidence))
+    )
     if detection.rectify_mode == "line_quad" and detection.quad is not None:
         rectified_image, forward_matrix, inverse_matrix, rectify_scale, interpolation_name, rectified_width, rectified_height = (
             warp_perspective_image(image, detection.quad)
@@ -437,8 +459,11 @@ def rectify_table_crop(
             border_trim_margin_px=trim_options.margin_px,
             border_trim_min_projection_ratio=trim_options.min_projection_ratio,
         )
-        return build_trimmed_variant(image, candidate_roi_bbox, base_variant, trim_options)
-    if detection.rectify_mode == "deskew_only" and abs(detection.deskew_angle) >= 0.2:
+        variant = build_trimmed_variant(image, candidate_roi_bbox, base_variant, trim_options)
+        if use_post_sharpen and post_sharpen_strength > 0:
+            return TableImageVariant(**{**variant.__dict__, "image": apply_post_sharpen(variant.image, post_sharpen_strength)})
+        return variant
+    if detection.rectify_mode == "deskew_only" and deskew_allowed:
         forward_matrix = rotation_matrix(-detection.deskew_angle, image.size[0], image.size[1])
         inverse_matrix = matrix_inverse(forward_matrix)
         deskewed_image = warp_affine_image(image, forward_matrix)
@@ -469,7 +494,10 @@ def rectify_table_crop(
             border_trim_margin_px=trim_options.margin_px,
             border_trim_min_projection_ratio=trim_options.min_projection_ratio,
         )
-        return build_trimmed_variant(image, candidate_roi_bbox, base_variant, trim_options)
+        variant = build_trimmed_variant(image, candidate_roi_bbox, base_variant, trim_options)
+        if use_post_sharpen and post_sharpen_strength > 0:
+            return TableImageVariant(**{**variant.__dict__, "image": apply_post_sharpen(variant.image, post_sharpen_strength)})
+        return variant
     width, height = image.size
     base_variant = TableImageVariant(
         image=image,

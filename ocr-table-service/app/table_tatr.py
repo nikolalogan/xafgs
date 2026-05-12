@@ -177,7 +177,7 @@ def score_structure_items(structure_items: list[DetectionBox], width: int, heigh
     )
 
 
-def find_indexes_for_span(span_bbox: list[float], boxes: list[DetectionBox], axis: str) -> list[int]:
+def find_indexes_for_span(span_bbox: list[float], boxes: list[DetectionBox], axis: str, span_overlap_threshold: float) -> list[int]:
     indexes: list[int] = []
     span_center = bbox_center(span_bbox)
     for index, item in enumerate(boxes):
@@ -185,9 +185,27 @@ def find_indexes_for_span(span_bbox: list[float], boxes: list[DetectionBox], axi
         item_center = bbox_center(item.bbox)
         center_in_range = span_bbox[1] <= item_center[1] <= span_bbox[3] if axis == "row" else span_bbox[0] <= item_center[0] <= span_bbox[2]
         span_contains_center = item.bbox[1] <= span_center[1] <= item.bbox[3] if axis == "row" else item.bbox[0] <= span_center[0] <= item.bbox[2]
-        if ratio >= 0.45 or center_in_range or span_contains_center:
+        if ratio >= span_overlap_threshold or center_in_range or span_contains_center:
             indexes.append(index)
     return indexes
+
+
+def refine_rows_with_gap(rows: list[DetectionBox], gap_ratio: float) -> list[DetectionBox]:
+    if len(rows) < 2:
+        return rows
+    sorted_rows = sorted(rows, key=lambda item: item.bbox[1])
+    avg_height = sum(max(1.0, row.bbox[3] - row.bbox[1]) for row in sorted_rows) / len(sorted_rows)
+    max_gap = max(0.0, gap_ratio) * avg_height
+    merged: list[DetectionBox] = [sorted_rows[0]]
+    for row in sorted_rows[1:]:
+        prev = merged[-1]
+        gap = row.bbox[1] - prev.bbox[3]
+        if gap > 0 and gap <= max_gap:
+            merged_bbox = [prev.bbox[0], prev.bbox[1], prev.bbox[2], max(prev.bbox[3], row.bbox[3])]
+            merged[-1] = DetectionBox(label=prev.label, score=max(prev.score, row.score), bbox=merged_bbox)
+        else:
+            merged.append(row)
+    return merged
 
 
 def cell_flags(cell_bbox: list[float], header_boxes: list[DetectionBox], projected_boxes: list[DetectionBox]) -> tuple[bool, bool]:
@@ -218,12 +236,23 @@ def build_table_cells(
     crop_offset: list[int],
     inverse_matrix: list[list[float]],
     rectified_crop_offset: list[float],
+    span_overlap_threshold: float = 0.5,
+    use_line_refinement: bool = True,
+    row_merge_gap_ratio: float = 0.44,
+    line_detection_sensitivity: float = 0.56,
+    min_line_support_ratio: float = 0.25,
 ) -> list[dict[str, Any]]:
     if not rows or not columns:
         return []
     crop_width, crop_height = crop_size
     rows = normalize_axis_boxes(rows, "row", crop_width, crop_height)
     columns = normalize_axis_boxes(columns, "column", crop_width, crop_height)
+    if use_line_refinement:
+        effective_gap = max(0.0, row_merge_gap_ratio) * (0.6 + max(0.0, min(1.0, line_detection_sensitivity)))
+        rows = refine_rows_with_gap(rows, effective_gap)
+    columns = [item for item in columns if item.score >= max(0.0, min(1.0, min_line_support_ratio))]
+    if not rows or not columns:
+        return []
     occupied = [[False for _ in range(len(columns))] for _ in range(len(rows))]
     cells: list[dict[str, Any]] = []
 
@@ -262,8 +291,8 @@ def build_table_cells(
         }
 
     for span in spanning_cells:
-        row_indexes = find_indexes_for_span(span.bbox, rows, "row")
-        col_indexes = find_indexes_for_span(span.bbox, columns, "column")
+        row_indexes = find_indexes_for_span(span.bbox, rows, "row", span_overlap_threshold)
+        col_indexes = find_indexes_for_span(span.bbox, columns, "column", span_overlap_threshold)
         if not row_indexes or not col_indexes:
             continue
         row_start = min(row_indexes)
@@ -295,6 +324,11 @@ def build_table_result(
     detection: DetectionBox,
     structure_items: list[DetectionBox],
     table_variant: TableImageVariant,
+    span_overlap_threshold: float = 0.5,
+    use_line_refinement: bool = True,
+    row_merge_gap_ratio: float = 0.44,
+    line_detection_sensitivity: float = 0.56,
+    min_line_support_ratio: float = 0.25,
 ) -> dict[str, Any]:
     page_width, page_height = page_image.size
     table_bbox = normalize_bbox(detection.bbox, page_width, page_height)
@@ -319,6 +353,11 @@ def build_table_result(
         crop_offset=[candidate_roi_bbox[0], candidate_roi_bbox[1]],
         inverse_matrix=table_variant.inverse_matrix,
         rectified_crop_offset=table_variant.rectified_crop_offset,
+        span_overlap_threshold=span_overlap_threshold,
+        use_line_refinement=use_line_refinement,
+        row_merge_gap_ratio=row_merge_gap_ratio,
+        line_detection_sensitivity=line_detection_sensitivity,
+        min_line_support_ratio=min_line_support_ratio,
     )
     return {
         "tableId": f"p{page_no}-t{table_no}",

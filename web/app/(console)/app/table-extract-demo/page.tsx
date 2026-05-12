@@ -99,20 +99,12 @@ type TableExtractResponse = {
   provider: string
   layoutModel: string
   structureModel: string
-  detectorThreshold: number
-  structureThreshold: number
+  detection_threshold: number
+  structure_threshold: number
   pageCount: number
   tableCount: number
   durationMs: number
   pages: ExtractedPage[]
-}
-
-type BorderTrimConfig = {
-  borderTrimEnabled: boolean
-  borderTrimMinProjectionRatio: number
-  borderTrimMarginPx: number
-  borderTrimMinSizeRatio: number
-  borderTrimMaxInsetRatio: number
 }
 
 type ManualReviewState = {
@@ -168,12 +160,24 @@ const dataUrlToBase64 = (dataUrl: string) => {
 
 const MANUAL_RECTIFY_SCALE = 1.5
 const MANUAL_RECTIFY_MAX_EDGE = 4096
-const DEFAULT_BORDER_TRIM_CONFIG: BorderTrimConfig = {
-  borderTrimEnabled: true,
-  borderTrimMinProjectionRatio: 0.1,
-  borderTrimMarginPx: 3,
-  borderTrimMinSizeRatio: 0.65,
-  borderTrimMaxInsetRatio: 0.2,
+const PARAM_DEFAULTS = {
+  detection_threshold: 0.85,
+  structure_threshold: 0.6,
+  table_crop_padding: 44,
+  span_overlap_threshold: 0.5,
+  use_line_refinement: true,
+  row_merge_gap_ratio: 0.44,
+  line_detection_sensitivity: 0.56,
+  min_line_support_ratio: 0.25,
+  use_table_deskew: true,
+  deskew_min_angle_deg: 0.2,
+  deskew_max_angle_deg: 5.0,
+  deskew_min_confidence: 0.45,
+  use_post_sharpen: true,
+  post_sharpen_strength: 0.25,
+  suppress_red_stamps: true,
+  enhance_contrast: true,
+  reduce_noise: true,
 }
 
 const computePaddedBBox = (bbox: number[], width: number, height: number, paddingRatio = 0.02, minPaddingPx = 8) => {
@@ -745,14 +749,7 @@ function CropPreview({ table }: { table: ExtractedTable }) {
 export default function TableExtractDemoPage() {
   const [msgApi, contextHolder] = message.useMessage()
   const [uploadFile, setUploadFile] = useState<UploadFile | null>(null)
-  const [detectorThreshold, setDetectorThreshold] = useState(0.25)
-  const [structureThreshold, setStructureThreshold] = useState(0.35)
-  const [maxTablesPerPage, setMaxTablesPerPage] = useState(24)
-  const [borderTrimEnabled, setBorderTrimEnabled] = useState(DEFAULT_BORDER_TRIM_CONFIG.borderTrimEnabled)
-  const [borderTrimMinProjectionRatio, setBorderTrimMinProjectionRatio] = useState(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMinProjectionRatio)
-  const [borderTrimMarginPx, setBorderTrimMarginPx] = useState(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMarginPx)
-  const [borderTrimMinSizeRatio, setBorderTrimMinSizeRatio] = useState(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMinSizeRatio)
-  const [borderTrimMaxInsetRatio, setBorderTrimMaxInsetRatio] = useState(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMaxInsetRatio)
+  const [params, setParams] = useState(PARAM_DEFAULTS)
   const [submitting, setSubmitting] = useState(false)
   const [lastRequest, setLastRequest] = useState<Record<string, unknown> | null>(null)
   const [result, setResult] = useState<TableExtractResponse | null>(null)
@@ -783,14 +780,7 @@ export default function TableExtractDemoPage() {
     setLastRequest(null)
     setSelectedPageNo(null)
     setSelectedTableId('')
-    setDetectorThreshold(0.25)
-    setStructureThreshold(0.35)
-    setMaxTablesPerPage(24)
-    setBorderTrimEnabled(DEFAULT_BORDER_TRIM_CONFIG.borderTrimEnabled)
-    setBorderTrimMinProjectionRatio(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMinProjectionRatio)
-    setBorderTrimMarginPx(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMarginPx)
-    setBorderTrimMinSizeRatio(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMinSizeRatio)
-    setBorderTrimMaxInsetRatio(DEFAULT_BORDER_TRIM_CONFIG.borderTrimMaxInsetRatio)
+    setParams(PARAM_DEFAULTS)
     setManualReview(null)
   }
 
@@ -810,14 +800,7 @@ export default function TableExtractDemoPage() {
       const payload = {
         file: base64,
         fileType: detectFileType(file, base64),
-        detectorThreshold,
-        structureThreshold,
-        maxTablesPerPage,
-        borderTrimEnabled,
-        borderTrimMinProjectionRatio,
-        borderTrimMarginPx,
-        borderTrimMinSizeRatio,
-        borderTrimMaxInsetRatio,
+        ...params,
       }
       setLastRequest(payload)
       const response = await fetch('/ocr/table-extract', {
@@ -852,14 +835,7 @@ export default function TableExtractDemoPage() {
       const payload = {
         file: dataUrlToBase64(dataUrl),
         fileType: 1,
-        detectorThreshold,
-        structureThreshold,
-        maxTablesPerPage: 1,
-        borderTrimEnabled,
-        borderTrimMinProjectionRatio,
-        borderTrimMarginPx,
-        borderTrimMinSizeRatio,
-        borderTrimMaxInsetRatio,
+        ...params,
       }
       const response = await fetch('/ocr/table-extract', {
         method: 'POST',
@@ -944,43 +920,79 @@ export default function TableExtractDemoPage() {
           </Upload>
           <div style={{ minWidth: 180 }}>
             <Typography.Text>检测阈值</Typography.Text>
-            <InputNumber min={0.05} max={0.95} step={0.05} value={detectorThreshold} onChange={value => setDetectorThreshold(Number(value || 0.25))} style={{ width: '100%' }} />
+            <InputNumber min={0} max={1} step={0.01} value={params.detection_threshold} onChange={value => setParams(previous => ({ ...previous, detection_threshold: Number(value || PARAM_DEFAULTS.detection_threshold) }))} style={{ width: '100%' }} />
           </div>
           <div style={{ minWidth: 180 }}>
             <Typography.Text>结构阈值</Typography.Text>
-            <InputNumber min={0.05} max={0.95} step={0.05} value={structureThreshold} onChange={value => setStructureThreshold(Number(value || 0.35))} style={{ width: '100%' }} />
+            <InputNumber min={0} max={1} step={0.01} value={params.structure_threshold} onChange={value => setParams(previous => ({ ...previous, structure_threshold: Number(value || PARAM_DEFAULTS.structure_threshold) }))} style={{ width: '100%' }} />
           </div>
           <div style={{ minWidth: 180 }}>
-            <Typography.Text>每页最大表数</Typography.Text>
-            <InputNumber min={1} max={64} step={1} value={maxTablesPerPage} onChange={value => setMaxTablesPerPage(Number(value || 24))} style={{ width: '100%' }} />
+            <Typography.Text>裁剪扩边(px)</Typography.Text>
+            <InputNumber min={0} max={200} step={1} value={params.table_crop_padding} onChange={value => setParams(previous => ({ ...previous, table_crop_padding: Number(value || PARAM_DEFAULTS.table_crop_padding) }))} style={{ width: '100%' }} />
           </div>
           <div style={{ minWidth: 180 }}>
-            <Typography.Text>自动裁边</Typography.Text>
+            <Typography.Text>跨格重叠阈值</Typography.Text>
+            <InputNumber min={0} max={1} step={0.01} value={params.span_overlap_threshold} onChange={value => setParams(previous => ({ ...previous, span_overlap_threshold: Number(value || PARAM_DEFAULTS.span_overlap_threshold) }))} style={{ width: '100%' }} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>线细化</Typography.Text>
             <Select
-              value={borderTrimEnabled ? 'on' : 'off'}
+              value={params.use_line_refinement ? 'on' : 'off'}
               style={{ width: '100%' }}
               options={[
                 { label: '开启', value: 'on' },
                 { label: '关闭', value: 'off' },
               ]}
-              onChange={value => setBorderTrimEnabled(value === 'on')}
+              onChange={value => setParams(previous => ({ ...previous, use_line_refinement: value === 'on' }))}
             />
           </div>
           <div style={{ minWidth: 180 }}>
-            <Typography.Text>裁边投影阈值</Typography.Text>
-            <InputNumber min={0.01} max={0.5} step={0.01} value={borderTrimMinProjectionRatio} onChange={value => setBorderTrimMinProjectionRatio(Number(value || 0.1))} style={{ width: '100%' }} />
+            <Typography.Text>行合并间隔比例</Typography.Text>
+            <InputNumber min={0} max={2} step={0.01} value={params.row_merge_gap_ratio} onChange={value => setParams(previous => ({ ...previous, row_merge_gap_ratio: Number(value || PARAM_DEFAULTS.row_merge_gap_ratio) }))} style={{ width: '100%' }} />
           </div>
           <div style={{ minWidth: 180 }}>
-            <Typography.Text>裁边 margin(px)</Typography.Text>
-            <InputNumber min={0} max={24} step={1} value={borderTrimMarginPx} onChange={value => setBorderTrimMarginPx(Number(value || 3))} style={{ width: '100%' }} />
+            <Typography.Text>线检测敏感度</Typography.Text>
+            <InputNumber min={0} max={1} step={0.01} value={params.line_detection_sensitivity} onChange={value => setParams(previous => ({ ...previous, line_detection_sensitivity: Number(value || PARAM_DEFAULTS.line_detection_sensitivity) }))} style={{ width: '100%' }} />
           </div>
           <div style={{ minWidth: 180 }}>
-            <Typography.Text>最小保留比例</Typography.Text>
-            <InputNumber min={0.2} max={1} step={0.05} value={borderTrimMinSizeRatio} onChange={value => setBorderTrimMinSizeRatio(Number(value || 0.65))} style={{ width: '100%' }} />
+            <Typography.Text>最小线支撑比例</Typography.Text>
+            <InputNumber min={0} max={1} step={0.01} value={params.min_line_support_ratio} onChange={value => setParams(previous => ({ ...previous, min_line_support_ratio: Number(value || PARAM_DEFAULTS.min_line_support_ratio) }))} style={{ width: '100%' }} />
           </div>
           <div style={{ minWidth: 180 }}>
-            <Typography.Text>最大内缩比例</Typography.Text>
-            <InputNumber min={0.02} max={0.45} step={0.01} value={borderTrimMaxInsetRatio} onChange={value => setBorderTrimMaxInsetRatio(Number(value || 0.2))} style={{ width: '100%' }} />
+            <Typography.Text>开启 deskew</Typography.Text>
+            <Select value={params.use_table_deskew ? 'on' : 'off'} style={{ width: '100%' }} options={[{ label: '开启', value: 'on' }, { label: '关闭', value: 'off' }]} onChange={value => setParams(previous => ({ ...previous, use_table_deskew: value === 'on' }))} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>deskew 最小角度</Typography.Text>
+            <InputNumber min={0} max={10} step={0.1} value={params.deskew_min_angle_deg} onChange={value => setParams(previous => ({ ...previous, deskew_min_angle_deg: Number(value || PARAM_DEFAULTS.deskew_min_angle_deg) }))} style={{ width: '100%' }} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>deskew 最大角度</Typography.Text>
+            <InputNumber min={0} max={10} step={0.1} value={params.deskew_max_angle_deg} onChange={value => setParams(previous => ({ ...previous, deskew_max_angle_deg: Number(value || PARAM_DEFAULTS.deskew_max_angle_deg) }))} style={{ width: '100%' }} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>deskew 最小置信度</Typography.Text>
+            <InputNumber min={0} max={1} step={0.01} value={params.deskew_min_confidence} onChange={value => setParams(previous => ({ ...previous, deskew_min_confidence: Number(value || PARAM_DEFAULTS.deskew_min_confidence) }))} style={{ width: '100%' }} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>后锐化</Typography.Text>
+            <Select value={params.use_post_sharpen ? 'on' : 'off'} style={{ width: '100%' }} options={[{ label: '开启', value: 'on' }, { label: '关闭', value: 'off' }]} onChange={value => setParams(previous => ({ ...previous, use_post_sharpen: value === 'on' }))} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>锐化强度</Typography.Text>
+            <InputNumber min={0} max={1} step={0.01} value={params.post_sharpen_strength} onChange={value => setParams(previous => ({ ...previous, post_sharpen_strength: Number(value || PARAM_DEFAULTS.post_sharpen_strength) }))} style={{ width: '100%' }} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>抑制红章</Typography.Text>
+            <Select value={params.suppress_red_stamps ? 'on' : 'off'} style={{ width: '100%' }} options={[{ label: '开启', value: 'on' }, { label: '关闭', value: 'off' }]} onChange={value => setParams(previous => ({ ...previous, suppress_red_stamps: value === 'on' }))} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>增强对比度</Typography.Text>
+            <Select value={params.enhance_contrast ? 'on' : 'off'} style={{ width: '100%' }} options={[{ label: '开启', value: 'on' }, { label: '关闭', value: 'off' }]} onChange={value => setParams(previous => ({ ...previous, enhance_contrast: value === 'on' }))} />
+          </div>
+          <div style={{ minWidth: 180 }}>
+            <Typography.Text>降噪</Typography.Text>
+            <Select value={params.reduce_noise ? 'on' : 'off'} style={{ width: '100%' }} options={[{ label: '开启', value: 'on' }, { label: '关闭', value: 'off' }]} onChange={value => setParams(previous => ({ ...previous, reduce_noise: value === 'on' }))} />
           </div>
           <Space>
             <Button type="primary" onClick={runExtract} loading={submitting} disabled={!canSubmit}>开始提取</Button>

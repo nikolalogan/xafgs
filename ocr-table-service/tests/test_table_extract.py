@@ -18,6 +18,7 @@ from app.table_extract import (
 from app.table_extract_shared import BorderTrimOptions
 from app.table_rectify import rectify_table_crop, trim_table_border
 from PIL import Image
+from app.table_extract import extract_tables
 
 
 class TableExtractGeometryTestCase(unittest.TestCase):
@@ -417,6 +418,57 @@ class TableExtractGeometryTestCase(unittest.TestCase):
         self.assertEqual(variant.border_trim_bbox, [5.0, 4.0, 95.0, 54.0])
         self.assertEqual(variant.rectified_crop_offset, [5.0, 4.0])
         self.assertEqual(variant.image.size, (90, 50))
+
+
+class TableExtractParamsTestCase(unittest.TestCase):
+    def test_extract_tables_uses_new_param_defaults(self) -> None:
+        page = mock.Mock()
+        page.page_no = 1
+        page.source = "image"
+        page.image = Image.new("RGB", (200, 120), "white")
+        detection = DetectionBox(label="table", score=0.9, bbox=[10, 10, 100, 80])
+        variant = TableImageVariant(
+            image=Image.new("RGB", (100, 60), "white"),
+            candidate_roi_bbox=[10, 10, 110, 70],
+            final_crop_bbox=[0.0, 0.0, 100.0, 60.0],
+            roi_quad=None,
+            forward_matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            inverse_matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            rectified=False,
+            rectify_mode="fallback_none",
+            rotation_applied=0,
+            original_crop_width=100,
+            original_crop_height=60,
+            deskew_angle=0.0,
+            quad_score=0.0,
+            line_coverage_horizontal=0.1,
+            line_coverage_vertical=0.1,
+            rectify_scale=1.5,
+            rectify_interpolation="lanczos4",
+            rectified_width=100,
+            rectified_height=60,
+            rectified_crop_offset=[0.0, 0.0],
+            border_trim_applied=False,
+            border_trim_bbox=None,
+            border_trim_margin_px=3,
+            border_trim_min_projection_ratio=0.1,
+        )
+        with mock.patch("app.table_extract.load_pages", return_value=[page]):
+            with mock.patch("app.table_extract.get_layout_detector") as detector_loader:
+                with mock.patch("app.table_extract.get_structure_recognizer", return_value=mock.Mock()):
+                    with mock.patch("app.table_extract.build_table_image_variants", return_value=[variant]):
+                        with mock.patch("app.table_extract.recognize_best_table_variant", return_value=(variant, [])):
+                            with mock.patch("app.table_extract.rectify_table_crop", return_value=variant):
+                                with mock.patch("app.table_extract.build_table_result", return_value={"meta": {}}):
+                                    detector_loader.return_value.detect.return_value = [detection]
+                                    result = extract_tables({"file": "ZmFrZQ=="})
+        self.assertEqual(result["detection_threshold"], 0.85)
+        self.assertEqual(result["structure_threshold"], 0.6)
+        self.assertEqual(result["tableCount"], 1)
+
+    def test_extract_tables_rejects_invalid_threshold_range(self) -> None:
+        with self.assertRaises(TableExtractError):
+            extract_tables({"file": "ZmFrZQ==", "detection_threshold": 1.2})
 
 
 if __name__ == "__main__":

@@ -14,9 +14,23 @@ class TableExtractRequest(BaseModel):
     file: str
     fileType: int | None = None
     pages: list[int] | None = None
-    detectorThreshold: float | None = None
-    structureThreshold: float | None = None
-    maxTablesPerPage: int | None = None
+    detection_threshold: float | None = None
+    structure_threshold: float | None = None
+    table_crop_padding: float | None = None
+    span_overlap_threshold: float | None = None
+    use_line_refinement: bool | None = None
+    row_merge_gap_ratio: float | None = None
+    line_detection_sensitivity: float | None = None
+    min_line_support_ratio: float | None = None
+    use_table_deskew: bool | None = None
+    deskew_min_angle_deg: float | None = None
+    deskew_max_angle_deg: float | None = None
+    deskew_min_confidence: float | None = None
+    use_post_sharpen: bool | None = None
+    post_sharpen_strength: float | None = None
+    suppress_red_stamps: bool | None = None
+    enhance_contrast: bool | None = None
+    reduce_noise: bool | None = None
 
 
 @asynccontextmanager
