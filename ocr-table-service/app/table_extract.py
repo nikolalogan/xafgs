@@ -4,7 +4,6 @@ from app.table_detect import DocLayoutYoloDetector, get_layout_detector, nms_det
 from app.table_extract_shared import (
     BorderTrimOptions,
     DEFAULT_LAYOUT_MODEL,
-    DEFAULT_LAYOUT_MODEL_FILE,
     DEFAULT_STRUCTURE_MODEL,
     DEFAULT_STRUCTURE_MODEL_FILES,
     DetectionBox,
@@ -21,7 +20,6 @@ from app.table_extract_shared import (
     load_pages,
     normalize_bbox,
     resolve_layout_cache_dir,
-    resolve_layout_model_file_name,
     resolve_layout_model_name,
     resolve_structure_cache_dir,
     resolve_structure_model_name,

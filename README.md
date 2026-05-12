@@ -124,9 +124,9 @@ make down
 - `make ocr-wheels-verify`：校验主 OCR `wheels` 是否可离线覆盖依赖闭包
 - `make ocr-table-wheels-sync`：同步表格提取依赖到本地 `ocr-table-service/wheels/`（增量缓存）
 - `make ocr-table-wheels-verify`：校验表格提取 `wheels` 是否可离线覆盖依赖闭包
-- `make ocr-table-layout-model-cache-warm`：单独预热 `DocLayout-YOLO` layout 模型缓存
-- `make ocr-table-model-cache-warm`：单独预热 TATR `v1.1-pub` 表格结构模型缓存
-- `make ocr-table-cache-warm`：一次性预热表格提取全部模型缓存（layout + structure）
+- `make ocr-table-layout-model-cache-warm`：单独预热 `TATR detection` layout 模型缓存
+- `make ocr-table-model-cache-warm`：单独预热 TATR `structure-recognition` 表格结构模型缓存
+- `make ocr-table-cache-warm`：一次性预热表格提取全部模型缓存（detection + structure + timm）
 - `make ocr-build`：自动同步+校验 `wheels`，再离线构建主 OCR 镜像（推荐）
 - `make ocr-build-offline`：仅使用本地 `wheels` 构建主 OCR 镜像（缺失依赖直接失败）
 - `make ocr-build-online-fallback`：自动同步 `wheels` 后构建主 OCR 镜像（允许缺失依赖回源下载）
@@ -160,7 +160,7 @@ make ocr-table-model-cache-warm
 说明：
 
 - 首次启动 `ocr-table-service` 前，必须先执行 `make ocr-table-cache-warm`；若只想分步恢复，至少要依次执行 `make ocr-table-layout-model-cache-warm` 和 `make ocr-table-model-cache-warm`；
-- `make ocr-table-cache-warm` 会一次性预热 `DocLayout-YOLO` layout 与 TATR structure 默认模型；
+- `make ocr-table-cache-warm` 会一次性预热 `TATR detection` layout 与 TATR structure 默认模型；
 - `make ocr-table-layout-model-cache-warm` 会将 `doclayout_yolo_docstructbench_imgsz1024.pt` 预热到宿主机 `ocr-table-service/model_cache/table_extract/layout/`；
 - `make ocr-table-model-cache-warm` 会将 TATR 所需 `config.json`、`preprocessor_config.json`、`processor_config.json`、`model.safetensors` 预热到宿主机 `ocr-table-service/model_cache/table_extract/structure/`；
 - Windows 开发环境对应仓库路径为 `E:\code\xafgs\ocr-table-service\model_cache\table_extract\layout\doclayout_yolo_docstructbench_imgsz1024.pt`；
@@ -170,13 +170,13 @@ make ocr-table-model-cache-warm
 - `make ocr-wheels-sync` 会将主 OCR 依赖下载到 `ocr-service/wheels/`，已存在文件会复用；
 - `ocr-service/wheels/` 仅用于主 `ocr-service` 构建缓存；`ocr-table-service/wheels/` 单独缓存表格提取重依赖；
 - `make ocr-wheels-verify` / `make ocr-table-wheels-verify` 默认按 `manylinux_2_17_x86_64 + py311` 离线校验依赖闭包；如需扩展平台可通过 `WHEEL_PLATFORMS_VERIFY` 覆盖；
-- `POST /ocr/table-extract` 当前默认表格结构识别模型为 `microsoft/table-transformer-structure-recognition-v1.1-pub`；
-- 表格提取链路为：整页输入 -> `DocLayout-YOLO` 检测 `table` -> 裁表 -> Hugging Face TATR `v1.1-pub` 结构识别；
-- `make ocr-table-layout-model-cache-warm` 会将 `juliozhao/DocLayout-YOLO-DocStructBench` 的 `doclayout_yolo_docstructbench_imgsz1024.pt` 预热到 `ocr-table-service/model_cache/table_extract/layout/`；
+- `POST /ocr/table-extract` 当前默认表格结构识别模型为 `microsoft/table-transformer-structure-recognition`；
+- 表格提取链路为：整页输入 -> `TATR detection` 检测 `table` -> 裁表 -> Hugging Face TATR `structure-recognition` 结构识别；
+- `make ocr-table-layout-model-cache-warm` 会将 `microsoft/table-transformer-detection` 的 `doclayout_yolo_docstructbench_imgsz1024.pt` 预热到 `ocr-table-service/model_cache/table_extract/layout/`；
 - `make ocr-table-model-cache-warm` 会将 TATR 所需 `config.json`、`preprocessor_config.json`、`processor_config.json`、`model.safetensors` 预热到 `ocr-table-service/model_cache/table_extract/structure/`；
-- `make ocr-table-cache-warm` 是推荐的首次启动命令，用于一次性补齐 layout + structure 两套默认模型缓存；
+- `make ocr-table-cache-warm` 是推荐的首次启动命令，用于一次性补齐 detection + structure + timm 两套默认模型缓存；
 - `ocr-table-service/model_cache/hf/` 用于表格提取链路的 Transformers 缓存；不复用 Docling 的 artifacts 目录；
-- 默认策略改为“预热后运行”：`DocLayout-YOLO` 与默认 TATR structure 模型都不再运行时在线拉取；
+- 默认策略改为“预热后运行”：`TATR detection` 与默认 TATR structure 模型都不再运行时在线拉取；
 - `ocr-table-service` 现会在启动前预检默认 layout 与默认 structure 缓存；任一缺失都会直接启动失败，并给出 `make ocr-table-layout-model-cache-warm`、`make ocr-table-model-cache-warm`、`make ocr-table-cache-warm`、目标目录和缺失文件名；
 - 若默认 structure 缓存缺少 `processor_config.json`，典型症状是网关 `/ocr/table-extract` 返回 `504`，同时 `ocr-table-service` 日志出现指向 Hugging Face `processor_config.json` 的 `Network is unreachable`；
 - 如果 layout/TATR 模型文件缺失、相关依赖未就绪，或模型加载失败，`/ocr/table-extract` 会明确报错，不做旧模型自动回退；
@@ -193,8 +193,8 @@ make ocr-table-model-cache-warm
 
 GLM OCR 主服务本身不再内置重模型缓存；模型由项目内 `vllm` 容器负责加载和复用。表格提取链路继续使用独立缓存目录，不与 Docling 的 `tableformer` artifacts 共用目录。
 
-- `./ocr-table-service/model_cache/table_extract/layout`：`DocLayout-YOLO` layout 模型
-- `./ocr-table-service/model_cache/table_extract/structure`：Hugging Face TATR `v1.1-pub` 结构模型
+- `./ocr-table-service/model_cache/table_extract/layout`：`TATR detection` layout 模型
+- `./ocr-table-service/model_cache/table_extract/structure`：Hugging Face TATR `structure-recognition` 结构模型
 
 ### 项目内 vLLM（默认）
 
@@ -245,7 +245,7 @@ make docling-build
 - Redis 默认使用 `docker.1panel.live/library/redis:8-alpine`，以兼容 Redis 8 写入的 RDB/AOF 数据格式；如需使用其他镜像源，可通过 `REDIS_IMAGE=可用镜像源/library/redis:8-alpine` 单独覆盖；
 - Nginx 默认使用兼容的 `nginx:alpine`，以匹配当前免登录镜像源可用 tag；
 - Docling 默认启用表格结构识别，财务报表等 PDF 会优先输出结构化表格而不是线性文本；
-- Docling 的表格能力来自自身 `tableformer` artifacts；`/ocr/table-extract` 使用的是独立的 Hugging Face TATR `v1.1-pub`，两者缓存目录和预热命令不同；
+- Docling 的表格能力来自自身 `tableformer` artifacts；`/ocr/table-extract` 使用的是独立的 Hugging Face TATR `structure-recognition`，两者缓存目录和预热命令不同；
 - `docling-service` 默认启用文档内图片区域的 GLM OCR 补充，可通过环境变量调节并发、超时和单文档图片数上限；
 - `make docling-build` 默认使用本地 `wheels` 离线构建；
 - Docling 不默认采用运行时安装依赖，避免启动更慢且失败更晚暴露；

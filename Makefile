@@ -1,4 +1,4 @@
-.PHONY: help menu dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-table-wheels-sync ocr-table-wheels-verify ocr-table-build ocr-table-build-offline ocr-table-build-online-fallback ocr-table-model-cache-init ocr-table-rebuild-image ocr-table-cache-warm ocr-table-model-cache-warm ocr-table-layout-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback
+.PHONY: help menu dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-table-wheels-sync ocr-table-wheels-verify ocr-table-build ocr-table-build-offline ocr-table-build-online-fallback ocr-table-model-cache-init ocr-table-rebuild-image ocr-table-cache-warm ocr-table-model-cache-warm ocr-table-layout-model-cache-warm ocr-table-detection-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback
 
 ifeq ($(OS),Windows_NT)
 UNAME_S := Windows_NT
@@ -36,9 +36,10 @@ help:
 	@echo "  make ocr-build-online-fallback # 自动同步 wheels 后构建主 OCR 镜像（允许缺包回源）"
 	@echo "  make ocr-table-wheels-sync # 同步表格提取依赖到本地 wheels 缓存目录"
 	@echo "  make ocr-table-wheels-verify # 校验表格提取 wheels 是否可离线覆盖依赖闭包"
-	@echo "  make ocr-table-cache-warm # 预热表格提取模型缓存（layout + structure）"
-	@echo "  make ocr-table-layout-model-cache-warm # 预热 DocLayout-YOLO layout 模型缓存"
-	@echo "  make ocr-table-model-cache-warm # 预热 TATR v1.1-pub 表格结构模型缓存"
+	@echo "  make ocr-table-cache-warm # 预热表格提取模型缓存（detection + structure + timm）"
+	@echo "  make ocr-table-layout-model-cache-warm # 兼容命令：预热 TATR detection 模型缓存"
+	@echo "  make ocr-table-detection-model-cache-warm # 预热 TATR detection 模型缓存"
+	@echo "  make ocr-table-model-cache-warm # 预热 TATR structure + timm 模型缓存"
 	@echo "  make ocr-table-build # 自动同步+校验 wheels，再离线构建表格提取镜像（推荐）"
 	@echo "  make ocr-table-build-offline # 仅使用本地 wheels 构建表格提取镜像"
 	@echo "  make ocr-table-build-online-fallback # 自动同步 wheels 后构建表格提取镜像（允许缺包回源）"
@@ -133,6 +134,8 @@ ocr-table-rebuild-image:
 	OCR_TABLE_WHEELS_ONLY=1 docker compose -f $(DEV_COMPOSE_FILE) build ocr-table-service
 
 ocr-table-cache-warm: ocr-table-layout-model-cache-warm ocr-table-model-cache-warm
+
+ocr-table-detection-model-cache-warm: ocr-table-layout-model-cache-warm
 
 ocr-table-layout-model-cache-warm: ocr-table-model-cache-init ocr-table-rebuild-image
 	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} ocr-table-service python /app/scripts/preload_table_layout_model.py

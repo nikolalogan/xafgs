@@ -29,3 +29,4 @@ server/tmp
 /ocr-table-service/tests
 /ocr-table-service/app/__pycache__
 /ocr-table-service/model_cache
+/ocr-table-service/scripts/__pycache__

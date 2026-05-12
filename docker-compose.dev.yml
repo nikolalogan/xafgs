@@ -155,8 +155,8 @@ services:
       HF_HOME: "/app/model_cache/hf"
       TRANSFORMERS_CACHE: "/app/model_cache/hf"
       TABLE_EXTRACT_MODEL_CACHE_DIR: "/app/model_cache/table_extract"
-      TABLE_EXTRACT_LAYOUT_MODEL: "${TABLE_EXTRACT_LAYOUT_MODEL:-juliozhao/DocLayout-YOLO-DocStructBench}"
-      TABLE_EXTRACT_STRUCTURE_MODEL: "${TABLE_EXTRACT_STRUCTURE_MODEL:-microsoft/table-transformer-structure-recognition-v1.1-pub}"
+      TABLE_EXTRACT_LAYOUT_MODEL: "${TABLE_EXTRACT_LAYOUT_MODEL:-microsoft/table-transformer-detection}"
+      TABLE_EXTRACT_STRUCTURE_MODEL: "${TABLE_EXTRACT_STRUCTURE_MODEL:-microsoft/table-transformer-structure-recognition}"
     command: >
       sh -c "uvicorn app.service:app --host 0.0.0.0 --port 8090"
     volumes:

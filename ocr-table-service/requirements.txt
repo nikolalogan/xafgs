@@ -2,10 +2,10 @@ fastapi==0.115.0
 uvicorn==0.30.6
 Pillow==11.2.1
 PyMuPDF==1.26.0
-doclayout-yolo
 torch
 torchvision
 transformers==4.57.5
 safetensors
 huggingface_hub
 opencv-python-headless
+timm

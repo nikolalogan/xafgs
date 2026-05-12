@@ -5,6 +5,7 @@ from typing import Any
 from PIL import Image
 
 from app.table_extract_shared import (
+    DEFAULT_LAYOUT_MODEL,
     TABLE_LABEL,
     DetectionBox,
     TableExtractError,
@@ -25,36 +26,50 @@ class DocLayoutYoloDetector:
     def _load(self) -> Any:
         if self._model is not None:
             return self._model
+        local_files_only = Path(self.model_source).is_dir()
         try:
-            from doclayout_yolo import YOLOv10
+            from transformers import AutoImageProcessor, TableTransformerForObjectDetection
         except Exception as exc:
-            raise TableExtractError("DocLayout-YOLO 依赖未就绪，请安装 `doclayout-yolo` 及其运行时依赖") from exc
+            raise TableExtractError("TATR detection 依赖未就绪，请安装 `transformers`、`torch`、`torchvision`") from exc
         try:
-            if Path(self.model_source).is_file():
-                self._model = YOLOv10(self.model_source)
-            else:
-                self._model = YOLOv10.from_pretrained(self.model_source, cache_dir=self.cache_dir)
+            processor = AutoImageProcessor.from_pretrained(
+                self.model_source,
+                cache_dir=self.cache_dir,
+                local_files_only=local_files_only,
+            )
+            model = TableTransformerForObjectDetection.from_pretrained(
+                self.model_source,
+                cache_dir=self.cache_dir,
+                local_files_only=local_files_only,
+            )
+            model.eval()
+            self._model = (processor, model)
         except Exception as exc:
             raise TableExtractError(
-                f"DocLayout-YOLO 模型加载失败: model={self.model_id}, source={self.model_source}, "
+                f"TATR detection 模型加载失败: model={self.model_id}, source={self.model_source}, "
                 f"cache_dir={self.cache_dir}, detail={exc}"
             ) from exc
         return self._model
 
     def detect(self, image: Image.Image, threshold: float) -> list[DetectionBox]:
-        model = self._load()
+        processor, model = self._load()
         try:
-            result = model.predict(image, conf=threshold, verbose=False)[0]
+            import torch
         except Exception as exc:
-            raise TableExtractError(f"DocLayout-YOLO 推理失败: {exc}") from exc
-        names = getattr(result, "names", {}) or {}
-        boxes = getattr(result, "boxes", None)
-        if boxes is None:
-            return []
+            raise TableExtractError("TATR detection 依赖未就绪，请安装 `torch`") from exc
+        try:
+            inputs = processor(images=image, return_tensors="pt")
+            with torch.no_grad():
+                outputs = model(**inputs)
+            target_sizes = torch.tensor([[image.height, image.width]])
+            result = processor.post_process_object_detection(outputs, threshold=threshold, target_sizes=target_sizes)[0]
+        except Exception as exc:
+            raise TableExtractError(f"TATR detection 推理失败: {exc}") from exc
+        id2label = getattr(model.config, "id2label", {}) or {}
         detections: list[DetectionBox] = []
-        for bbox, score, cls_index in zip(boxes.xyxy.tolist(), boxes.conf.tolist(), boxes.cls.tolist()):
-            label = str(names.get(int(cls_index), cls_index)).strip().lower()
-            if label != TABLE_LABEL:
+        for bbox, score, label_id in zip(result["boxes"].tolist(), result["scores"].tolist(), result["labels"].tolist()):
+            label = str(id2label.get(int(label_id), label_id)).strip().lower()
+            if label not in {TABLE_LABEL, "table rotated"}:
                 continue
             detections.append(DetectionBox(label=label, score=float(score), bbox=[float(value) for value in bbox]))
         return detections
@@ -63,10 +78,11 @@ class DocLayoutYoloDetector:
 @lru_cache(maxsize=1)
 def get_layout_detector() -> DocLayoutYoloDetector:
     model_name = resolve_layout_model_name()
+    source = ensure_layout_model_source(model_name) if model_name == DEFAULT_LAYOUT_MODEL else model_name
     return DocLayoutYoloDetector(
         model_id=model_name,
         cache_dir=resolve_layout_cache_dir(),
-        model_source=ensure_layout_model_source(model_name),
+        model_source=source,
     )
 
 

@@ -16,7 +16,8 @@ from app.structure_cache import (
     ensure_default_structure_support_files,
 )
 
-DEFAULT_MODEL_ID = "microsoft/table-transformer-structure-recognition-v1.1-pub"
+DEFAULT_MODEL_ID = "microsoft/table-transformer-structure-recognition"
+DEFAULT_TIMM_MODEL_ID = "timm/resnet18.a1_in1k"
 
 
 def main() -> None:
@@ -33,8 +34,9 @@ def main() -> None:
         repo_id=model_id,
         local_dir=str(target_dir),
         local_dir_use_symlinks=False,
-        allow_patterns=["config.json", "preprocessor_config.json", "processor_config.json", "model.safetensors"],
+        allow_patterns=["config.json", "preprocessor_config.json", "processor_config.json", "model.safetensors", "pytorch_model.bin"],
     )
+    snapshot_download(repo_id=DEFAULT_TIMM_MODEL_ID)
     ensure_default_structure_support_files(target_dir)
     missing_files = find_missing_default_structure_files(target_dir)
     if missing_files:
@@ -50,7 +52,7 @@ def main() -> None:
             "TATR structure 模型缓存配置修复失败: "
             f"model={model_id}, cache_dir={target_dir}, detail={exc}"
         ) from exc
-    print(f"structure model cached: {local_dir}")
+    print(f"structure+timm model cached: {local_dir}")
 
 
 if __name__ == "__main__":

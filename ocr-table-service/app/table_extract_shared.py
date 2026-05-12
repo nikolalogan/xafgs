@@ -9,9 +9,10 @@ from PIL import Image
 
 
 TABLE_LABEL = "table"
-DEFAULT_LAYOUT_MODEL = "juliozhao/DocLayout-YOLO-DocStructBench"
-DEFAULT_STRUCTURE_MODEL = "microsoft/table-transformer-structure-recognition-v1.1-pub"
-DEFAULT_LAYOUT_MODEL_FILE = "doclayout_yolo_docstructbench_imgsz1024.pt"
+DEFAULT_LAYOUT_MODEL = "microsoft/table-transformer-detection"
+DEFAULT_STRUCTURE_MODEL = "microsoft/table-transformer-structure-recognition"
+DEFAULT_TIMM_BACKBONE_MODEL = "timm/resnet18.a1_in1k"
+DEFAULT_LAYOUT_MODEL_FILES = ("config.json", "preprocessor_config.json", "model.safetensors")
 DEFAULT_STRUCTURE_MODEL_FILES = ("config.json", "preprocessor_config.json", "processor_config.json", "model.safetensors")
 STRUCTURE_LABEL_TABLE = "table"
 STRUCTURE_LABEL_ROW = "table row"
@@ -134,6 +135,10 @@ def resolve_structure_cache_dir() -> str:
     return str(Path(resolve_table_extract_cache_root()) / "structure")
 
 
+def resolve_hf_cache_dir() -> str:
+    return os.getenv("HF_HOME", "/app/model_cache/hf").strip()
+
+
 def resolve_structure_model_name() -> str:
     return os.getenv("TABLE_EXTRACT_STRUCTURE_MODEL", DEFAULT_STRUCTURE_MODEL).strip()
 
@@ -142,27 +147,24 @@ def resolve_layout_model_name() -> str:
     return os.getenv("TABLE_EXTRACT_LAYOUT_MODEL", DEFAULT_LAYOUT_MODEL).strip()
 
 
-def resolve_layout_model_file_name() -> str:
-    return os.getenv("TABLE_EXTRACT_LAYOUT_MODEL_FILE", DEFAULT_LAYOUT_MODEL_FILE).strip()
-
-
-def resolve_layout_local_model_path(model_name: str) -> str | None:
+def resolve_layout_local_model_dir(model_name: str) -> str | None:
     if model_name != DEFAULT_LAYOUT_MODEL:
         return None
-    target = Path(resolve_layout_cache_dir()) / resolve_layout_model_file_name()
-    if target.is_file():
+    target = Path(resolve_layout_cache_dir())
+    if all((target / name).is_file() for name in DEFAULT_LAYOUT_MODEL_FILES):
         return str(target)
     return None
 
 
 def ensure_layout_model_source(model_name: str) -> str:
-    local_model_path = resolve_layout_local_model_path(model_name)
-    if local_model_path:
-        return local_model_path
+    local_model_dir = resolve_layout_local_model_dir(model_name)
+    if local_model_dir:
+        return local_model_dir
     if model_name == DEFAULT_LAYOUT_MODEL:
+        required_files = ", ".join(DEFAULT_LAYOUT_MODEL_FILES)
         raise TableExtractError(
-            f"DocLayout-YOLO layout 模型未预热: model={model_name}, cache_dir={resolve_layout_cache_dir()}, "
-            f"required_file={resolve_layout_model_file_name()}"
+            f"TATR detection 模型未预热: model={model_name}, cache_dir={resolve_layout_cache_dir()}, "
+            f"required_files=[{required_files}]"
         )
     return model_name
 

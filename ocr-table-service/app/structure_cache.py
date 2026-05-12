@@ -3,7 +3,7 @@ import shutil
 from pathlib import Path
 
 
-DEFAULT_STRUCTURE_REQUIRED_FILES = ("config.json", "preprocessor_config.json", "processor_config.json", "model.safetensors")
+DEFAULT_STRUCTURE_REQUIRED_FILES = ("config.json", "preprocessor_config.json", "processor_config.json")
 DEFAULT_STRUCTURE_CONFIG_NORMALIZED_FIELDS = {
     "dilation": False,
     "backbone": "resnet50",
@@ -23,7 +23,11 @@ def ensure_default_structure_support_files(cache_dir: Path) -> None:
 
 
 def find_missing_default_structure_files(cache_dir: Path) -> list[str]:
-    return [name for name in DEFAULT_STRUCTURE_REQUIRED_FILES if not (cache_dir / name).is_file()]
+    missing = [name for name in DEFAULT_STRUCTURE_REQUIRED_FILES if not (cache_dir / name).is_file()]
+    has_weights = (cache_dir / "model.safetensors").is_file() or (cache_dir / "pytorch_model.bin").is_file()
+    if not has_weights:
+        missing.append("model.safetensors|pytorch_model.bin")
+    return missing
 
 
 def normalize_default_structure_config(cache_dir: Path) -> bool:

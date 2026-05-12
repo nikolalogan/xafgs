@@ -4,3 +4,5 @@ aiohttp==3.12.15
 filetype==1.2.0
 Pillow==11.2.1
 PyMuPDF==1.26.0
+numpy==1.26.4
+opencv-python==4.10.0.84
