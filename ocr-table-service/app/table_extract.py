@@ -25,7 +25,7 @@ from app.table_extract_shared import (
     resolve_structure_cache_dir,
     resolve_structure_model_name,
 )
-from app.table_rectify import build_table_image_variants, detect_table_quad, rectify_table_crop, rotate_table_variant_clockwise
+from app.table_rectify import rectify_table_crop
 from app.table_tatr import (
     TableTransformerRecognizer,
     build_table_cells,
@@ -133,11 +133,9 @@ def extract_tables(payload: dict[str, Any]) -> dict[str, Any]:
                 int(round(table_crop_padding)),
             )
             crop_image = preprocessed_image.crop(tuple(candidate_roi_bbox))
-            variants = build_table_image_variants(crop_image, candidate_roi_bbox, border_trim_options)
-            best_variant, structure_items = recognize_best_table_variant(recognizer, variants, structure_threshold)
             best_variant = rectify_table_crop(
-                best_variant.image,
-                best_variant.candidate_roi_bbox,
+                crop_image,
+                candidate_roi_bbox,
                 border_trim_options=border_trim_options,
                 use_table_deskew=use_table_deskew,
                 deskew_min_angle_deg=deskew_min_angle_deg,
@@ -146,6 +144,7 @@ def extract_tables(payload: dict[str, Any]) -> dict[str, Any]:
                 use_post_sharpen=use_post_sharpen,
                 post_sharpen_strength=post_sharpen_strength,
             )
+            best_variant, structure_items = recognize_best_table_variant(recognizer, [best_variant], structure_threshold)
             tables.append(
                 build_table_result(
                     preprocessed_image,

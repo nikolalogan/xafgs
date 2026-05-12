@@ -1060,17 +1060,13 @@ export default function TableExtractDemoPage() {
               {
                 key: 'rectify',
                 label: '2. 矩形矫正',
-                children: selectedPage && selectedTable ? (
-                  <TableRectifyPreview
-                    key={selectedTable.tableId}
-                    page={selectedPage}
-                    table={selectedTable}
-                    manualReview={manualReview}
-                    onApplyManualReview={runManualReview}
-                    reviewSubmitting={reviewSubmitting}
+                children: (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="已移除旧版手动四点/梯形校正"
+                    description="当前仅保留与 tatr 一致的自动 deskew 校正链路（阈值与实现一致），不再提供旧版页面内手动梯形矫正。"
                   />
-                ) : (
-                  <Empty description={selectedPage ? '当前页面未检测到表格' : '当前没有可预览页面'} />
                 ),
               },
               {
