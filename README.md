@@ -161,18 +161,18 @@ make ocr-table-model-cache-warm
 
 - 首次启动 `ocr-table-service` 前，必须先执行 `make ocr-table-cache-warm`；若只想分步恢复，至少要依次执行 `make ocr-table-layout-model-cache-warm` 和 `make ocr-table-model-cache-warm`；
 - `make ocr-table-cache-warm` 会一次性预热 `TATR detection` layout 与 TATR structure 默认模型；
-- `make ocr-table-layout-model-cache-warm` 会将 `doclayout_yolo_docstructbench_imgsz1024.pt` 预热到宿主机 `ocr-table-service/model_cache/table_extract/layout/`；
+- `make ocr-table-layout-model-cache-warm` 会将 `config.json / preprocessor_config.json / model.safetensors\(或 pytorch_model.bin\)` 预热到宿主机 `ocr-table-service/model_cache/table_extract/layout/`；
 - `make ocr-table-model-cache-warm` 会将 TATR 所需 `config.json`、`preprocessor_config.json`、`processor_config.json`、`model.safetensors` 预热到宿主机 `ocr-table-service/model_cache/table_extract/structure/`；
-- Windows 开发环境对应仓库路径为 `E:\code\xafgs\ocr-table-service\model_cache\table_extract\layout\doclayout_yolo_docstructbench_imgsz1024.pt`；
+- Windows 开发环境对应仓库路径为 `E:\code\xafgs\ocr-table-service\model_cache\table_extract\layout\config.json / preprocessor_config.json / model.safetensors\(或 pytorch_model.bin\)`；
 - Windows 开发环境对应 structure 路径为 `E:\code\xafgs\ocr-table-service\model_cache\table_extract\structure\`；
-- 预热后可先用 `Get-ChildItem ocr-table-service/model_cache/table_extract/layout -Filter doclayout_yolo_docstructbench_imgsz1024.pt` 或 `find ocr-table-service/model_cache/table_extract/layout -name doclayout_yolo_docstructbench_imgsz1024.pt` 验证 layout 文件存在；
+- 预热后可先用 `Get-ChildItem ocr-table-service/model_cache/table_extract/layout -Filter config.json / preprocessor_config.json / model.safetensors\(或 pytorch_model.bin\)` 或 `find ocr-table-service/model_cache/table_extract/layout -name config.json / preprocessor_config.json / model.safetensors\(或 pytorch_model.bin\)` 验证 layout 文件存在；
 - 再用 `Get-ChildItem ocr-table-service/model_cache/table_extract/structure -Filter config.json`、`Get-ChildItem ocr-table-service/model_cache/table_extract/structure -Filter preprocessor_config.json`、`Get-ChildItem ocr-table-service/model_cache/table_extract/structure -Filter processor_config.json`、`Get-ChildItem ocr-table-service/model_cache/table_extract/structure -Filter model.safetensors`，或 `find ocr-table-service/model_cache/table_extract/structure -maxdepth 1 \( -name config.json -o -name preprocessor_config.json -o -name processor_config.json -o -name model.safetensors \)` 验证 structure 四个关键文件存在，再启动或重启 `ocr-table-service`；
 - `make ocr-wheels-sync` 会将主 OCR 依赖下载到 `ocr-service/wheels/`，已存在文件会复用；
 - `ocr-service/wheels/` 仅用于主 `ocr-service` 构建缓存；`ocr-table-service/wheels/` 单独缓存表格提取重依赖；
 - `make ocr-wheels-verify` / `make ocr-table-wheels-verify` 默认按 `manylinux_2_17_x86_64 + py311` 离线校验依赖闭包；如需扩展平台可通过 `WHEEL_PLATFORMS_VERIFY` 覆盖；
 - `POST /ocr/table-extract` 当前默认表格结构识别模型为 `microsoft/table-transformer-structure-recognition`；
 - 表格提取链路为：整页输入 -> `TATR detection` 检测 `table` -> 裁表 -> Hugging Face TATR `structure-recognition` 结构识别；
-- `make ocr-table-layout-model-cache-warm` 会将 `microsoft/table-transformer-detection` 的 `doclayout_yolo_docstructbench_imgsz1024.pt` 预热到 `ocr-table-service/model_cache/table_extract/layout/`；
+- `make ocr-table-layout-model-cache-warm` 会将 `microsoft/table-transformer-detection` 的 `config.json / preprocessor_config.json / model.safetensors\(或 pytorch_model.bin\)` 预热到 `ocr-table-service/model_cache/table_extract/layout/`；
 - `make ocr-table-model-cache-warm` 会将 TATR 所需 `config.json`、`preprocessor_config.json`、`processor_config.json`、`model.safetensors` 预热到 `ocr-table-service/model_cache/table_extract/structure/`；
 - `make ocr-table-cache-warm` 是推荐的首次启动命令，用于一次性补齐 detection + structure + timm 两套默认模型缓存；
 - `ocr-table-service/model_cache/hf/` 用于表格提取链路的 Transformers 缓存；不复用 Docling 的 artifacts 目录；
