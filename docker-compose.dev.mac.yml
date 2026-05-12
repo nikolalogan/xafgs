@@ -139,6 +139,7 @@ services:
         PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
         PIP_RETRIES: "${PIP_RETRIES:-10}"
         OCR_TABLE_WHEELS_ONLY: "${OCR_TABLE_WHEELS_ONLY:-1}"
+        HF_ENDPOINT: "${HF_ENDPOINT:-https://hf-mirror.com}"
     image: sxfgssever-ocr-table-service-dev:latest
     gpus: all
     environment:
@@ -153,14 +154,15 @@ services:
       FLAGS_enable_pir_in_executor: "0"
       CPU_NUM: "1"
       HF_HOME: "/app/model_cache/hf"
+      HF_HUB_CACHE: "/app/model_cache/hf/hub"
       TRANSFORMERS_CACHE: "/app/model_cache/hf"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
       TABLE_EXTRACT_MODEL_CACHE_DIR: "/app/model_cache/table_extract"
       TABLE_EXTRACT_LAYOUT_MODEL: "${TABLE_EXTRACT_LAYOUT_MODEL:-microsoft/table-transformer-detection}"
       TABLE_EXTRACT_STRUCTURE_MODEL: "${TABLE_EXTRACT_STRUCTURE_MODEL:-microsoft/table-transformer-structure-recognition}"
     command: >
       sh -c "uvicorn app.service:app --host 0.0.0.0 --port 8090"
-    volumes:
-      - ./ocr-table-service/model_cache:/app/model_cache
     expose:
       - "8090"
     ports:

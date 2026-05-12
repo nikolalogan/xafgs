@@ -40,7 +40,7 @@ help:
 	@echo "  make ocr-table-layout-model-cache-warm # 兼容命令：预热 TATR detection 模型缓存"
 	@echo "  make ocr-table-detection-model-cache-warm # 预热 TATR detection 模型缓存"
 	@echo "  make ocr-table-model-cache-warm # 预热 TATR structure + timm 模型缓存"
-	@echo "  make ocr-table-build # 自动同步+校验 wheels，再离线构建表格提取镜像（推荐）"
+	@echo "  make ocr-table-build # 自动同步+校验 wheels，并在构建阶段预热模型后离线构建表格提取镜像（推荐）"
 	@echo "  make ocr-table-build-offline # 仅使用本地 wheels 构建表格提取镜像"
 	@echo "  make ocr-table-build-online-fallback # 自动同步 wheels 后构建表格提取镜像（允许缺包回源）"
 	@echo "  make docling-wheels-sync # 同步 Docling Python 依赖到本地 wheels 缓存目录"
@@ -138,10 +138,10 @@ ocr-table-cache-warm: ocr-table-layout-model-cache-warm ocr-table-model-cache-wa
 ocr-table-detection-model-cache-warm: ocr-table-layout-model-cache-warm
 
 ocr-table-layout-model-cache-warm: ocr-table-model-cache-init ocr-table-rebuild-image
-	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} ocr-table-service python /app/scripts/preload_table_layout_model.py
+	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} -e HF_HUB_CACHE=/app/model_cache/hf/hub ocr-table-service python /app/scripts/preload_table_layout_model.py
 
 ocr-table-model-cache-warm: ocr-table-model-cache-init ocr-table-rebuild-image
-	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} ocr-table-service python /app/scripts/preload_table_structure_model.py
+	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} -e HF_HUB_CACHE=/app/model_cache/hf/hub ocr-table-service python /app/scripts/preload_table_structure_model.py
 
 ocr-table-build: ocr-table-model-cache-init ocr-table-wheels-sync ocr-table-wheels-verify
 	OCR_TABLE_WHEELS_ONLY=1 docker compose -f $(DEV_COMPOSE_FILE) build ocr-table-service

@@ -10,14 +10,17 @@ ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
 ARG PIP_DEFAULT_TIMEOUT=600
 ARG PIP_RETRIES=10
 ARG OCR_TABLE_WHEELS_ONLY=1
+ARG HF_ENDPOINT=https://hf-mirror.com
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     PORT=8090 \
     HF_HOME=/app/model_cache/hf \
+    HF_HUB_CACHE=/app/model_cache/hf/hub \
     TRANSFORMERS_CACHE=/app/model_cache/hf \
     TABLE_EXTRACT_MODEL_CACHE_DIR=/app/model_cache/table_extract \
+    HF_ENDPOINT=${HF_ENDPOINT} \
     PIP_DEFAULT_TIMEOUT=${PIP_DEFAULT_TIMEOUT}
 
 RUN sed -i "s|http://deb.debian.org/debian|${APT_MIRROR}|g; s|http://security.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
@@ -45,6 +48,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY app /app/app
 COPY scripts /app/scripts
+RUN python /app/scripts/preload_table_layout_model.py \
+    && python /app/scripts/preload_table_structure_model.py
 
 EXPOSE 8090
 
