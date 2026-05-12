@@ -1,4 +1,4 @@
-.PHONY: help menu dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-table-wheels-sync ocr-table-wheels-verify ocr-table-build ocr-table-build-offline ocr-table-build-online-fallback ocr-table-model-cache-init ocr-table-rebuild-image ocr-table-cache-warm ocr-table-model-cache-warm ocr-table-layout-model-cache-warm ocr-table-detection-model-cache-warm docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback menu-start-all menu-start-frontend menu-start-backend menu-start-ocr-service menu-start-ocr-table-service menu-start-docling-service menu-start-vllm menu-start-gateway menu-start-postgres menu-start-redis menu-build-all menu-build-frontend menu-build-backend menu-build-ocr-service menu-build-ocr-table-service menu-build-docling-service menu-build-vllm menu-build-gateway menu-build-postgres menu-build-redis menu-preload-all menu-preload-ocr-table-layout menu-preload-ocr-table-structure menu-preload-ocr-table-all menu-preload-docling
+.PHONY: help menu dev dev-build dev-fresh dev-rebuild-backend dev-rebuild-backend-fresh macdev macdev-build macdev-fresh macdev-rebuild-backend macdev-rebuild-backend-fresh windev windev-build windev-fresh windev-rebuild-backend windev-rebuild-backend-fresh prod down dev-down prod-down logs ps ocr-wheels-sync ocr-wheels-verify ocr-build ocr-build-offline ocr-build-online-fallback ocr-table-wheels-sync ocr-table-wheels-verify ocr-table-build ocr-table-build-offline ocr-table-build-online-fallback ocr-table-model-cache-init ocr-table-rebuild-image ocr-table-cache-warm ocr-table-model-cache-warm ocr-table-layout-model-cache-warm ocr-table-detection-model-cache-warm ocr-table-cache-verify-offline docling-wheels-sync docling-model-cache-init docling-model-cache-warm docling-build docling-build-offline docling-build-online-fallback menu-start-all menu-start-frontend menu-start-backend menu-start-ocr-service menu-start-ocr-table-service menu-start-docling-service menu-start-vllm menu-start-gateway menu-start-postgres menu-start-redis menu-build-all menu-build-frontend menu-build-backend menu-build-ocr-service menu-build-ocr-table-service menu-build-docling-service menu-build-vllm menu-build-gateway menu-build-postgres menu-build-redis menu-preload-all menu-preload-ocr-table-layout menu-preload-ocr-table-structure menu-preload-ocr-table-all menu-preload-docling
 
 ifeq ($(OS),Windows_NT)
 UNAME_S := Windows_NT
@@ -37,6 +37,7 @@ help:
 	@echo "  make ocr-table-wheels-sync # 同步表格提取依赖到本地 wheels 缓存目录"
 	@echo "  make ocr-table-wheels-verify # 校验表格提取 wheels 是否可离线覆盖依赖闭包"
 	@echo "  make ocr-table-cache-warm # 预热表格提取模型缓存（detection + structure + timm）"
+	@echo "  make ocr-table-cache-verify-offline # 离线校验表格提取模型缓存完整性（仅本地文件检查）"
 	@echo "  make ocr-table-layout-model-cache-warm # 兼容命令：联网预热 TATR detection 模型缓存"
 	@echo "  make ocr-table-detection-model-cache-warm # 联网预热 TATR detection 模型缓存"
 	@echo "  make ocr-table-model-cache-warm # 联网预热 TATR structure + timm 模型缓存"
@@ -141,10 +142,13 @@ ocr-table-cache-warm: ocr-table-layout-model-cache-warm ocr-table-model-cache-wa
 ocr-table-detection-model-cache-warm: ocr-table-layout-model-cache-warm
 
 ocr-table-layout-model-cache-warm: ocr-table-model-cache-init ocr-table-rebuild-image
-	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} -e HF_HUB_CACHE=/app/model_cache/hf/hub ocr-table-service python /app/scripts/preload_table_layout_model.py
+	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_DATASETS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://huggingface.co} -e HF_HUB_CACHE=/app/model_cache/hf/hub ocr-table-service python /app/scripts/preload_table_layout_model.py
 
 ocr-table-model-cache-warm: ocr-table-model-cache-init ocr-table-rebuild-image
-	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} -e HF_HUB_CACHE=/app/model_cache/hf/hub ocr-table-service python /app/scripts/preload_table_structure_model.py
+	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_DATASETS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://huggingface.co} -e HF_HUB_CACHE=/app/model_cache/hf/hub ocr-table-service python /app/scripts/preload_table_structure_model.py
+
+ocr-table-cache-verify-offline:
+	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e HF_DATASETS_OFFLINE=1 -e HF_HUB_CACHE=/app/model_cache/hf/hub ocr-table-service python /app/scripts/verify_table_cache_offline.py
 
 ocr-table-build: ocr-table-model-cache-init ocr-table-wheels-sync ocr-table-wheels-verify
 	OCR_TABLE_WHEELS_ONLY=1 docker compose -f $(DEV_COMPOSE_FILE) build ocr-table-service
@@ -163,7 +167,7 @@ docling-model-cache-init:
 
 docling-model-cache-warm: docling-model-cache-init docling-wheels-sync
 	DOCLING_WHEELS_ONLY=0 docker compose -f $(DEV_COMPOSE_FILE) build docling-service
-	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://hf-mirror.com} docling-service python scripts/preload_models.py
+	$(MSYS_NO_PATHCONV_RUN) docker compose -f $(DEV_COMPOSE_FILE) run --rm -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 -e HF_ENDPOINT=$${HF_ENDPOINT:-https://huggingface.co} docling-service python scripts/preload_models.py
 
 docling-build: docling-model-cache-init docling-wheels-sync docling-model-cache-warm
 	DOCLING_WHEELS_ONLY=1 docker compose -f $(DEV_COMPOSE_FILE) build docling-service
@@ -212,6 +216,10 @@ menu-start-ocr-service:
 	docker compose -f $(DEV_COMPOSE_FILE) up -d ocr-service
 
 menu-start-ocr-table-service:
+	@echo "提示: 当前为离线运行模式启动。"
+	@if ! $(MAKE) --no-print-directory ocr-table-cache-verify-offline; then \
+		echo "提示: 离线缓存校验未通过，请先执行 make menu-preload-ocr-table-layout / make menu-preload-ocr-table-structure / make menu-preload-ocr-table-all"; \
+	fi
 	docker compose -f $(DEV_COMPOSE_FILE) stop ocr-table-service
 	docker compose -f $(DEV_COMPOSE_FILE) rm -f ocr-table-service
 	docker compose -f $(DEV_COMPOSE_FILE) up -d ocr-table-service

@@ -240,7 +240,7 @@ make docling-build
 - `make docling-wheels-sync` 默认通过 1Panel Docker 镜像源 `docker.1panel.live/library/python:3.11-slim` 执行下载，可通过 `PYTHON_BASE_IMAGE` 覆盖；
 - `make docling-model-cache-warm` 会将 Docling 所需 artifacts 预热到 `docling-service/model_cache/`；
 - `docling-service/model_cache/` 是缓存根目录，`docling-service/model_cache/serve_artifacts/` 是运行时统一 artifacts 目录；
-- Docling 预热默认通过 `HF_ENDPOINT=https://hf-mirror.com` 下载 Hugging Face 模型，也可在 `.env` 中覆盖为你自己的镜像或代理入口；
+- Docling 预热默认通过 `HF_ENDPOINT=https://huggingface.co` 下载 Hugging Face 模型，也可在 `.env` 中覆盖为你自己的镜像或代理入口；
 - 开发/构建阶段默认 Docker 基础镜像源为 1Panel 镜像源 `docker.1panel.live`，如有企业内网镜像源可通过 `BASE_REGISTRY` / `OCR_BASE_REGISTRY` 覆盖；
 - Redis 默认使用 `docker.1panel.live/library/redis:8-alpine`，以兼容 Redis 8 写入的 RDB/AOF 数据格式；如需使用其他镜像源，可通过 `REDIS_IMAGE=可用镜像源/library/redis:8-alpine` 单独覆盖；
 - Nginx 默认使用兼容的 `nginx:alpine`，以匹配当前免登录镜像源可用 tag；

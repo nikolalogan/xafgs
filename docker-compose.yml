@@ -125,6 +125,7 @@ services:
       FLAGS_enable_pir_in_executor: "0"
       CPU_NUM: "1"
       HF_HOME: "/app/model_cache/hf"
+      HF_HUB_CACHE: "/app/model_cache/hf/hub"
       TRANSFORMERS_CACHE: "/app/model_cache/hf"
       TABLE_EXTRACT_MODEL_CACHE_DIR: "/app/model_cache/table_extract"
       TABLE_EXTRACT_LAYOUT_MODEL: "${TABLE_EXTRACT_LAYOUT_MODEL:-juliozhao/DocLayout-YOLO-DocStructBench}"
@@ -168,7 +169,7 @@ services:
       OCR_SERVICE_BASE_URL: "http://ocr-service:8090"
       HF_HOME: "/opt/docling-models/hf"
       HF_HUB_CACHE: "/opt/docling-models/hf/hub"
-      HF_ENDPOINT: "${HF_ENDPOINT:-https://hf-mirror.com}"
+      HF_ENDPOINT: "${HF_ENDPOINT:-https://huggingface.co}"
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
     expose:

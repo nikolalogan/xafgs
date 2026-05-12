@@ -139,7 +139,7 @@ services:
         PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
         PIP_RETRIES: "${PIP_RETRIES:-10}"
         OCR_TABLE_WHEELS_ONLY: "${OCR_TABLE_WHEELS_ONLY:-1}"
-        HF_ENDPOINT: "${HF_ENDPOINT:-https://hf-mirror.com}"
+        HF_ENDPOINT: "${HF_ENDPOINT:-https://huggingface.co}"
     image: sxfgssever-ocr-table-service-dev:latest
     gpus: all
     environment:
@@ -158,6 +158,7 @@ services:
       TRANSFORMERS_CACHE: "/app/model_cache/hf"
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
+      HF_DATASETS_OFFLINE: "1"
       TABLE_EXTRACT_MODEL_CACHE_DIR: "/app/model_cache/table_extract"
       TABLE_EXTRACT_LAYOUT_MODEL: "${TABLE_EXTRACT_LAYOUT_MODEL:-microsoft/table-transformer-detection}"
       TABLE_EXTRACT_STRUCTURE_MODEL: "${TABLE_EXTRACT_STRUCTURE_MODEL:-microsoft/table-transformer-structure-recognition}"
@@ -202,7 +203,7 @@ services:
       OCR_SERVICE_BASE_URL: "http://ocr-service:8090"
       HF_HOME: "/opt/docling-models/hf"
       HF_HUB_CACHE: "/opt/docling-models/hf/hub"
-      HF_ENDPOINT: "${HF_ENDPOINT:-https://hf-mirror.com}"
+      HF_ENDPOINT: "${HF_ENDPOINT:-https://huggingface.co}"
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
     expose:

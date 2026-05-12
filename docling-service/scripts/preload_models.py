@@ -140,8 +140,8 @@ def main() -> None:
     env = os.environ.copy()
     env["DOCLING_ARTIFACTS_PATH"] = str(target)
     env["DOCLING_SERVE_ARTIFACTS_PATH"] = str(get_serve_target(target))
-    env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-    print(f"Using Hugging Face mirror endpoint: {env['HF_ENDPOINT']}")
+    env.setdefault("HF_ENDPOINT", "https://huggingface.co")
+    print(f"Using Hugging Face endpoint: {env['HF_ENDPOINT']}")
     subprocess.run(
         ["docling-tools", "models", "download", "--output-dir", str(target)],
         env=env,
