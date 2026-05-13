@@ -94,7 +94,7 @@ services:
   postgres:
     image: ${BASE_REGISTRY:-docker.1panel.live}/pgvector/pgvector:pg17
     ports:
-      - "5432:5432"
+      - "55432:5432"
     environment:
       TZ: "Asia/Shanghai"
       PGTZ: "Asia/Shanghai"
