@@ -50,7 +50,6 @@ services:
       APP_NAME: "sxfgssever-api"
       API_TOKEN: "dev-token"
       FILE_STORAGE_ROOT: "/data/uploads"
-      OCR_SERVICE_BASE_URL: "http://ocr-service:8090"
       PDF_DEBUG_LOG: "1"
       GOPROXY: "https://goproxy.cn,direct"
       GOSUMDB: "sum.golang.google.cn"
@@ -76,186 +75,6 @@ services:
         condition: service_started
     restart: unless-stopped
 
-  ocr-service:
-    platform: linux/amd64
-    build:
-      context: ./ocr-service
-      dockerfile: Dockerfile
-      args:
-        BASE_REGISTRY: "${OCR_BASE_REGISTRY:-docker.1panel.live}"
-        APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
-        APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
-        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-        PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
-        PIP_RETRIES: "${PIP_RETRIES:-10}"
-        OCR_WHEELS_ONLY: "${OCR_WHEELS_ONLY:-1}"
-    image: sxfgssever-ocr-service-dev:latest
-    gpus: all
-    environment:
-      TZ: "Asia/Shanghai"
-      GLM_BASE_URL: "${GLM_BASE_URL:-http://vllm:8000}"
-      GLM_MODEL: "${GLM_MODEL:-zai-org/GLM-OCR}"
-      GLM_API_KEY: "${GLM_API_KEY:-}"
-      GLM_AUTH_MODE: "${GLM_AUTH_MODE:-none}"
-      GLM_TIMEOUT_MS: "${GLM_TIMEOUT_MS:-120000}"
-      GLM_READY_TIMEOUT_MS: "${GLM_READY_TIMEOUT_MS:-300000}"
-      NVIDIA_VISIBLE_DEVICES: "all"
-      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
-      OMP_NUM_THREADS: "1"
-      MKL_NUM_THREADS: "1"
-      OPENBLAS_NUM_THREADS: "1"
-      FLAGS_use_mkldnn: "0"
-      FLAGS_enable_pir_api: "0"
-      FLAGS_enable_pir_in_executor: "0"
-      CPU_NUM: "1"
-    command: >
-      sh -c "uvicorn app.service:app --host 0.0.0.0 --port 8090"
-    depends_on:
-      vllm:
-        condition: service_healthy
-    expose:
-      - "8090"
-    ports:
-      - "8090:8090"
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8090)); s.close(); sys.exit(0)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-    restart: unless-stopped
-
-  ocr-table-service:
-    platform: linux/amd64
-    build:
-      context: ./ocr-table-service
-      dockerfile: Dockerfile
-      args:
-        BASE_REGISTRY: "${OCR_BASE_REGISTRY:-docker.1panel.live}"
-        APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
-        APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
-        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-        PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
-        PIP_RETRIES: "${PIP_RETRIES:-10}"
-        OCR_TABLE_WHEELS_ONLY: "${OCR_TABLE_WHEELS_ONLY:-1}"
-        HF_ENDPOINT: "${HF_ENDPOINT:-https://huggingface.co}"
-    image: sxfgssever-ocr-table-service-dev:latest
-    gpus: all
-    environment:
-      TZ: "Asia/Shanghai"
-      NVIDIA_VISIBLE_DEVICES: "all"
-      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
-      OMP_NUM_THREADS: "1"
-      MKL_NUM_THREADS: "1"
-      OPENBLAS_NUM_THREADS: "1"
-      FLAGS_use_mkldnn: "0"
-      FLAGS_enable_pir_api: "0"
-      FLAGS_enable_pir_in_executor: "0"
-      CPU_NUM: "1"
-      HF_HOME: "/app/model_cache/hf"
-      HF_HUB_CACHE: "/app/model_cache/hf/hub"
-      TRANSFORMERS_CACHE: "/app/model_cache/hf"
-      HF_HUB_OFFLINE: "1"
-      TRANSFORMERS_OFFLINE: "1"
-      HF_DATASETS_OFFLINE: "1"
-      TABLE_EXTRACT_MODEL_CACHE_DIR: "/app/model_cache/table_extract"
-      TABLE_EXTRACT_LAYOUT_MODEL: "${TABLE_EXTRACT_LAYOUT_MODEL:-microsoft/table-transformer-detection}"
-      TABLE_EXTRACT_STRUCTURE_MODEL: "${TABLE_EXTRACT_STRUCTURE_MODEL:-microsoft/table-transformer-structure-recognition}"
-    command: >
-      sh -c "uvicorn app.service:app --host 0.0.0.0 --port 8090"
-    volumes:
-      - ./ocr-table-service/model_cache:/app/model_cache
-    expose:
-      - "8090"
-    ports:
-      - "8092:8090"
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8090)); s.close(); sys.exit(0)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-    restart: unless-stopped
-
-  docling-service:
-    build:
-      context: ./docling-service
-      dockerfile: Dockerfile
-      args:
-        BASE_REGISTRY: "${BASE_REGISTRY:-docker.1panel.live}"
-        APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
-        APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
-        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-        PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
-        PIP_RETRIES: "${PIP_RETRIES:-10}"
-        DOCLING_WHEELS_ONLY: "${DOCLING_WHEELS_ONLY:-1}"
-    image: sxfgssever-docling-service-dev:latest
-    environment:
-      TZ: "Asia/Shanghai"
-      DOCLING_ARTIFACTS_PATH: "/opt/docling-models"
-      DOCLING_SERVE_ARTIFACTS_PATH: "/opt/docling-models/serve_artifacts"
-      DOCLING_OCR_PROVIDER: "${DOCLING_OCR_PROVIDER:-none}"
-      DOCLING_GLM_KSERVE_URL: "http://ocr-service:8090"
-      DOCLING_GLM_KSERVE_MODEL: "glm-ocr"
-      DOCLING_IMAGE_OCR_TIMEOUT_SECONDS: "${DOCLING_IMAGE_OCR_TIMEOUT_SECONDS:-450}"
-      DOCLING_DEBUG_IMAGE_DIR: "/tmp/docling-picture-debug"
-      OCR_SERVICE_BASE_URL: "http://ocr-service:8090"
-      HF_HOME: "/opt/docling-models/hf"
-      HF_HUB_CACHE: "/opt/docling-models/hf/hub"
-      HF_ENDPOINT: "${HF_ENDPOINT:-https://huggingface.co}"
-      HF_HUB_OFFLINE: "1"
-      TRANSFORMERS_OFFLINE: "1"
-    expose:
-      - "8091"
-    ports:
-      - "8091:8091"
-    volumes:
-      - ./docling-service/model_cache:/opt/docling-models
-      - ./docling-service/debug_images:/tmp/docling-picture-debug
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8091)); s.close(); sys.exit(0)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-    restart: unless-stopped
-    depends_on:
-      ocr-service:
-        condition: service_healthy
-
-  vllm:
-    image: "${VLLM_IMAGE:-docker.1panel.live/vllm/vllm-openai:latest}"
-    gpus: all
-    environment:
-      TZ: "Asia/Shanghai"
-      NVIDIA_VISIBLE_DEVICES: "all"
-      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
-    command:
-      - "/models/glm-ocr"
-      - "--allowed-local-media-path"
-      - "/"
-      - "--host"
-      - "0.0.0.0"
-      - "--port"
-      - "8000"
-      - "--served-model-name"
-      - "zai-org/GLM-OCR"
-      - "--trust-remote-code"
-    volumes:
-      - ./ocr-service/model_cache/glm:/models/glm-ocr:ro
-      - ./ocr-service/model_cache/hf:/root/.cache/huggingface
-    expose:
-      - "8000"
-    ports:
-      - "8000:8000"
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=2); sys.exit(0)\""]
-      interval: 15s
-      timeout: 5s
-      retries: 120
-      start_period: 20m
-    restart: unless-stopped
-
   gateway:
     image: ${BASE_REGISTRY:-docker.1panel.live}/library/nginx:alpine
     container_name: sxfgssever-dev-gateway
@@ -269,10 +88,6 @@ services:
       frontend:
         condition: service_started
       backend:
-        condition: service_healthy
-      docling-service:
-        condition: service_healthy
-      ocr-table-service:
         condition: service_healthy
     restart: unless-stopped
 

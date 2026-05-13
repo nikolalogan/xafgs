@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 	"net/url"
+	"strconv"
+	"strings"
 
 	"sxfgssever/server/internal/model"
 	"sxfgssever/server/internal/response"
@@ -21,27 +21,17 @@ type TableRepairPreviewService interface {
 }
 
 type tableRepairPreviewService struct {
-	ocrBaseURL string
+	systemConfigService SystemConfigService
 	authMode   string
 	baseHost   string
 	httpClient *http.Client
 }
 
-func NewTableRepairPreviewService() TableRepairPreviewService {
-	ocrBaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("OCR_SERVICE_BASE_URL")), "/")
-	if ocrBaseURL == "" {
-		ocrBaseURL = "http://ocr-service:8090"
-	}
-	authMode := strings.ToLower(strings.TrimSpace(os.Getenv("GLM_AUTH_MODE")))
-	if authMode == "" {
-		authMode = "none"
-	}
+func NewTableRepairPreviewService(systemConfigService SystemConfigService) TableRepairPreviewService {
+	authMode := "none"
 	baseHost := ""
-	if parsed, err := url.Parse(strings.TrimSpace(os.Getenv("GLM_BASE_URL"))); err == nil {
-		baseHost = parsed.Hostname()
-	}
 	return &tableRepairPreviewService{
-		ocrBaseURL: ocrBaseURL,
+		systemConfigService: systemConfigService,
 		authMode:   authMode,
 		baseHost:   baseHost,
 		httpClient: &http.Client{Timeout: 120 * time.Second},
@@ -88,8 +78,12 @@ func (service *tableRepairPreviewService) ParseAndRepair(ctx context.Context, pa
 }
 
 func (service *tableRepairPreviewService) postOfficialLayoutParsing(ctx context.Context, payload map[string]any, responseBody any) error {
+	baseURL, err := service.resolveBaseURL(ctx)
+	if err != nil {
+		return err
+	}
 	requestPayload := cloneMap(payload)
-	err := service.postJSON(ctx, service.ocrBaseURL+"/layout-parsing", requestPayload, responseBody)
+	err = service.postJSON(ctx, baseURL+"/layout-parsing", requestPayload, responseBody)
 	if err == nil {
 		return nil
 	}
@@ -101,7 +95,7 @@ func (service *tableRepairPreviewService) postOfficialLayoutParsing(ctx context.
 		return err
 	}
 	requestPayload["fileType"] = 1 - fileType
-	return service.postJSON(ctx, service.ocrBaseURL+"/layout-parsing", requestPayload, responseBody)
+	return service.postJSON(ctx, baseURL+"/layout-parsing", requestPayload, responseBody)
 }
 
 func (service *tableRepairPreviewService) postJSON(ctx context.Context, url string, requestBody any, responseBody any) error {
@@ -140,10 +134,25 @@ func (service *tableRepairPreviewService) buildReadableError(err error) string {
 	case strings.Contains(lower, "status=403"):
 		return "调用 OCR 服务失败: 上游拒绝访问" + envHint + "；原始错误: " + raw
 	case strings.Contains(lower, "不可达"), strings.Contains(lower, "connection refused"), strings.Contains(lower, "no such host"), strings.Contains(lower, "timeout"):
-		return "调用 OCR 服务失败: 项目内 vLLM 上游不可达，请检查 GLM_BASE_URL（默认 http://vllm:8000）" + envHint + "；原始错误: " + raw
+		return "调用 OCR 服务失败: 远程 OCRTable 上游不可达，请检查系统设置中的 remoteOcrTableBaseUrl" + envHint + "；原始错误: " + raw
 	default:
 		return "调用 OCR 服务失败: " + raw + envHint
 	}
+}
+
+func (service *tableRepairPreviewService) resolveBaseURL(ctx context.Context) (string, error) {
+	config, apiError := service.systemConfigService.Get(ctx)
+	if apiError != nil {
+		return "", fmt.Errorf("load system config failed: %s", apiError.Message)
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(config.RemoteOCRTableBaseURL), "/")
+	if baseURL == "" {
+		return "", fmt.Errorf("系统设置未配置远程 OCRTable 地址")
+	}
+	if parsed, err := url.Parse(baseURL); err == nil {
+		service.baseHost = parsed.Hostname()
+	}
+	return baseURL, nil
 }
 
 type httpError struct {

@@ -7,10 +7,6 @@ DEV_COMPOSE_FILE="${1:-${DEV_COMPOSE_FILE:-docker-compose.dev.yml}}"
 START_ITEMS=(
   "frontend:menu-start-frontend"
   "backend:menu-start-backend"
-  "ocr-service:menu-start-ocr-service"
-  "ocr-table-service:menu-start-ocr-table-service"
-  "docling-service:menu-start-docling-service"
-  "vllm:menu-start-vllm"
   "gateway:menu-start-gateway"
   "postgres:menu-start-postgres"
   "redis:menu-start-redis"
@@ -19,20 +15,9 @@ START_ITEMS=(
 BUILD_ITEMS=(
   "frontend:menu-build-frontend"
   "backend:menu-build-backend"
-  "ocr-service:menu-build-ocr-service"
-  "ocr-table-service:menu-build-ocr-table-service"
-  "docling-service:menu-build-docling-service"
-  "vllm:menu-build-vllm"
   "gateway:menu-build-gateway"
   "postgres:menu-build-postgres"
   "redis:menu-build-redis"
-)
-
-PRELOAD_ITEMS=(
-  "ocr-table-layout:menu-preload-ocr-table-layout"
-  "ocr-table-structure:menu-preload-ocr-table-structure"
-  "ocr-table-all:menu-preload-ocr-table-all"
-  "docling-model:menu-preload-docling"
 )
 
 run_make() {
@@ -55,10 +40,9 @@ show_main_menu() {
   echo "请选择操作:"
   echo "  1) 启动"
   echo "  2) 打包"
-  echo "  3) 预加载"
-  echo "  4) 停止"
-  echo "  5) 日志"
-  echo "  6) 状态"
+  echo "  3) 停止"
+  echo "  4) 日志"
+  echo "  5) 状态"
   echo "  0) 退出"
   echo
 }
@@ -163,31 +147,6 @@ show_build_menu() {
   done
 }
 
-show_preload_menu() {
-  while true; do
-    show_header
-    show_submenu_with_items "预加载" PRELOAD_ITEMS
-    read -r -p "输入选项编号: " choice
-    choice="${choice%$'\r'}"
-    case "$choice" in
-      1)
-        run_make menu-preload-all
-        pause_menu
-        ;;
-      2)
-        choose_single_and_run "预加载" PRELOAD_ITEMS
-        ;;
-      0)
-        return
-        ;;
-      *)
-        echo "无效选项: $choice"
-        pause_menu
-        ;;
-    esac
-  done
-}
-
 while true; do
   show_header
   show_main_menu
@@ -201,16 +160,13 @@ while true; do
       show_build_menu
       ;;
     3)
-      show_preload_menu
-      ;;
-    4)
       run_make down
       pause_menu
       ;;
-    5)
+    4)
       run_make logs
       ;;
-    6)
+    5)
       run_make ps
       pause_menu
       ;;
