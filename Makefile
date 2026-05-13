@@ -25,11 +25,19 @@ menu:
 	bash scripts/dev-menu.sh "$(DEV_COMPOSE_FILE)"
 endif
 
+ifeq ($(OS),Windows_NT)
+dev: windev
+dev-build: windev-build
+dev-fresh: windev-fresh
+dev-rebuild-backend: windev-rebuild-backend
+dev-rebuild-backend-fresh: windev-rebuild-backend-fresh
+else
 dev: macdev
 dev-build: macdev-build
 dev-fresh: macdev-fresh
 dev-rebuild-backend: macdev-rebuild-backend
 dev-rebuild-backend-fresh: macdev-rebuild-backend-fresh
+endif
 
 macdev:
 	docker compose -f docker-compose.dev.mac.yml up
