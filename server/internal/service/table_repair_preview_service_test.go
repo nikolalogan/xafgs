@@ -78,6 +78,30 @@ func TestTableRepairPreviewServiceParseAndRepair_MultipartSuccess(t *testing.T) 
 	}
 }
 
+func TestTableRepairPreviewServiceParseAndRepair_ForceImageFileTypeByMagic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("parse form failed: %v", err)
+		}
+		if got := r.FormValue("file_type"); got != "1" {
+			t.Fatalf("file_type should be corrected to image, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tables":[]}`))
+	}))
+	defer server.Close()
+
+	svc := NewTableRepairPreviewService(stubSystemConfigService{baseURL: server.URL})
+	imageBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x01}
+	_, apiErr := svc.ParseAndRepair(context.Background(), map[string]any{
+		"file":     base64.StdEncoding.EncodeToString(imageBytes),
+		"fileType": 0,
+	})
+	if apiErr != nil {
+		t.Fatalf("unexpected api error: %+v", apiErr)
+	}
+}
+
 func TestTableRepairPreviewServiceParseAndRepair_BadBase64(t *testing.T) {
 	svc := NewTableRepairPreviewService(stubSystemConfigService{baseURL: "http://127.0.0.1:1"})
 	_, apiErr := svc.ParseAndRepair(context.Background(), map[string]any{
@@ -138,4 +162,3 @@ func TestTableRepairPreviewServiceParseAndRepair_Upstream422(t *testing.T) {
 		t.Fatalf("raw detail missing: %s", apiErr.Message)
 	}
 }
-

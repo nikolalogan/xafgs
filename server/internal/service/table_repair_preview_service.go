@@ -86,6 +86,7 @@ func (service *tableRepairPreviewService) postMultipart(ctx context.Context, end
 		return err
 	}
 	filename, _ := resolveUploadMeta(fileBytes, requestBody)
+	normalizeFileTypeByContent(fileBytes, requestBody)
 	delete(requestBody, "file")
 	formFields := buildTATRFormFields(requestBody)
 
@@ -406,5 +407,15 @@ func resolveUploadMeta(fileBytes []byte, payload map[string]any) (string, string
 		return "upload" + filepath.Clean(ext), contentType
 	}
 	return "upload.pdf", "application/pdf"
+}
+
+func normalizeFileTypeByContent(fileBytes []byte, payload map[string]any) {
+	kind := detectBinaryKind(base64.StdEncoding.EncodeToString(fileBytes))
+	switch kind {
+	case "image":
+		payload["fileType"] = 1
+	case "pdf":
+		payload["fileType"] = 0
+	}
 }
 

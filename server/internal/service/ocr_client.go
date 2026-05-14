@@ -142,6 +142,7 @@ func (client *HTTPOCRClient) postMultipart(ctx context.Context, path string, req
 		return err
 	}
 	filename, _ := resolveUploadMeta(fileBytes, request)
+	normalizeFileTypeByContent(fileBytes, request)
 	delete(request, "file")
 	fields := buildTATRFormFields(request)
 
