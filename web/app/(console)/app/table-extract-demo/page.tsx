@@ -769,8 +769,14 @@ export default function TableExtractDemoPage() {
   const [reviewSubmitting, setReviewSubmitting] = useState(false)
 
   const canSubmit = useMemo(() => !!uploadFile?.originFileObj && !submitting, [uploadFile, submitting])
-  const selectedPage = useMemo(() => result?.pages.find(page => page.pageNo === selectedPageNo) || result?.pages[0] || null, [result, selectedPageNo])
-  const selectedTable = useMemo(() => selectedPage?.tables.find(table => table.tableId === selectedTableId) || selectedPage?.tables[0] || null, [selectedPage, selectedTableId])
+  const selectedPage = useMemo(() => {
+    const pages = Array.isArray(result?.pages) ? result.pages : []
+    return pages.find(page => page.pageNo === selectedPageNo) || pages[0] || null
+  }, [result, selectedPageNo])
+  const selectedTable = useMemo(() => {
+    const tables = Array.isArray(selectedPage?.tables) ? selectedPage.tables : []
+    return tables.find(table => table.tableId === selectedTableId) || tables[0] || null
+  }, [selectedPage, selectedTableId])
   const inspectedTable = useMemo(() => {
     if (!selectedTable || manualReview?.sourceTableId !== selectedTable.tableId) {
       return selectedTable
