@@ -767,7 +767,7 @@ function TableResultViewer({
     return <Empty description="暂无可渲染表格" />
   }
   return (
-    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={8} style={{ width: '100%' }}>
       {error ? <Alert type="warning" showIcon message={error} /> : null}
       <UniverTableEditor valueHtml={valueHtml} onChange={onChange} onError={setError} />
     </Space>
