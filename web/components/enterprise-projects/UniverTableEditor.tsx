@@ -939,40 +939,44 @@ export default function UniverTableEditor({
         const handlePointerLeave = () => {
           tryEmitHover(-1, null)
         }
-        const ensureSheetFocus = () => {
-          try {
-            const workbook = api.getActiveWorkbook?.()
-            const sheet = workbook?.getActiveSheet?.() as any
-            if (sheet) {
-              workbook?.setActiveSheet?.(sheet)
-            }
-            const selection = readCurrentSelection()
-            const primary = selection?.ranges?.[0]
-            const range: any = primary
-              ? sheet?.getRange?.(primary.startRow, primary.startCol, primary.endRow - primary.startRow + 1, primary.endCol - primary.startCol + 1)
-              : (sheet?.getActiveCell?.() || sheet?.getRange?.(0, 0, 1, 1))
-            range?.activate?.()
-            range?.focus?.()
-            onInteractionDebugRef.current?.('focus', { focused: true })
-          } catch (error) {
-            const detail = error instanceof Error ? error.message : 'unknown error'
-            emitError(`[focus-failed] ${detail}`)
+        const isFocusInsideHost = () => {
+          const active = document.activeElement
+          return Boolean(active && hostElement && hostElement.contains(active))
+        }
+        const focusEditableInHost = () => {
+          if (!hostElement) {
+            return
           }
+          const target = hostElement.querySelector(
+            '[contenteditable="true"], textarea, input, canvas, .univer-sheet-container, .univer-sheet-canvas, .univer-scrollbar__viewport',
+          ) as HTMLElement | null
+          if (target && typeof target.focus === 'function') {
+            target.focus()
+            onInteractionDebugRef.current?.('focus', { focused: true, target: target.tagName.toLowerCase() })
+            return
+          }
+          hostElement.focus()
+          onInteractionDebugRef.current?.('focus', { focused: true, target: 'host' })
         }
         const handlePointerUp = () => {
-          ensureSheetFocus()
+          focusEditableInHost()
           syncSelectionFromCurrent('selection-fallback', 'pointerup')
         }
         const handleMouseUp = () => {
           syncSelectionFromCurrent('selection-fallback', 'mouseup')
         }
         const handlePointerDown = () => {
-          hostElement?.focus()
+          focusEditableInHost()
         }
         const handleKeySelection = (event: KeyboardEvent) => {
-          if (!event.key?.startsWith?.('Arrow')) {
+          const isArrowKey = event.key === 'ArrowUp'
+            || event.key === 'ArrowDown'
+            || event.key === 'ArrowLeft'
+            || event.key === 'ArrowRight'
+          if (!isArrowKey || !isFocusInsideHost()) {
             return
           }
+          event.preventDefault()
           window.requestAnimationFrame(() => {
             syncSelectionFromCurrent('selection-fallback', event.type, true)
           })
@@ -984,6 +988,8 @@ export default function UniverTableEditor({
         hostElement?.addEventListener('mouseup', handleMouseUp)
         hostElement?.addEventListener('keydown', handleKeySelection)
         hostElement?.addEventListener('keyup', handleKeySelection)
+        window.addEventListener('keydown', handleKeySelection, true)
+        window.addEventListener('keyup', handleKeySelection, true)
         hoverTimerRef.current = window.setTimeout(() => {
           if (!hostRef.current) {
             return
@@ -1001,6 +1007,8 @@ export default function UniverTableEditor({
           hostElement?.removeEventListener('mouseup', handleMouseUp as EventListener)
           hostElement?.removeEventListener('keydown', handleKeySelection as EventListener)
           hostElement?.removeEventListener('keyup', handleKeySelection as EventListener)
+          window.removeEventListener('keydown', handleKeySelection as EventListener, true)
+          window.removeEventListener('keyup', handleKeySelection as EventListener, true)
         }
         univerRef.current = univer
         apiRef.current = api
@@ -1056,6 +1064,21 @@ export default function UniverTableEditor({
     if (lastSelectionRef.current?.row === row && lastSelectionRef.current?.col === col) {
       return
     }
+    try {
+      const workbook = api.getActiveWorkbook?.()
+      const sheet = workbook?.getActiveSheet?.() as any
+      const selectionRaw = sheet?.getSelections?.() || sheet?.getSelection?.() || []
+      const selections = Array.isArray(selectionRaw) ? selectionRaw : [selectionRaw]
+      const ranges = selections
+        .map((selection: any) => normalizeSelectionRange(selection?.getRange?.() || selection?.range || selection))
+        .filter((range): range is SelectionRange => Boolean(range))
+      const hasMultiRange = ranges.some((range) => (
+        range.startRow !== range.endRow || range.startCol !== range.endCol
+      ))
+      if (hasMultiRange) {
+        return
+      }
+    } catch {}
     suppressSelectionEmitRef.current = true
     try {
       const workbook = api.getActiveWorkbook?.()

@@ -1156,6 +1156,7 @@ export default function TableExtractDemoPage() {
   const [selectedPageNo, setSelectedPageNo] = useState<number | null>(null)
   const [selectedTableId, setSelectedTableId] = useState<string>('')
   const [activeSelection, setActiveSelection] = useState<ActiveSelection>({ primary: null, ranges: [] })
+  const [selectionSourceFlag, setSelectionSourceFlag] = useState<'external' | 'from-univer'>('external')
   const [hoverCellCoord, setHoverCellCoord] = useState<CellCoord | null>(null)
   const [manualReview, setManualReview] = useState<ManualReviewState | null>(null)
   const [tableDraftById, setTableDraftById] = useState<Record<string, string>>({})
@@ -1269,6 +1270,7 @@ export default function TableExtractDemoPage() {
     setParams(PARAM_DEFAULTS)
     setManualReview(null)
     setTableDraftById({})
+    setSelectionSourceFlag('external')
     setActiveSelection({ primary: null, ranges: [] })
     setHoverCellCoord(null)
   }
@@ -1322,6 +1324,7 @@ export default function TableExtractDemoPage() {
       const firstPage = normalized.pages[0] || null
       setSelectedPageNo(firstPage?.pageNo || null)
       setSelectedTableId(firstPage?.tables[0]?.tableId || '')
+      setSelectionSourceFlag('external')
       setActiveSelection({ primary: null, ranges: [] })
       setHoverCellCoord(null)
       msgApi.success(`提取完成，共 ${normalized.tableCount} 张表`)
@@ -1558,6 +1561,7 @@ export default function TableExtractDemoPage() {
                     const nextPage = pages.find(page => page.pageNo === value) || null
                     setSelectedPageNo(value)
                     setSelectedTableId(nextPage?.tables[0]?.tableId || '')
+                    setSelectionSourceFlag('external')
                     setActiveSelection({ primary: null, ranges: [] })
                     setHoverCellCoord(null)
                   }}
@@ -1574,6 +1578,7 @@ export default function TableExtractDemoPage() {
                   }))}
                   onChange={value => {
                     setSelectedTableId(value)
+                    setSelectionSourceFlag('external')
                     setActiveSelection({ primary: null, ranges: [] })
                     setHoverCellCoord(null)
                   }}
@@ -1593,6 +1598,7 @@ export default function TableExtractDemoPage() {
                       ))
                     }}
                     onSelectCellCoordChange={(coord) => {
+                      setSelectionSourceFlag('external')
                       setActiveSelection({
                         primary: coord,
                         ranges: [{ startRow: coord.row, endRow: coord.row, startCol: coord.col, endCol: coord.col }],
@@ -1609,8 +1615,9 @@ export default function TableExtractDemoPage() {
                     table={inspectedTable}
                     tableId={currentTableId}
                     valueHtml={currentTableHtml}
-                    activeCell={activeSelection.primary}
+                    activeCell={selectionSourceFlag === 'from-univer' ? null : activeSelection.primary}
                     onSelectionChange={(coord, meta) => {
+                      setSelectionSourceFlag('from-univer')
                       setActiveSelection({
                         primary: coord,
                         ranges: meta?.ranges?.length
