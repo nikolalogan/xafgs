@@ -799,6 +799,7 @@ function TableResultViewer({
       {error ? <Alert type="warning" showIcon message={error} /> : null}
       <UniverTableEditor
         editorSessionKey={tableId}
+        exportFileNamePrefix={tableId ? `table-${tableId}` : 'table-export'}
         valueHtml={valueHtml}
         onChange={onChange}
         onError={setError}

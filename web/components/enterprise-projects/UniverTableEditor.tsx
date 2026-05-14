@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import * as XLSX from 'xlsx'
 
 type UniverTableEditorProps = {
   editorSessionKey: string
@@ -11,6 +12,8 @@ type UniverTableEditorProps = {
   activeCell?: { row: number; col: number } | null
   onSelectionChange?: (row: number, col: number) => void
   onHoverCellChange?: (row: number, col: number | null) => void
+  exportFileNamePrefix?: string
+  hideExportButton?: boolean
 }
 
 type ParsedTable = {
@@ -501,7 +504,11 @@ export default function UniverTableEditor({
   activeCell = null,
   onSelectionChange,
   onHoverCellChange,
+  exportFileNamePrefix = 'univer-export',
+  hideExportButton = false,
 }: UniverTableEditorProps) {
+  const [exporting, setExporting] = useState(false)
+  const [univerReady, setUniverReady] = useState(false)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const univerRef = useRef<any>(null)
   const apiRef = useRef<any>(null)
@@ -539,6 +546,7 @@ export default function UniverTableEditor({
     let cancelled = false
     const initialize = async () => {
       try {
+        setUniverReady(false)
         const host = hostRef.current
         if (!host) {
           return
@@ -809,6 +817,7 @@ export default function UniverTableEditor({
         }
         univerRef.current = univer
         apiRef.current = api
+        setUniverReady(true)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Univer 表格初始化失败'
         onErrorRef.current?.(message)
@@ -840,6 +849,7 @@ export default function UniverTableEditor({
       }
       univerRef.current = null
       apiRef.current = null
+      setUniverReady(false)
       if (hostRef.current) {
         hostRef.current.innerHTML = ''
       }
@@ -875,8 +885,99 @@ export default function UniverTableEditor({
     }
   }, [activeCell?.row, activeCell?.col])
 
+  const downloadWorkbookAsExcel = async () => {
+    const api = apiRef.current
+    if (!api) {
+      onErrorRef.current?.('Univer 尚未初始化，无法导出')
+      return
+    }
+    setExporting(true)
+    try {
+      const workbook = api.getActiveWorkbook?.()
+      const sheets = Array.isArray(workbook?.getSheets?.()) ? workbook.getSheets() : []
+      if (!sheets.length) {
+        throw new Error('当前工作簿为空，无法导出')
+      }
+      const xlsxWorkbook = XLSX.utils.book_new()
+      for (const sheet of sheets) {
+        const dataRange = sheet?.getDataRange?.()
+        const values = (dataRange?.getValues?.() || []) as unknown[][]
+        const formulaMatrix = (dataRange?.getFormulas?.() || []) as unknown[][]
+        const rowCount = Math.max(values.length, 1)
+        const colCount = Math.max(
+          values.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0),
+          1,
+        )
+        const aoa = Array.from({ length: rowCount }, (_, rowIndex) => (
+          Array.from({ length: colCount }, (_, colIndex) => {
+            const row = Array.isArray(values[rowIndex]) ? values[rowIndex] : []
+            return row[colIndex] ?? null
+          })
+        ))
+        const ws = XLSX.utils.aoa_to_sheet(aoa)
+        for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
+          for (let colIndex = 0; colIndex < colCount; colIndex++) {
+            const formulaRow = Array.isArray(formulaMatrix[rowIndex]) ? formulaMatrix[rowIndex] : []
+            const rawFormula = formulaRow[colIndex]
+            const formula = typeof rawFormula === 'string' ? rawFormula.trim() : ''
+            if (!formula) {
+              continue
+            }
+            const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })
+            const cell = ws[address] || { t: 'n', v: 0 }
+            const normalizedFormula = formula.startsWith('=') ? formula.slice(1) : formula
+            ws[address] = { ...cell, f: normalizedFormula }
+          }
+        }
+        const mergedRanges = Array.isArray(sheet?.getMergedRanges?.()) ? sheet.getMergedRanges() : []
+        if (mergedRanges.length > 0) {
+          ws['!merges'] = mergedRanges.map((range: any) => {
+            const startRow = Number(range?.getRow?.() ?? 0)
+            const startCol = Number(range?.getColumn?.() ?? 0)
+            const rowSpan = Math.max(1, Number(range?.getHeight?.() ?? 1))
+            const colSpan = Math.max(1, Number(range?.getWidth?.() ?? 1))
+            return {
+              s: { r: startRow, c: startCol },
+              e: { r: startRow + rowSpan - 1, c: startCol + colSpan - 1 },
+            }
+          })
+        }
+        const sheetName = String(sheet?.getName?.() || `Sheet${xlsxWorkbook.SheetNames.length + 1}`)
+        XLSX.utils.book_append_sheet(xlsxWorkbook, ws, sheetName.slice(0, 31))
+      }
+      const out = XLSX.write(xlsxWorkbook, { bookType: 'xlsx', type: 'array' })
+      const blob = new Blob([out], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      })
+      const href = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const safePrefix = String(exportFileNamePrefix || 'univer-export').trim() || 'univer-export'
+      link.href = href
+      link.download = `${safePrefix}-${Date.now()}.xlsx`
+      link.click()
+      URL.revokeObjectURL(href)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '导出 Excel 失败'
+      onErrorRef.current?.(message)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="univer-table-editor-wrapper rounded border border-gray-200 bg-white">
+      {!hideExportButton ? (
+        <div className="flex justify-end border-b border-gray-100 px-3 py-2">
+          <button
+            type="button"
+            className="rounded border border-gray-300 bg-white px-3 py-1 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={exporting || !univerReady}
+            onClick={() => void downloadWorkbookAsExcel()}
+          >
+            {exporting ? '导出中...' : '导出 Excel'}
+          </button>
+        </div>
+      ) : null}
       <div ref={hostRef} className="h-[620px] w-full overflow-hidden" />
     </div>
   )
