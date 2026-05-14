@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"sync"
@@ -141,14 +142,17 @@ func (client *HTTPOCRClient) postMultipart(ctx context.Context, path string, req
 	if err != nil {
 		return err
 	}
-	filename, _ := resolveUploadMeta(fileBytes, request)
+	filename, contentType := resolveUploadMeta(fileBytes, request)
 	normalizeFileTypeByContent(fileBytes, request)
 	delete(request, "file")
 	fields := buildTATRFormFields(request)
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	fileWriter, err := writer.CreateFormFile("file", filename)
+	fileHeader := make(textproto.MIMEHeader)
+	fileHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, "file", filename))
+	fileHeader.Set("Content-Type", contentType)
+	fileWriter, err := writer.CreatePart(fileHeader)
 	if err != nil {
 		return err
 	}

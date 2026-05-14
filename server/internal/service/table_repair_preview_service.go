@@ -6,10 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"mime/multipart"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"time"
 	"net/url"
 	"path/filepath"
@@ -85,14 +86,17 @@ func (service *tableRepairPreviewService) postMultipart(ctx context.Context, end
 	if err != nil {
 		return err
 	}
-	filename, _ := resolveUploadMeta(fileBytes, requestBody)
+	filename, contentType := resolveUploadMeta(fileBytes, requestBody)
 	normalizeFileTypeByContent(fileBytes, requestBody)
 	delete(requestBody, "file")
 	formFields := buildTATRFormFields(requestBody)
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	fileWriter, err := writer.CreateFormFile("file", filename)
+	fileHeader := make(textproto.MIMEHeader)
+	fileHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, "file", filename))
+	fileHeader.Set("Content-Type", contentType)
+	fileWriter, err := writer.CreatePart(fileHeader)
 	if err != nil {
 		return err
 	}
