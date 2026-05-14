@@ -151,6 +151,16 @@ const detectFileType = (file: File, base64: string): 0 | 1 => {
   return 1
 }
 
+const getAccessToken = () => {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+  return window.localStorage.getItem('sxfg_access_token')
+    || window.localStorage.getItem('access_token')
+    || window.localStorage.getItem('token')
+    || ''
+}
+
 const pretty = (value: unknown) => JSON.stringify(value, null, 2)
 
 const dataUrlToBase64 = (dataUrl: string) => {
@@ -803,9 +813,15 @@ export default function TableExtractDemoPage() {
         ...params,
       }
       setLastRequest(payload)
+      const token = getAccessToken()
+      const headers: Record<string, string> = { 'content-type': 'application/json' }
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
       const response = await fetch('/api/ocr/table-repair-preview', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers,
+        credentials: 'include',
         body: JSON.stringify(payload),
       })
       const raw = await response.json() as TableExtractResponse & { detail?: string }
@@ -837,9 +853,15 @@ export default function TableExtractDemoPage() {
         fileType: 1,
         ...params,
       }
+      const token = getAccessToken()
+      const headers: Record<string, string> = { 'content-type': 'application/json' }
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
       const response = await fetch('/api/ocr/table-repair-preview', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers,
+        credentials: 'include',
         body: JSON.stringify(payload),
       })
       const raw = await response.json() as TableExtractResponse & { detail?: string }
