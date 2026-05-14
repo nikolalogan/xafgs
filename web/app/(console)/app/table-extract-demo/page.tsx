@@ -108,6 +108,14 @@ type TableExtractResponse = {
   pages: ExtractedPage[]
 }
 
+type TableExtractApiEnvelope = {
+  statusCode?: number
+  code?: string
+  message?: string
+  detail?: string
+  data?: unknown
+}
+
 type ManualReviewState = {
   sourceTableId: string
   rectifiedImageDataUrl: string
@@ -167,6 +175,160 @@ const pretty = (value: unknown) => JSON.stringify(value, null, 2)
 const dataUrlToBase64 = (dataUrl: string) => {
   const raw = String(dataUrl || '')
   return raw.includes(',') ? raw.split(',')[1] || '' : raw
+}
+
+const asNumber = (value: unknown, fallback = 0) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+const asString = (value: unknown, fallback = '') => {
+  if (typeof value === 'string') {
+    return value
+  }
+  if (value === null || value === undefined) {
+    return fallback
+  }
+  return String(value)
+}
+
+const asNumberArray = (value: unknown): number[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map(item => asNumber(item))
+}
+
+const asPolygon = (value: unknown): BoxPolygon => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map(point => asNumberArray(point))
+}
+
+const pick = <T = unknown>(source: Record<string, unknown>, camelKey: string, snakeKey: string): T | undefined => {
+  if (source[camelKey] !== undefined) {
+    return source[camelKey] as T
+  }
+  return source[snakeKey] as T | undefined
+}
+
+const normalizeTableExtractResponse = (payload: unknown): TableExtractResponse => {
+  const envelope = (payload || {}) as TableExtractApiEnvelope
+  const core = ((envelope.data && typeof envelope.data === 'object') ? envelope.data : payload) as Record<string, unknown>
+  const pagesRaw = Array.isArray(core.pages) ? core.pages : []
+  const pages: ExtractedPage[] = pagesRaw.map((pageRaw, pageIndex) => {
+    const page = (pageRaw || {}) as Record<string, unknown>
+    const tablesRaw = Array.isArray(page.tables) ? page.tables : []
+    const detectionsRaw = Array.isArray(page.detections) ? page.detections : []
+    const tables: ExtractedTable[] = tablesRaw.map((tableRaw, tableIndex) => {
+      const table = (tableRaw || {}) as Record<string, unknown>
+      const cellsRaw = Array.isArray(table.cells) ? table.cells : []
+      const structures = (table.structures || {}) as Record<string, unknown>
+      const mapBoxes = (boxes: unknown): BoxLike[] => (
+        Array.isArray(boxes)
+          ? boxes.map(item => {
+              const box = (item || {}) as Record<string, unknown>
+              return {
+                bbox: asNumberArray(box.bbox),
+                polygon: asPolygon(box.polygon),
+                score: asNumber(box.score),
+                label: asString(box.label),
+              }
+            })
+          : []
+      )
+      return {
+        tableId: asString(pick(table, 'tableId', 'table_id'), `table-${pageIndex}-${tableIndex}`),
+        pageNo: asNumber(pick(table, 'pageNo', 'page_no'), asNumber(pick(page, 'pageNo', 'page_no'), pageIndex + 1)),
+        tableIndex: asNumber(pick(table, 'tableIndex', 'table_index'), tableIndex + 1),
+        score: asNumber(table.score),
+        bbox: asNumberArray(table.bbox),
+        polygon: asPolygon(table.polygon),
+        cropBBox: asNumberArray(pick(table, 'cropBBox', 'crop_bbox')),
+        cropPolygon: asPolygon(pick(table, 'cropPolygon', 'crop_polygon')),
+        tableImageDataUrl: asString(pick(table, 'tableImageDataUrl', 'table_image_data_url')),
+        tableType: asString(pick(table, 'tableType', 'table_type')),
+        rowCount: asNumber(pick(table, 'rowCount', 'row_count')),
+        colCount: asNumber(pick(table, 'colCount', 'col_count')),
+        cells: cellsRaw.map(cellRaw => {
+          const cell = (cellRaw || {}) as Record<string, unknown>
+          return {
+            rowIndex: asNumber(pick(cell, 'rowIndex', 'row_index')),
+            colIndex: asNumber(pick(cell, 'colIndex', 'col_index')),
+            rowSpan: asNumber(pick(cell, 'rowSpan', 'row_span'), 1),
+            colSpan: asNumber(pick(cell, 'colSpan', 'col_span'), 1),
+            text: asString(cell.text),
+            confidence: asNumber(cell.confidence),
+            isColumnHeader: Boolean(pick(cell, 'isColumnHeader', 'is_column_header')),
+            isProjectedRowHeader: Boolean(pick(cell, 'isProjectedRowHeader', 'is_projected_row_header')),
+            pageBBox: asNumberArray(pick(cell, 'pageBBox', 'page_bbox')),
+            pagePolygon: asPolygon(pick(cell, 'pagePolygon', 'page_polygon')),
+            cropBBox: asNumberArray(pick(cell, 'cropBBox', 'crop_bbox')),
+            cropPolygon: asPolygon(pick(cell, 'cropPolygon', 'crop_polygon')),
+          }
+        }),
+        structures: {
+          rows: mapBoxes(structures.rows),
+          columns: mapBoxes(structures.columns),
+          columnHeaders: mapBoxes(pick(structures, 'columnHeaders', 'column_headers')),
+          projectedRowHeaders: mapBoxes(pick(structures, 'projectedRowHeaders', 'projected_row_headers')),
+          spanningCells: mapBoxes(pick(structures, 'spanningCells', 'spanning_cells')),
+          rawDetections: mapBoxes(pick(structures, 'rawDetections', 'raw_detections')),
+        },
+        meta: {
+          cropWidth: asNumber(pick(table, 'meta', 'meta') && ((table.meta as Record<string, unknown>).cropWidth ?? (table.meta as Record<string, unknown>).crop_width), 0),
+          cropHeight: asNumber(pick(table, 'meta', 'meta') && ((table.meta as Record<string, unknown>).cropHeight ?? (table.meta as Record<string, unknown>).crop_height), 0),
+          originalCropWidth: asNumber((table.meta as Record<string, unknown>)?.originalCropWidth ?? (table.meta as Record<string, unknown>)?.original_crop_width),
+          originalCropHeight: asNumber((table.meta as Record<string, unknown>)?.originalCropHeight ?? (table.meta as Record<string, unknown>)?.original_crop_height),
+          rectified: Boolean((table.meta as Record<string, unknown>)?.rectified),
+          rectifyMode: asString((table.meta as Record<string, unknown>)?.rectifyMode ?? (table.meta as Record<string, unknown>)?.rectify_mode),
+          rectifyScale: asNumber((table.meta as Record<string, unknown>)?.rectifyScale ?? (table.meta as Record<string, unknown>)?.rectify_scale),
+          rectifyInterpolation: asString((table.meta as Record<string, unknown>)?.rectifyInterpolation ?? (table.meta as Record<string, unknown>)?.rectify_interpolation),
+          rectifiedWidth: asNumber((table.meta as Record<string, unknown>)?.rectifiedWidth ?? (table.meta as Record<string, unknown>)?.rectified_width),
+          rectifiedHeight: asNumber((table.meta as Record<string, unknown>)?.rectifiedHeight ?? (table.meta as Record<string, unknown>)?.rectified_height),
+          borderTrimApplied: Boolean((table.meta as Record<string, unknown>)?.borderTrimApplied ?? (table.meta as Record<string, unknown>)?.border_trim_applied),
+          borderTrimBBox: asNumberArray((table.meta as Record<string, unknown>)?.borderTrimBBox ?? (table.meta as Record<string, unknown>)?.border_trim_bbox),
+          borderTrimMarginPx: asNumber((table.meta as Record<string, unknown>)?.borderTrimMarginPx ?? (table.meta as Record<string, unknown>)?.border_trim_margin_px),
+          borderTrimMinProjectionRatio: asNumber((table.meta as Record<string, unknown>)?.borderTrimMinProjectionRatio ?? (table.meta as Record<string, unknown>)?.border_trim_min_projection_ratio),
+          rotationApplied: asNumber((table.meta as Record<string, unknown>)?.rotationApplied ?? (table.meta as Record<string, unknown>)?.rotation_applied),
+          deskewAngle: asNumber((table.meta as Record<string, unknown>)?.deskewAngle ?? (table.meta as Record<string, unknown>)?.deskew_angle),
+          quadScore: asNumber((table.meta as Record<string, unknown>)?.quadScore ?? (table.meta as Record<string, unknown>)?.quad_score),
+          lineCoverageHorizontal: asNumber((table.meta as Record<string, unknown>)?.lineCoverageHorizontal ?? (table.meta as Record<string, unknown>)?.line_coverage_horizontal),
+          lineCoverageVertical: asNumber((table.meta as Record<string, unknown>)?.lineCoverageVertical ?? (table.meta as Record<string, unknown>)?.line_coverage_vertical),
+        },
+      }
+    })
+    return {
+      pageNo: asNumber(pick(page, 'pageNo', 'page_no'), pageIndex + 1),
+      source: asString(page.source),
+      width: asNumber(page.width),
+      height: asNumber(page.height),
+      pageImageDataUrl: asString(pick(page, 'pageImageDataUrl', 'page_image_data_url')),
+      tableCount: asNumber(pick(page, 'tableCount', 'table_count'), tables.length),
+      detections: detectionsRaw.map(itemRaw => {
+        const item = (itemRaw || {}) as Record<string, unknown>
+        return {
+          bbox: asNumberArray(item.bbox),
+          polygon: asPolygon(item.polygon),
+          score: asNumber(item.score),
+          label: asString(item.label),
+        }
+      }),
+      tables,
+    }
+  })
+  return {
+    provider: asString(core.provider),
+    layoutModel: asString(pick(core, 'layoutModel', 'layout_model')),
+    structureModel: asString(pick(core, 'structureModel', 'structure_model')),
+    detection_threshold: asNumber(core.detection_threshold),
+    structure_threshold: asNumber(core.structure_threshold),
+    pageCount: asNumber(pick(core, 'pageCount', 'page_count'), pages.length),
+    tableCount: asNumber(pick(core, 'tableCount', 'table_count'), pages.reduce((sum, page) => sum + page.tables.length, 0)),
+    durationMs: asNumber(pick(core, 'durationMs', 'duration_ms')),
+    pages,
+  }
 }
 
 const MANUAL_RECTIFY_SCALE = 1.5
@@ -512,17 +674,19 @@ function TableResultViewer({
 }
 
 function PagePreview({ page, selectedTableId }: { page: ExtractedPage; selectedTableId: string }) {
+  const detections = Array.isArray(page.detections) ? page.detections : []
+  const tables = Array.isArray(page.tables) ? page.tables : []
   return (
     <div style={{ position: 'relative', width: '100%', border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden' }}>
       <img src={page.pageImageDataUrl} alt={`page-${page.pageNo}`} style={{ display: 'block', width: '100%' }} />
-      {page.detections.map((item, index) => (
+      {detections.map((item, index) => (
         <div key={`${page.pageNo}-det-${index}`} style={buildOverlayStyle(item.bbox, page.width, page.height, '#fa8c16', 2)}>
           <span style={{ position: 'absolute', top: -24, left: 0, background: '#fa8c16', color: '#fff', fontSize: 12, padding: '0 6px', borderRadius: 4 }}>
             T{index + 1}
           </span>
         </div>
       ))}
-      {page.tables.filter(table => table.tableId === selectedTableId).map(table => (
+      {tables.filter(table => table.tableId === selectedTableId).map(table => (
         <div key={table.tableId} style={buildOverlayStyle(table.bbox, page.width, page.height, '#1677ff', 3)} />
       ))}
     </div>
@@ -752,7 +916,8 @@ function TableRectifyPreview({
 
 function CropPreview({ table }: { table: ExtractedTable }) {
   const [hoveredCellKey, setHoveredCellKey] = useState<string>('')
-  const hoveredCell = table.cells.find((cell, index) => `${cell.rowIndex}-${cell.colIndex}-${index}` === hoveredCellKey) || null
+  const cells = Array.isArray(table.cells) ? table.cells : []
+  const hoveredCell = cells.find((cell, index) => `${cell.rowIndex}-${cell.colIndex}-${index}` === hoveredCellKey) || null
 
   return (
     <Space direction="vertical" size={12} style={{ width: '100%' }}>
@@ -761,7 +926,7 @@ function CropPreview({ table }: { table: ExtractedTable }) {
         onMouseLeave={() => setHoveredCellKey('')}
       >
         <img src={table.tableImageDataUrl} alt={table.tableId} style={{ display: 'block', width: '100%' }} />
-        {table.cells.map((cell, index) => {
+        {cells.map((cell, index) => {
           const cellKey = `${cell.rowIndex}-${cell.colIndex}-${index}`
           const isHovered = hoveredCellKey === cellKey
           const isMerged = cell.rowSpan > 1 || cell.colSpan > 1
@@ -905,17 +1070,18 @@ export default function TableExtractDemoPage() {
         credentials: 'include',
         body: JSON.stringify(payload),
       })
-      const raw = await response.json() as TableExtractResponse & { detail?: string }
+      const raw = await response.json() as TableExtractResponse & TableExtractApiEnvelope
       if (!response.ok) {
         throw new Error(raw.detail || `请求失败(${response.status})`)
       }
+      const normalized = normalizeTableExtractResponse(raw)
       setManualReview(null)
       setTableDraftById({})
-      setResult(raw)
-      const firstPage = raw.pages[0] || null
+      setResult(normalized)
+      const firstPage = normalized.pages[0] || null
       setSelectedPageNo(firstPage?.pageNo || null)
       setSelectedTableId(firstPage?.tables[0]?.tableId || '')
-      msgApi.success(`提取完成，共 ${raw.tableCount} 张表`)
+      msgApi.success(`提取完成，共 ${normalized.tableCount} 张表`)
     } catch (error) {
       msgApi.error(error instanceof Error ? error.message : '提取失败')
     } finally {
@@ -946,18 +1112,19 @@ export default function TableExtractDemoPage() {
         credentials: 'include',
         body: JSON.stringify(payload),
       })
-      const raw = await response.json() as TableExtractResponse & { detail?: string }
+      const raw = await response.json() as TableExtractResponse & TableExtractApiEnvelope
       if (!response.ok) {
         throw new Error(raw.detail || `手动复检失败(${response.status})`)
       }
-      const reviewedTable = raw.pages[0]?.tables[0]
+      const normalized = normalizeTableExtractResponse(raw)
+      const reviewedTable = normalized.pages[0]?.tables[0]
       if (!reviewedTable) {
         throw new Error('手动矫正后的图像未检出表格')
       }
       setManualReview({
         sourceTableId: selectedTable.tableId,
         rectifiedImageDataUrl: dataUrl,
-        response: raw,
+        response: normalized,
         table: {
           ...reviewedTable,
           tableImageDataUrl: dataUrl,
