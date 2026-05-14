@@ -939,7 +939,7 @@ function TableRectifyPreview({
   }
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Space wrap size={12}>
         <Typography.Text>默认模式: {table.meta.rectifyMode || 'fallback_none'}</Typography.Text>
         <Typography.Text>自动矫正: {table.meta.rectified ? '是' : '否'}</Typography.Text>
@@ -954,7 +954,7 @@ function TableRectifyPreview({
         <Typography.Text>quadScore: {table.meta.quadScore || 0}</Typography.Text>
       </Space>
       <Card size="small" title="手动四点矫正">
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text type="secondary">
             默认先使用自动矫正。如果对第 3 步检查结果不满意，可在左图按顺时针点选 4 个角点，生成手动矫正图后再点“基于手动矫正重新检查”。
           </Typography.Text>
@@ -1076,7 +1076,7 @@ function CropPreview({
   const hoveredCell = cells.find((cell, index) => getCellKey(cell, index) === activeCellKey) || null
 
   return (
-    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={12} style={{ width: '100%' }}>
       <div
         style={{ position: 'relative', width: '100%', border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden' }}
         onMouseLeave={() => onActiveCellKeyChange('')}
@@ -1539,7 +1539,7 @@ export default function TableExtractDemoPage() {
                   <Empty description="当前没有可预览页面" />
                 )}
               </Card>
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              <Space orientation="vertical" size={16} style={{ width: '100%' }}>
                 <Card size="small" title={inspectedTable ? `表格视图 · T${inspectedTable.tableIndex}` : '表格视图'}>
                   <TableResultViewer
                     table={inspectedTable}
