@@ -603,7 +603,28 @@ export default function UniverTableEditor({ valueHtml, disabled = false, onChang
           const colCount = Math.max(parsed.values[0]?.length || 1, 1)
           sheet.getRange(0, 0, rowCount, colCount).setValues(parsed.values)
           for (const merge of parsed.merges) {
-            sheet.getRange(merge.row, merge.col, merge.rowSpan, merge.colSpan).merge()
+            if (merge.rowSpan <= 1 && merge.colSpan <= 1) {
+              continue
+            }
+            const maxRowSpan = rowCount - merge.row
+            const maxColSpan = colCount - merge.col
+            if (maxRowSpan <= 0 || maxColSpan <= 0) {
+              continue
+            }
+            const safeRowSpan = Math.max(1, Math.min(merge.rowSpan, maxRowSpan))
+            const safeColSpan = Math.max(1, Math.min(merge.colSpan, maxColSpan))
+            try {
+              sheet.getRange(merge.row, merge.col, safeRowSpan, safeColSpan).merge(true)
+            } catch (error) {
+              if (process.env.NODE_ENV !== 'production') {
+                console.warn('[UniverTableEditor] skip invalid merge range', {
+                  merge,
+                  safeRowSpan,
+                  safeColSpan,
+                  error: error instanceof Error ? error.message : String(error),
+                })
+              }
+            }
           }
         }
         workbook.setActiveSheet(firstSheet)
