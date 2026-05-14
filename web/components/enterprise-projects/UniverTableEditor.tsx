@@ -7,6 +7,9 @@ type UniverTableEditorProps = {
   disabled?: boolean
   onChange: (nextHtml: string) => void
   onError?: (message: string) => void
+  activeCell?: { row: number; col: number } | null
+  onSelectionChange?: (row: number, col: number) => void
+  onHoverCellChange?: (row: number, col: number | null) => void
 }
 
 type ParsedTable = {
@@ -488,15 +491,31 @@ const serializeWorkbookToHtml = (api: any): string => {
   return sheets.map((sheet: any) => serializeSheetToHtml(sheet)).join('')
 }
 
-export default function UniverTableEditor({ valueHtml, disabled = false, onChange, onError }: UniverTableEditorProps) {
+export default function UniverTableEditor({
+  valueHtml,
+  disabled = false,
+  onChange,
+  onError,
+  activeCell = null,
+  onSelectionChange,
+  onHoverCellChange,
+}: UniverTableEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const univerRef = useRef<any>(null)
   const apiRef = useRef<any>(null)
-  const listenerRef = useRef<any>(null)
+  const valueChangedListenerRef = useRef<any>(null)
+  const selectionListenerRef = useRef<any>(null)
   const debounceRef = useRef<number>(0)
+  const hoverTimerRef = useRef<number>(0)
+  const lastHoverAtRef = useRef(0)
+  const pointerHoverRef = useRef<{ row: number; col: number | null }>({ row: -1, col: null })
+  const lastSelectionRef = useRef<{ row: number; col: number } | null>(null)
+  const suppressSelectionEmitRef = useRef(false)
   const lastEmittedHTMLRef = useRef('')
   const onChangeRef = useRef(onChange)
   const onErrorRef = useRef(onError)
+  const onSelectionChangeRef = useRef(onSelectionChange)
+  const onHoverCellChangeRef = useRef(onHoverCellChange)
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -505,6 +524,14 @@ export default function UniverTableEditor({ valueHtml, disabled = false, onChang
   useEffect(() => {
     onErrorRef.current = onError
   }, [onError])
+
+  useEffect(() => {
+    onSelectionChangeRef.current = onSelectionChange
+  }, [onSelectionChange])
+
+  useEffect(() => {
+    onHoverCellChangeRef.current = onHoverCellChange
+  }, [onHoverCellChange])
 
   useEffect(() => {
     let cancelled = false
@@ -650,10 +677,95 @@ export default function UniverTableEditor({ valueHtml, disabled = false, onChang
           }, 300)
         }
         if (!disabled) {
-          listenerRef.current = api.addEvent(
+          valueChangedListenerRef.current = api.addEvent(
             api.Event.SheetValueChanged,
             scheduleEmit,
           )
+        }
+        const selectionEventName = (api.Event as any)?.SheetSelectionChanged
+          || (api.Event as any)?.SelectionChanged
+          || (api.Event as any)?.SheetSelectionSet
+        if (selectionEventName) {
+          selectionListenerRef.current = api.addEvent(
+            selectionEventName,
+            (event: any) => {
+            if (suppressSelectionEmitRef.current) {
+              return
+            }
+            const primary = event?.payload?.selections?.[0]?.range || event?.payload?.selectionRanges?.[0]
+            const row = Number(primary?.startRow ?? primary?.row ?? primary?.startRowIndex)
+            const col = Number(primary?.startColumn ?? primary?.column ?? primary?.startColumnIndex)
+            if (!Number.isFinite(row) || !Number.isFinite(col)) {
+              return
+            }
+            if (lastSelectionRef.current?.row === row && lastSelectionRef.current?.col === col) {
+              return
+            }
+            lastSelectionRef.current = { row, col }
+            onSelectionChangeRef.current?.(row, col)
+            },
+          )
+        }
+        const hostElement = hostRef.current
+        const tryEmitHover = (row: number, col: number | null) => {
+          const previous = pointerHoverRef.current
+          if (previous.row === row && previous.col === col) {
+            return
+          }
+          pointerHoverRef.current = { row, col }
+          onHoverCellChangeRef.current?.(row, col)
+        }
+        const readCellFromTarget = (target: EventTarget | null): { row: number; col: number } | null => {
+          const element = target as HTMLElement | null
+          if (!element) {
+            return null
+          }
+          const cellElement = element.closest('[data-row],[data-row-index]') as HTMLElement | null
+          if (!cellElement) {
+            return null
+          }
+          const row = Number(cellElement.dataset.row ?? cellElement.dataset.rowIndex)
+          const col = Number(
+            cellElement.dataset.col
+            ?? cellElement.dataset.column
+            ?? cellElement.dataset.colIndex
+            ?? cellElement.dataset.columnIndex
+          )
+          if (!Number.isFinite(row) || !Number.isFinite(col)) {
+            return null
+          }
+          return { row, col }
+        }
+        const handlePointerMove = (event: PointerEvent) => {
+          const now = Date.now()
+          if (now - lastHoverAtRef.current < 24) {
+            return
+          }
+          lastHoverAtRef.current = now
+          const hit = readCellFromTarget(event.target)
+          if (!hit) {
+            tryEmitHover(-1, null)
+            return
+          }
+          tryEmitHover(hit.row, hit.col)
+        }
+        const handlePointerLeave = () => {
+          tryEmitHover(-1, null)
+        }
+        hostElement?.addEventListener('pointermove', handlePointerMove, { passive: true })
+        hostElement?.addEventListener('pointerleave', handlePointerLeave)
+        hoverTimerRef.current = window.setTimeout(() => {
+          if (!hostRef.current) {
+            return
+          }
+          const nodes = hostRef.current.querySelectorAll('[data-row],[data-row-index]')
+          if (!nodes.length) {
+            onHoverCellChangeRef.current?.(-1, null)
+          }
+        }, 600)
+        ;(hostElement as any).__univerHoverCleanup = () => {
+          hostElement?.removeEventListener('pointermove', handlePointerMove as EventListener)
+          hostElement?.removeEventListener('pointerleave', handlePointerLeave as EventListener)
         }
         univerRef.current = univer
         apiRef.current = api
@@ -669,10 +781,20 @@ export default function UniverTableEditor({ valueHtml, disabled = false, onChang
         window.clearTimeout(debounceRef.current)
         debounceRef.current = 0
       }
-      if (listenerRef.current?.dispose) {
-        listenerRef.current.dispose()
+      if (hoverTimerRef.current) {
+        window.clearTimeout(hoverTimerRef.current)
+        hoverTimerRef.current = 0
       }
-      listenerRef.current = null
+      const hostElement = hostRef.current as (HTMLDivElement & { __univerHoverCleanup?: () => void }) | null
+      hostElement?.__univerHoverCleanup?.()
+      if (valueChangedListenerRef.current?.dispose) {
+        valueChangedListenerRef.current.dispose()
+      }
+      if (selectionListenerRef.current?.dispose) {
+        selectionListenerRef.current.dispose()
+      }
+      valueChangedListenerRef.current = null
+      selectionListenerRef.current = null
       if (univerRef.current?.dispose) {
         univerRef.current.dispose()
       }
@@ -683,6 +805,35 @@ export default function UniverTableEditor({ valueHtml, disabled = false, onChang
       }
     }
   }, [valueHtml, disabled])
+
+  useEffect(() => {
+    const api = apiRef.current
+    if (!api || !activeCell) {
+      return
+    }
+    const row = Number(activeCell.row)
+    const col = Number(activeCell.col)
+    if (!Number.isFinite(row) || !Number.isFinite(col)) {
+      return
+    }
+    if (lastSelectionRef.current?.row === row && lastSelectionRef.current?.col === col) {
+      return
+    }
+    suppressSelectionEmitRef.current = true
+    try {
+      const workbook = api.getActiveWorkbook?.()
+      const sheet = workbook?.getActiveSheet?.()
+      const range = sheet?.getRange?.(row, col, 1, 1)
+      range?.activate?.()
+      range?.setActive?.()
+      range?.focus?.()
+      lastSelectionRef.current = { row, col }
+    } finally {
+      window.setTimeout(() => {
+        suppressSelectionEmitRef.current = false
+      }, 0)
+    }
+  }, [activeCell?.row, activeCell?.col])
 
   return (
     <div className="univer-table-editor-wrapper rounded border border-gray-200 bg-white">
