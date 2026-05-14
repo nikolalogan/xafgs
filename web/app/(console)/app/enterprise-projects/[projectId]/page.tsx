@@ -274,6 +274,11 @@ export default function EnterpriseProjectPage() {
       {contextHolder}
       <Card
         title="企业新增项目"
+        extra={(
+          <Button type="primary" onClick={() => router.push('/app/report-cases')}>
+            {detail?.project?.reportCaseId && detail.project.reportCaseId > 0 ? '修改报告' : '新增报告'}
+          </Button>
+        )}
       >
         <Tabs
           items={[
@@ -424,17 +429,6 @@ export default function EnterpriseProjectPage() {
             },
           ]}
         />
-      </Card>
-
-      <Card
-        title="报告模块"
-        extra={(
-          <Button type="primary" onClick={() => router.push('/app/report-cases')}>
-            {detail?.project?.reportCaseId && detail.project.reportCaseId > 0 ? '修改报告' : '新增报告'}
-          </Button>
-        )}
-      >
-        <div className="text-sm text-gray-600">可在此进入报告组装页进行报告新增或修改。</div>
       </Card>
     </div>
   )
