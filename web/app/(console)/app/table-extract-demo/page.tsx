@@ -1056,9 +1056,10 @@ export default function TableExtractDemoPage() {
                         value={selectedPage?.pageNo}
                         placeholder="选择页面"
                         style={{ width: 180 }}
-                        options={result.pages.map(page => ({ label: `第 ${page.pageNo} 页 (${page.tableCount} tables)`, value: page.pageNo }))}
+                        options={(Array.isArray(result?.pages) ? result.pages : []).map(page => ({ label: `第 ${page.pageNo} 页 (${page.tableCount} tables)`, value: page.pageNo }))}
                         onChange={value => {
-                          const nextPage = result.pages.find(page => page.pageNo === value) || null
+                          const pages = Array.isArray(result?.pages) ? result.pages : []
+                          const nextPage = pages.find(page => page.pageNo === value) || null
                           setSelectedPageNo(value)
                           setSelectedTableId(nextPage?.tables[0]?.tableId || '')
                         }}
