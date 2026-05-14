@@ -1081,7 +1081,11 @@ function CropPreview({
         style={{ position: 'relative', width: '100%', border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden' }}
         onMouseLeave={() => onActiveCellKeyChange('')}
       >
-        <img src={table.tableImageDataUrl} alt={table.tableId} style={{ display: 'block', width: '100%' }} />
+        {table.tableImageDataUrl ? (
+          <img src={table.tableImageDataUrl} alt={table.tableId} style={{ display: 'block', width: '100%' }} />
+        ) : (
+          <div style={{ padding: 24 }}><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前表格无裁剪预览图" /></div>
+        )}
         {cells.map((cell, index) => {
           if (!isValidBBox(cell.cropBBox)) {
             return null
@@ -1127,7 +1131,7 @@ function CropPreview({
         })}
       </div>
 
-      <Card size="small" bodyStyle={{ padding: 12, background: '#fafafa' }}>
+      <Card size="small" styles={{ body: { padding: 12, background: '#fafafa' } }}>
         {hoveredCell ? (
           <Space wrap size={12}>
             <Typography.Text strong>当前单元格</Typography.Text>
