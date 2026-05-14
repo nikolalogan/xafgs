@@ -798,6 +798,7 @@ function TableResultViewer({
     <Space orientation="vertical" size={8} style={{ width: '100%' }}>
       {error ? <Alert type="warning" showIcon message={error} /> : null}
       <UniverTableEditor
+        editorSessionKey={tableId}
         valueHtml={valueHtml}
         onChange={onChange}
         onError={setError}
@@ -1543,6 +1544,24 @@ export default function TableExtractDemoPage() {
               ) : null}
             </Space>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(460px, 1fr) minmax(420px, 1fr)', gap: 16, alignItems: 'start' }}>
+              <Card size="small" title={inspectedTable ? `单元格预览 · T${inspectedTable.tableIndex}` : '单元格预览'}>
+                {inspectedTable && Array.isArray(inspectedTable.cells) && inspectedTable.cells.length > 0 ? (
+                  <CropPreview
+                    table={inspectedTable}
+                    activeCellKey={activeCellKey}
+                    onHoverCellCoordChange={(coord) => {
+                      setHoverCellCoord(previous => (
+                        previous?.row === coord?.row && previous?.col === coord?.col ? previous : coord
+                      ))
+                    }}
+                    onSelectCellCoordChange={(coord) => {
+                      setActiveCellCoord(previous => (previous?.row === coord.row && previous.col === coord.col ? previous : coord))
+                    }}
+                  />
+                ) : (
+                  <Empty description="当前表格无 cells，无法展示单元格联动预览" />
+                )}
+              </Card>
               <Card size="small" title={inspectedTable ? `表格视图 · T${inspectedTable.tableIndex}` : '表格视图'}>
                 {inspectedTable && Array.isArray(inspectedTable.cells) && inspectedTable.cells.length > 0 ? (
                   <TableResultViewer
@@ -1567,24 +1586,6 @@ export default function TableExtractDemoPage() {
                   />
                 ) : (
                   <Empty description="当前表格无 cells，无法展示表格联动视图" />
-                )}
-              </Card>
-              <Card size="small" title={inspectedTable ? `单元格预览 · T${inspectedTable.tableIndex}` : '单元格预览'}>
-                {inspectedTable && Array.isArray(inspectedTable.cells) && inspectedTable.cells.length > 0 ? (
-                  <CropPreview
-                    table={inspectedTable}
-                    activeCellKey={activeCellKey}
-                    onHoverCellCoordChange={(coord) => {
-                      setHoverCellCoord(previous => (
-                        previous?.row === coord?.row && previous?.col === coord?.col ? previous : coord
-                      ))
-                    }}
-                    onSelectCellCoordChange={(coord) => {
-                      setActiveCellCoord(previous => (previous?.row === coord.row && previous.col === coord.col ? previous : coord))
-                    }}
-                  />
-                ) : (
-                  <Empty description="当前表格无 cells，无法展示单元格联动预览" />
                 )}
               </Card>
             </div>

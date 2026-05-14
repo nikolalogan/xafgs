@@ -369,6 +369,7 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, fileName, e
                 ? (
                     <UniverTableEditor
                       key={`table-${block.blockId}-${block.lastSavedAt || ''}-${editing ? 'edit' : 'read'}`}
+                      editorSessionKey={String(block.blockId)}
                       valueHtml={normalizeHTML(pendingHTMLByBlockIDRef.current[block.blockId] || block.currentHtml || block.initialHtml || '')}
                       disabled={!enabled || !editing}
                       onChange={(nextHtml) => {

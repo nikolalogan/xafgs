@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 
 type UniverTableEditorProps = {
+  editorSessionKey: string
   valueHtml: string
   disabled?: boolean
   onChange: (nextHtml: string) => void
@@ -492,6 +493,7 @@ const serializeWorkbookToHtml = (api: any): string => {
 }
 
 export default function UniverTableEditor({
+  editorSessionKey,
   valueHtml,
   disabled = false,
   onChange,
@@ -685,6 +687,45 @@ export default function UniverTableEditor({
         const selectionEventName = (api.Event as any)?.SheetSelectionChanged
           || (api.Event as any)?.SelectionChanged
           || (api.Event as any)?.SheetSelectionSet
+        const resolveSelectionCoord = (event: any): { row: number; col: number } | null => {
+          const payload = event?.payload
+          const primaryRange = payload?.selections?.[0]?.range
+            || payload?.selectionRanges?.[0]
+            || payload?.ranges?.[0]
+            || payload?.range
+            || payload?.selection?.range
+            || event?.selections?.[0]?.range
+            || event?.selectionRanges?.[0]
+            || event?.range
+          const row = Number(
+            primaryRange?.startRow
+            ?? primaryRange?.row
+            ?? primaryRange?.startRowIndex
+            ?? payload?.row
+            ?? payload?.rowIndex
+          )
+          const col = Number(
+            primaryRange?.startColumn
+            ?? primaryRange?.column
+            ?? primaryRange?.startColumnIndex
+            ?? payload?.col
+            ?? payload?.column
+            ?? payload?.colIndex
+            ?? payload?.columnIndex
+          )
+          if (Number.isFinite(row) && Number.isFinite(col)) {
+            return { row, col }
+          }
+          const workbook = api?.getActiveWorkbook?.()
+          const sheet = workbook?.getActiveSheet?.()
+          const activeCell = sheet?.getActiveCell?.() as any
+          const fallbackRow = Number(activeCell?.getRow?.() ?? activeCell?.row ?? activeCell?.rowIndex)
+          const fallbackCol = Number(activeCell?.getColumn?.() ?? activeCell?.col ?? activeCell?.column ?? activeCell?.columnIndex)
+          if (Number.isFinite(fallbackRow) && Number.isFinite(fallbackCol)) {
+            return { row: fallbackRow, col: fallbackCol }
+          }
+          return null
+        }
         if (selectionEventName) {
           selectionListenerRef.current = api.addEvent(
             selectionEventName,
@@ -692,12 +733,11 @@ export default function UniverTableEditor({
             if (suppressSelectionEmitRef.current) {
               return
             }
-            const primary = event?.payload?.selections?.[0]?.range || event?.payload?.selectionRanges?.[0]
-            const row = Number(primary?.startRow ?? primary?.row ?? primary?.startRowIndex)
-            const col = Number(primary?.startColumn ?? primary?.column ?? primary?.startColumnIndex)
-            if (!Number.isFinite(row) || !Number.isFinite(col)) {
+            const selection = resolveSelectionCoord(event)
+            if (!selection) {
               return
             }
+            const { row, col } = selection
             if (lastSelectionRef.current?.row === row && lastSelectionRef.current?.col === col) {
               return
             }
@@ -804,7 +844,7 @@ export default function UniverTableEditor({
         hostRef.current.innerHTML = ''
       }
     }
-  }, [valueHtml, disabled])
+  }, [editorSessionKey, disabled])
 
   useEffect(() => {
     const api = apiRef.current
