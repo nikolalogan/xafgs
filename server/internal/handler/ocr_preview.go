@@ -68,7 +68,7 @@ func (handler *OCRPreviewHandler) Register(router fiber.Router) {
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[OCRTableRepairPreviewRequest]{
 		Method:             fiber.MethodPost,
 		Path:               "/ocr/table-repair-preview",
-		Summary:            "GLM OCR 文档解析预览",
+		Summary:            "TATR 文档解析预览",
 		Auth:               "auth",
 		SuccessDataExample: apimeta.ExampleFromType[map[string]any](),
 	}, handler.TableRepairPreview)

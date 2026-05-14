@@ -25,6 +25,9 @@ type SystemConfigDTO = {
   localEmbeddingApiKey: string
   localEmbeddingModel: string
   localEmbeddingDimension: number
+  remoteOcrBaseUrl: string
+  remoteOcrTableBaseUrl: string
+  remoteDoclingBaseUrl: string
   updatedAt?: string
 }
 
@@ -56,6 +59,9 @@ const normalizeConfig = (raw?: SystemConfigDTO): SystemConfigDTO => {
       localEmbeddingApiKey: String(raw?.localEmbeddingApiKey || '').trim(),
       localEmbeddingModel: String(raw?.localEmbeddingModel || '').trim(),
       localEmbeddingDimension: Number(raw?.localEmbeddingDimension || 0) > 0 ? Number(raw?.localEmbeddingDimension || 0) : 0,
+      remoteOcrBaseUrl: String(raw?.remoteOcrBaseUrl || '').trim(),
+      remoteOcrTableBaseUrl: String(raw?.remoteOcrTableBaseUrl || '').trim(),
+      remoteDoclingBaseUrl: String(raw?.remoteDoclingBaseUrl || '').trim(),
       updatedAt: raw?.updatedAt,
     }
   }
@@ -72,6 +78,9 @@ const normalizeConfig = (raw?: SystemConfigDTO): SystemConfigDTO => {
     localEmbeddingApiKey: String(raw?.localEmbeddingApiKey || '').trim(),
     localEmbeddingModel: String(raw?.localEmbeddingModel || '').trim(),
     localEmbeddingDimension: Number(raw?.localEmbeddingDimension || 0) > 0 ? Number(raw?.localEmbeddingDimension || 0) : 0,
+    remoteOcrBaseUrl: String(raw?.remoteOcrBaseUrl || '').trim(),
+    remoteOcrTableBaseUrl: String(raw?.remoteOcrTableBaseUrl || '').trim(),
+    remoteDoclingBaseUrl: String(raw?.remoteDoclingBaseUrl || '').trim(),
     updatedAt: raw?.updatedAt,
   }
 }
@@ -85,6 +94,8 @@ type SystemConfigForm = {
   localEmbeddingApiKey: string
   localEmbeddingModel: string
   localEmbeddingDimension: string
+  remoteOcrTableBaseUrl: string
+  remoteDoclingBaseUrl: string
 }
 
 export default function SystemSettingsPage() {
@@ -140,6 +151,8 @@ export default function SystemSettingsPage() {
         localEmbeddingApiKey: config.localEmbeddingApiKey,
         localEmbeddingModel: config.localEmbeddingModel,
         localEmbeddingDimension: String(config.localEmbeddingDimension || 0),
+        remoteOcrTableBaseUrl: config.remoteOcrTableBaseUrl,
+        remoteDoclingBaseUrl: config.remoteDoclingBaseUrl,
       })
     }
     catch (error) {
@@ -167,6 +180,9 @@ export default function SystemSettingsPage() {
       localEmbeddingApiKey: String(values.localEmbeddingApiKey || '').trim(),
       localEmbeddingModel: String(values.localEmbeddingModel || '').trim(),
       localEmbeddingDimension: Number.parseInt(String(values.localEmbeddingDimension || '').trim(), 10) || 0,
+      remoteOcrBaseUrl: '',
+      remoteOcrTableBaseUrl: String(values.remoteOcrTableBaseUrl || '').trim(),
+      remoteDoclingBaseUrl: String(values.remoteDoclingBaseUrl || '').trim(),
     })
     const names = normalized.models.map(item => item.name)
     if (new Set(names).size !== names.length) {
@@ -195,6 +211,9 @@ export default function SystemSettingsPage() {
           localEmbeddingApiKey: normalized.localEmbeddingApiKey,
           localEmbeddingModel: normalized.localEmbeddingModel,
           localEmbeddingDimension: normalized.localEmbeddingDimension,
+          remoteOcrBaseUrl: normalized.remoteOcrBaseUrl,
+          remoteOcrTableBaseUrl: normalized.remoteOcrTableBaseUrl,
+          remoteDoclingBaseUrl: normalized.remoteDoclingBaseUrl,
         }),
       })
       msgApi.success('保存成功')
@@ -249,6 +268,8 @@ export default function SystemSettingsPage() {
             localEmbeddingApiKey: '',
             localEmbeddingModel: '',
             localEmbeddingDimension: '0',
+            remoteOcrTableBaseUrl: '',
+            remoteDoclingBaseUrl: '',
           }}
         >
           <Form.List name="models">
@@ -332,6 +353,21 @@ export default function SystemSettingsPage() {
               disabled={enabledModelOptions.length === 0}
             />
           </Form.Item>
+          <div className="mt-4 rounded-lg border border-gray-200 p-3">
+            <div className="mb-2 text-sm font-semibold text-gray-900">远程 OCR / Docling 服务</div>
+            <Form.Item
+              label="TATR 服务地址（用于 /api/recognize）"
+              name="remoteOcrTableBaseUrl"
+            >
+              <Input placeholder="例如 http://remote-ocr-table:8090" autoComplete="off" />
+            </Form.Item>
+            <Form.Item
+              label="远程 Docling 地址"
+              name="remoteDoclingBaseUrl"
+            >
+              <Input placeholder="例如 http://remote-docling:8091" autoComplete="off" />
+            </Form.Item>
+          </div>
           <div className="mt-4 rounded-lg border border-gray-200 p-3">
             <div className="mb-2 text-sm font-semibold text-gray-900">本地 AI 向量服务</div>
             <Form.Item

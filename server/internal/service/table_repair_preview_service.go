@@ -43,47 +43,24 @@ func (service *tableRepairPreviewService) ParseAndRepair(ctx context.Context, pa
 	if file == "" {
 		return nil, model.NewAPIError(http.StatusBadRequest, response.CodeBadRequest, "file 不能为空")
 	}
-
-	modelName := normalizePreviewModel(payload["model"])
-	if modelName == "" {
-		return nil, model.NewAPIError(http.StatusBadRequest, response.CodeBadRequest, "model 参数无效，仅支持 glm_ocr")
-	}
-
 	requestPayload := cloneMap(payload)
-	requestPayload["model"] = modelName
 	delete(requestPayload, "enableVLTableCorrection")
+	delete(requestPayload, "model")
 
 	ocrResponse := map[string]any{}
-	if err := service.postOfficialLayoutParsing(ctx, requestPayload, &ocrResponse); err != nil {
+	if err := service.postTATRRecognize(ctx, requestPayload, &ocrResponse); err != nil {
 		return nil, model.NewAPIError(http.StatusBadGateway, response.CodeInternal, service.buildReadableError(err))
-	}
-
-	tableRepairMeta := repairOCRResponseTables(ocrResponse)
-	metaExtensions := map[string]any{
-		"tableRepairMeta": tableRepairMeta,
-	}
-	ocrResponse["metaExtensions"] = metaExtensions
-	delete(ocrResponse, "tableRepairMeta")
-	delete(ocrResponse, "tableCorrectionMeta")
-	ocrResponse["modelMeta"] = map[string]any{
-		"model":             modelName,
-		"provider":          "glm-ocr",
-		"endpoint":          "/layout-parsing",
-		"csvSpanPolicy":     "top_left_with_merged_marker",
-		"mergedCellMarker":  defaultMergedMarker,
-		"snapTolerancePx":   tableGridSnapTolerancePx(),
-		"fallbackThreshold": tableGridConflictFallbackThreshold(),
 	}
 	return ocrResponse, nil
 }
 
-func (service *tableRepairPreviewService) postOfficialLayoutParsing(ctx context.Context, payload map[string]any, responseBody any) error {
+func (service *tableRepairPreviewService) postTATRRecognize(ctx context.Context, payload map[string]any, responseBody any) error {
 	baseURL, err := service.resolveBaseURL(ctx)
 	if err != nil {
 		return err
 	}
 	requestPayload := cloneMap(payload)
-	err = service.postJSON(ctx, baseURL+"/layout-parsing", requestPayload, responseBody)
+	err = service.postJSON(ctx, baseURL+"/api/recognize", requestPayload, responseBody)
 	if err == nil {
 		return nil
 	}
@@ -95,7 +72,7 @@ func (service *tableRepairPreviewService) postOfficialLayoutParsing(ctx context.
 		return err
 	}
 	requestPayload["fileType"] = 1 - fileType
-	return service.postJSON(ctx, baseURL+"/layout-parsing", requestPayload, responseBody)
+	return service.postJSON(ctx, baseURL+"/api/recognize", requestPayload, responseBody)
 }
 
 func (service *tableRepairPreviewService) postJSON(ctx context.Context, url string, requestBody any, responseBody any) error {
@@ -130,13 +107,15 @@ func (service *tableRepairPreviewService) buildReadableError(err error) string {
 	lower := strings.ToLower(raw)
 	switch {
 	case strings.Contains(lower, "status=401"):
-		return "调用 OCR 服务失败: 鉴权配置不匹配" + envHint + "；原始错误: " + raw
+		return "调用 TATR 服务失败: 鉴权配置不匹配" + envHint + "；原始错误: " + raw
 	case strings.Contains(lower, "status=403"):
-		return "调用 OCR 服务失败: 上游拒绝访问" + envHint + "；原始错误: " + raw
+		return "调用 TATR 服务失败: 上游拒绝访问" + envHint + "；原始错误: " + raw
+	case strings.Contains(lower, "status=404"):
+		return "调用 TATR 服务失败: 上游接口不存在，请检查 remoteOcrTableBaseUrl 是否指向 TATR 服务根地址（应包含 /api/recognize）" + envHint + "；原始错误: " + raw
 	case strings.Contains(lower, "不可达"), strings.Contains(lower, "connection refused"), strings.Contains(lower, "no such host"), strings.Contains(lower, "timeout"):
-		return "调用 OCR 服务失败: 远程 OCRTable 上游不可达，请检查系统设置中的 remoteOcrTableBaseUrl" + envHint + "；原始错误: " + raw
+		return "调用 TATR 服务失败: 上游不可达，请检查系统设置中的 remoteOcrTableBaseUrl" + envHint + "；原始错误: " + raw
 	default:
-		return "调用 OCR 服务失败: " + raw + envHint
+		return "调用 TATR 服务失败: " + raw + envHint
 	}
 }
 
@@ -147,7 +126,7 @@ func (service *tableRepairPreviewService) resolveBaseURL(ctx context.Context) (s
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(config.RemoteOCRTableBaseURL), "/")
 	if baseURL == "" {
-		return "", fmt.Errorf("系统设置未配置远程 OCRTable 地址")
+		return "", fmt.Errorf("系统设置未配置 TATR 服务地址")
 	}
 	if parsed, err := url.Parse(baseURL); err == nil {
 		service.baseHost = parsed.Hostname()
@@ -226,12 +205,3 @@ func cloneMap(input map[string]any) map[string]any {
 	return out
 }
 
-func normalizePreviewModel(value any) string {
-	raw := strings.ToLower(strings.TrimSpace(getString(value)))
-	switch raw {
-	case "", "glm_ocr", "glm-ocr", "glmocr":
-		return "glm_ocr"
-	default:
-		return ""
-	}
-}

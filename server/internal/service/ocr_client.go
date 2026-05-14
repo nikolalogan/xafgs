@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,18 +20,14 @@ type OCRClient interface {
 }
 
 type HTTPOCRClient struct {
-	baseURL    string
+	systemConfigService SystemConfigService
 	httpClient *http.Client
 	results    sync.Map
 }
 
-func NewHTTPOCRClient() OCRClient {
-	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("OCR_SERVICE_BASE_URL")), "/")
-	if baseURL == "" {
-		baseURL = "http://ocr-service:8090"
-	}
+func NewHTTPOCRClient(systemConfigService SystemConfigService) OCRClient {
 	return &HTTPOCRClient{
-		baseURL: baseURL,
+		systemConfigService: systemConfigService,
 		httpClient: &http.Client{
 			Timeout: 90 * time.Second,
 		},
@@ -63,7 +58,7 @@ func (client *HTTPOCRClient) SubmitTask(ctx context.Context, request OCRTaskSubm
 	response := OCRTaskSubmitResponse{
 		TaskID:     taskID,
 		Status:     "succeeded",
-		Provider:   "glm-ocr",
+		Provider:   "tatr",
 		Progress:   100,
 		PageCount:  result.PageCount,
 		Confidence: result.Confidence,
@@ -83,7 +78,7 @@ func (client *HTTPOCRClient) SubmitTask(ctx context.Context, request OCRTaskSubm
 
 func (client *HTTPOCRClient) postOfficialLayoutParsing(ctx context.Context, payload map[string]any, response any) error {
 	requestPayload := cloneAnyMap(payload)
-	err := client.postJSON(ctx, "/layout-parsing", requestPayload, response)
+	err := client.postJSON(ctx, "/api/recognize", requestPayload, response)
 	if err == nil {
 		return nil
 	}
@@ -95,7 +90,7 @@ func (client *HTTPOCRClient) postOfficialLayoutParsing(ctx context.Context, payl
 		return err
 	}
 	requestPayload["fileType"] = 1 - fileType
-	return client.postJSON(ctx, "/layout-parsing", requestPayload, response)
+	return client.postJSON(ctx, "/api/recognize", requestPayload, response)
 }
 
 func (client *HTTPOCRClient) GetTask(ctx context.Context, taskID string) (OCRTaskStatusResponse, error) {
@@ -110,11 +105,15 @@ func (client *HTTPOCRClient) GetTask(ctx context.Context, taskID string) (OCRTas
 }
 
 func (client *HTTPOCRClient) postJSON(ctx context.Context, path string, request any, response any) error {
+	baseURL, err := client.resolveBaseURL(ctx)
+	if err != nil {
+		return err
+	}
 	body, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -129,6 +128,18 @@ func (client *HTTPOCRClient) postJSON(ctx context.Context, path string, request 
 		return fmt.Errorf("status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	return json.NewDecoder(resp.Body).Decode(response)
+}
+
+func (client *HTTPOCRClient) resolveBaseURL(ctx context.Context) (string, error) {
+	config, apiError := client.systemConfigService.Get(ctx)
+	if apiError != nil {
+		return "", fmt.Errorf("load system config failed: %s", apiError.Message)
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(config.RemoteOCRTableBaseURL), "/")
+	if baseURL == "" {
+		return "", fmt.Errorf("系统设置未配置 TATR 服务地址")
+	}
+	return baseURL, nil
 }
 
 type officialLayoutParsingResponse struct {
@@ -147,7 +158,7 @@ type officialLayoutParsingResponse struct {
 
 func mapOfficialResponseToTaskResult(payload officialLayoutParsingResponse) (OCRTaskResult, error) {
 	if payload.ErrorCode != 0 {
-		return OCRTaskResult{}, fmt.Errorf("official ocr error: code=%d msg=%s", payload.ErrorCode, strings.TrimSpace(payload.ErrorMsg))
+		return OCRTaskResult{}, fmt.Errorf("tatr ocr error: code=%d msg=%s", payload.ErrorCode, strings.TrimSpace(payload.ErrorMsg))
 	}
 	pages := make([]OCRResultPage, 0, len(payload.Result.LayoutParsingResults))
 	for index, item := range payload.Result.LayoutParsingResults {
@@ -174,7 +185,7 @@ func mapOfficialResponseToTaskResult(payload officialLayoutParsingResponse) (OCR
 		return OCRTaskResult{}, fmt.Errorf("empty layoutParsingResults")
 	}
 	return OCRTaskResult{
-		Provider:   "glm-ocr",
+		Provider:   "tatr",
 		PageCount:  len(pages),
 		Confidence: 0.9,
 		Language:   "zh",

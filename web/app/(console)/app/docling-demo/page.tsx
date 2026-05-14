@@ -6,7 +6,7 @@ import type { UploadFile } from 'antd/es/upload/interface'
 import { CopyOutlined, DownloadOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { isSingleUploadOversized, MAX_SINGLE_UPLOAD_TEXT } from '@/lib/upload-limit'
 
-type ParseEngine = 'docling' | 'glm_ocr'
+type ParseEngine = 'docling' | 'tatr'
 
 type ConvertResponse = {
   filename?: string
@@ -19,25 +19,11 @@ type ConvertResponse = {
   imageOcrSkippedCount?: number
 }
 
-type GLMOCRResponse = {
-  logId?: string
-  errorCode?: number
-  errorMsg?: string
-  result?: {
-    layoutParsingResults?: Array<{
-      prunedResult?: Record<string, unknown>
-      markdown?: {
-        text?: string
-      }
-    }>
-  }
-  modelMeta?: Record<string, unknown>
-  metaExtensions?: Record<string, unknown>
-}
+type TATRResponse = Record<string, unknown>
 
 type ParseResult = {
   engine: ParseEngine
-  data: ConvertResponse | GLMOCRResponse
+  data: ConvertResponse | TATRResponse
 }
 
 type APIEnvelope<T> = {
@@ -81,11 +67,11 @@ const detectOCRFileType = (file: File, base64: string): 0 | 1 => {
   return 1
 }
 
-const unwrapOCRPayload = (value: unknown): GLMOCRResponse => {
+const unwrapOCRPayload = (value: unknown): TATRResponse => {
   if (!value || typeof value !== 'object') {
     return {}
   }
-  const payload = value as APIEnvelope<GLMOCRResponse> & GLMOCRResponse
+  const payload = value as APIEnvelope<TATRResponse> & TATRResponse
   if (payload.data && typeof payload.data === 'object') {
     return payload.data
   }
@@ -114,12 +100,19 @@ export default function DoclingDemoPage() {
 
   const canSubmit = useMemo(() => !!uploadFile?.originFileObj && !submitting, [uploadFile, submitting])
   const ocrMarkdown = useMemo(() => {
-    if (result?.engine !== 'glm_ocr') {
+    if (result?.engine !== 'tatr') {
       return ''
     }
-    const data = result.data as GLMOCRResponse
-    const layoutResults = Array.isArray(data.result?.layoutParsingResults) ? data.result?.layoutParsingResults || [] : []
-    return layoutResults.map(item => String(item?.markdown?.text || '').trim()).filter(Boolean).join('\n\n')
+    const data = result.data as Record<string, unknown>
+    const html = String(data.html || '').trim()
+    if (html) {
+      return html
+    }
+    const tables = Array.isArray(data.tables) ? data.tables : []
+    return tables
+      .map(item => String((item as { html?: string })?.html || '').trim())
+      .filter(Boolean)
+      .join('\n\n')
   }, [result])
 
   const runConvert = async () => {
@@ -133,16 +126,15 @@ export default function DoclingDemoPage() {
       return
     }
     if (engine === 'docling' && isImageFile(file)) {
-      msgApi.warning('图片文件请使用 GLM OCR')
+      msgApi.warning('图片文件请使用 TATR')
       return
     }
 
     setSubmitting(true)
     try {
       const base64 = await toBase64(file)
-      if (engine === 'glm_ocr') {
+      if (engine === 'tatr') {
         const payload = {
-          model: 'glm_ocr',
           file: base64,
           fileType: detectOCRFileType(file, base64),
           visualize: false,
@@ -165,10 +157,10 @@ export default function DoclingDemoPage() {
         const raw = await response.json() as unknown
         const parsed = unwrapOCRPayload(raw)
         if (!response.ok) {
-          throw new Error(parsed.errorMsg || `请求失败(${response.status})`)
+          throw new Error(`请求失败(${response.status})`)
         }
         setResult({ engine, data: parsed })
-        msgApi.success('GLM OCR 解析完成')
+        msgApi.success('TATR 解析完成')
         return
       }
 
@@ -229,7 +221,7 @@ export default function DoclingDemoPage() {
         type="info"
         showIcon
         title="Docling 文档转换示例"
-        description="Docling 默认使用离线文本层转换，并将文档内图片区域的 GLM OCR 结果按接近 Docling 的 Markdown 块结构原位写回正文；纯图片文件或扫描 PDF 仍建议切换 GLM OCR。"
+        description="Docling 默认使用离线文本层转换；纯图片文件或扫描 PDF 建议切换 TATR（统一走 /api/ocr/table-repair-preview -> TATR /api/recognize）。"
       />
 
       <Row gutter={16} align="top">
@@ -244,7 +236,7 @@ export default function DoclingDemoPage() {
                   const nextFile = fileList[0] || null
                   setUploadFile(nextFile)
                   if (nextFile?.originFileObj && isImageFile(nextFile.originFileObj)) {
-                    setEngine('glm_ocr')
+                    setEngine('tatr')
                   }
                 }}
               >
@@ -254,12 +246,12 @@ export default function DoclingDemoPage() {
                 value={engine}
                 options={[
                   { label: 'Docling 文本层', value: 'docling' },
-                  { label: 'GLM OCR', value: 'glm_ocr' },
+                  { label: 'TATR OCR', value: 'tatr' },
                 ]}
                 onChange={value => setEngine(value)}
               />
               <Typography.Text type="secondary">
-                所有 OCR 相关请求统一通过 `/api/*` 网关入口；GLM OCR 调用 `/api/ocr/table-repair-preview`。
+                所有 OCR 相关请求统一通过 `/api/*` 网关入口；TATR 调用 `/api/ocr/table-repair-preview`。
               </Typography.Text>
               <Space>
                 <Button type="primary" onClick={runConvert} loading={submitting} disabled={!canSubmit}>开始转换</Button>
@@ -290,19 +282,19 @@ export default function DoclingDemoPage() {
                       {
                         key: 'text',
                         label: result.engine === 'docling' ? '纯文本' : 'OCR 结构',
-                        children: <pre className="text-xs overflow-auto whitespace-pre-wrap m-0">{result.engine === 'docling' ? String((result.data as ConvertResponse).text || '') : pretty((result.data as GLMOCRResponse).result?.layoutParsingResults || [])}</pre>,
+                        children: <pre className="text-xs overflow-auto whitespace-pre-wrap m-0">{result.engine === 'docling' ? String((result.data as ConvertResponse).text || '') : pretty(result.data)}</pre>,
                       },
                       {
                         key: 'document',
                         label: '结构化 JSON',
-                        children: <pre className="text-xs overflow-auto whitespace-pre-wrap m-0">{result.engine === 'docling' ? pretty((result.data as ConvertResponse).document || {}) : pretty((result.data as GLMOCRResponse).metaExtensions || {})}</pre>,
+                        children: <pre className="text-xs overflow-auto whitespace-pre-wrap m-0">{result.engine === 'docling' ? pretty((result.data as ConvertResponse).document || {}) : pretty(result.data)}</pre>,
                       },
                       {
                         key: 'raw',
                         label: '原始响应',
                         children: (
                           <Space orientation="vertical" size={12} className="w-full">
-                            <Typography.Text>engine: {result.engine === 'docling' ? 'Docling 文本层' : 'GLM OCR'}</Typography.Text>
+                            <Typography.Text>engine: {result.engine === 'docling' ? 'Docling 文本层' : 'TATR OCR'}</Typography.Text>
                             {result.engine === 'docling' && <Typography.Text>filename: {((result.data as ConvertResponse).filename) || '-'}</Typography.Text>}
                             {result.engine === 'docling' && <Typography.Text>durationMs: {String((result.data as ConvertResponse).durationMs ?? '-')}</Typography.Text>}
                             {result.engine === 'docling' && <Typography.Text>imageOcrApplied: {String(Boolean((result.data as ConvertResponse).imageOcrApplied))}</Typography.Text>}

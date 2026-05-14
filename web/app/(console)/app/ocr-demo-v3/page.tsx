@@ -1,27 +1,13 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Alert, Button, Card, Col, Empty, Input, Row, Select, Space, Switch, Tabs, Typography, Upload, message } from 'antd'
+import { Alert, Button, Card, Col, Empty, Input, Row, Space, Switch, Tabs, Typography, Upload, message } from 'antd'
 import type { UploadFile } from 'antd/es/upload/interface'
 import { CopyOutlined, DownloadOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import DOMPurify from 'dompurify'
 import { isSingleUploadOversized, MAX_SINGLE_UPLOAD_TEXT } from '@/lib/upload-limit'
 
-type LayoutParsingResponse = {
-  logId?: string
-  errorCode?: number
-  errorMsg?: string
-  result?: {
-    layoutParsingResults?: Array<{
-      prunedResult?: Record<string, unknown>
-      markdown?: {
-        text?: string
-      }
-    }>
-  }
-  modelMeta?: Record<string, unknown>
-  metaExtensions?: Record<string, unknown>
-}
+type TATRResponse = Record<string, unknown>
 
 type APIEnvelope<T> = {
   message?: string
@@ -29,7 +15,6 @@ type APIEnvelope<T> = {
 }
 
 type RequestOptions = {
-  model: 'glm_ocr'
   fileType: 0 | 1
   visualize: boolean
   logId: string
@@ -39,7 +24,6 @@ type RequestOptions = {
 }
 
 const DEFAULT_OPTIONS: RequestOptions = {
-  model: 'glm_ocr',
   fileType: 0,
   visualize: false,
   logId: '',
@@ -79,11 +63,11 @@ const detectFileType = (file: File, base64: string): 0 | 1 => {
   return 1
 }
 
-const unwrapLayoutPayload = (value: unknown): LayoutParsingResponse => {
+const unwrapLayoutPayload = (value: unknown): TATRResponse => {
   if (!value || typeof value !== 'object') {
     return {}
   }
-  const payload = value as APIEnvelope<LayoutParsingResponse> & LayoutParsingResponse
+  const payload = value as APIEnvelope<TATRResponse> & TATRResponse
   if (payload.data && typeof payload.data === 'object') {
     return payload.data
   }
@@ -117,15 +101,23 @@ export default function OCRDemoV3Page() {
   const [options, setOptions] = useState<RequestOptions>(DEFAULT_OPTIONS)
   const [submitting, setSubmitting] = useState(false)
   const [lastRequest, setLastRequest] = useState<Record<string, unknown> | null>(null)
-  const [result, setResult] = useState<LayoutParsingResponse | null>(null)
+  const [result, setResult] = useState<TATRResponse | null>(null)
 
   const canSubmit = useMemo(() => !!uploadFile?.originFileObj && !submitting, [uploadFile, submitting])
-  const layoutResults = useMemo(() => Array.isArray(result?.result?.layoutParsingResults) ? result?.result?.layoutParsingResults || [] : [], [result])
-  const mergedMarkdown = useMemo(() => layoutResults.map(item => String(item?.markdown?.text || '').trim()).filter(Boolean).join('\n\n'), [layoutResults])
+  const mergedMarkdown = useMemo(() => {
+    if (!result) {
+      return ''
+    }
+    const html = String(result.html || '').trim()
+    if (html) {
+      return html
+    }
+    const tables = Array.isArray(result.tables) ? result.tables : []
+    return tables.map(item => String((item as { html?: string })?.html || '').trim()).filter(Boolean).join('\n\n')
+  }, [result])
 
   const buildPayload = (base64: string, file: File) => {
     const payload: Record<string, unknown> = {
-      model: options.model,
       file: base64,
       fileType: detectFileType(file, base64),
       visualize: options.visualize,
@@ -168,14 +160,10 @@ export default function OCRDemoV3Page() {
       const raw = await response.json() as unknown
       const parsed = unwrapLayoutPayload(raw)
       if (!response.ok) {
-        throw new Error(parsed.errorMsg || `请求失败(${response.status})`)
+        throw new Error(`请求失败(${response.status})`)
       }
       setResult(parsed)
-      if (Number(parsed.errorCode || 0) === 0) {
-        msgApi.success('解析完成')
-      } else {
-        msgApi.warning(parsed.errorMsg || '解析返回错误')
-      }
+      msgApi.success('解析完成')
     } catch (error) {
       msgApi.error(error instanceof Error ? error.message : '解析失败')
     } finally {
@@ -205,7 +193,7 @@ export default function OCRDemoV3Page() {
     const href = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = href
-    link.download = `glm-ocr-${Date.now()}.json`
+    link.download = `tatr-${Date.now()}.json`
     link.click()
     URL.revokeObjectURL(href)
   }
@@ -216,8 +204,8 @@ export default function OCRDemoV3Page() {
       <Alert
         type="info"
         showIcon
-        title="GLM 文档解析官方在线演示（后端代理）"
-        description="页面按官方 demo 流程重做：上传文件 -> 发起解析 -> 查看 Markdown/结构化结果/原始JSON。"
+        title="TATR 文档解析演示（后端代理）"
+        description="页面调用 /api/ocr/table-repair-preview，并由后端代理到 TATR /api/recognize。"
       />
       <Row gutter={16} align="top">
         <Col span={8}>
@@ -231,11 +219,6 @@ export default function OCRDemoV3Page() {
               >
                 <Button icon={<UploadOutlined />}>上传文件（PDF/图片）</Button>
               </Upload>
-              <Select
-                value={options.model}
-                options={[{ label: 'glm_ocr', value: 'glm_ocr' }]}
-                onChange={value => setOptions(prev => ({ ...prev, model: value as 'glm_ocr' }))}
-              />
               <Input
                 placeholder="可选：logId"
                 value={options.logId}
@@ -291,12 +274,9 @@ export default function OCRDemoV3Page() {
                         label: '结构化结果',
                         children: (
                           <Space orientation="vertical" size={12} className="w-full">
-                            <Typography.Text>logId: {result.logId || '-'}</Typography.Text>
-                            <Typography.Text>errorCode: {String(result.errorCode ?? '-')}</Typography.Text>
-                            <Typography.Text>errorMsg: {result.errorMsg || '-'}</Typography.Text>
-                            <pre className="text-xs overflow-auto whitespace-pre-wrap m-0">{pretty(result.result?.layoutParsingResults || [])}</pre>
-                            <pre className="text-xs overflow-auto whitespace-pre-wrap m-0">{pretty(result.modelMeta || {})}</pre>
-                            <pre className="text-xs overflow-auto whitespace-pre-wrap m-0">{pretty(result.metaExtensions || {})}</pre>
+                            <pre className="text-xs overflow-auto whitespace-pre-wrap m-0">{pretty(result.tables || [])}</pre>
+                            <pre className="text-xs overflow-auto whitespace-pre-wrap m-0">{pretty(result.cells || [])}</pre>
+                            <pre className="text-xs overflow-auto whitespace-pre-wrap m-0">{pretty(result.coordinate_mapping || {})}</pre>
                           </Space>
                         ),
                       },
