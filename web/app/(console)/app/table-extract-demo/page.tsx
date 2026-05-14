@@ -801,6 +801,7 @@ function TableResultViewer({
         editorSessionKey={tableId}
         exportFileNamePrefix={tableId ? `table-${tableId}` : 'table-export'}
         valueHtml={valueHtml}
+        disabled={false}
         onChange={onChange}
         onError={setError}
         activeCell={activeCell}
@@ -811,6 +812,11 @@ function TableResultViewer({
             return
           }
           onHoverCellChange({ row, col })
+        }}
+        onInteractionDebug={(phase, payload) => {
+          if (process.env.NODE_ENV !== 'production') {
+            console.debug('[table-extract-demo][univer-interaction]', phase, payload)
+          }
         }}
       />
     </Space>
