@@ -119,6 +119,16 @@ type TableExtractApiEnvelope = {
   data?: unknown
 }
 
+type RawTableCell = {
+  row_start?: unknown
+  row_end?: unknown
+  col_start?: unknown
+  col_end?: unknown
+  ocr_text?: unknown
+  local_bbox?: unknown
+  bbox?: unknown
+}
+
 type ManualReviewState = {
   sourceTableId: string
   rectifiedImageDataUrl: string
@@ -216,6 +226,31 @@ const pick = <T = unknown>(source: Record<string, unknown>, camelKey: string, sn
   return source[snakeKey] as T | undefined
 }
 
+const normalizeCell = (cellRaw: unknown): TableCell => {
+  const cell = (cellRaw || {}) as Record<string, unknown> & RawTableCell
+  const rowStart = asNumber(cell.row_start, 0)
+  const rowEnd = asNumber(cell.row_end, rowStart)
+  const colStart = asNumber(cell.col_start, 0)
+  const colEnd = asNumber(cell.col_end, colStart)
+  const inferredRowSpan = Math.max(1, rowEnd - rowStart + 1)
+  const inferredColSpan = Math.max(1, colEnd - colStart + 1)
+
+  return {
+    rowIndex: asNumber(pick(cell, 'rowIndex', 'row_index'), rowStart),
+    colIndex: asNumber(pick(cell, 'colIndex', 'col_index'), colStart),
+    rowSpan: Math.max(1, asNumber(pick(cell, 'rowSpan', 'row_span'), inferredRowSpan)),
+    colSpan: Math.max(1, asNumber(pick(cell, 'colSpan', 'col_span'), inferredColSpan)),
+    text: asString(cell.text ?? cell.ocr_text),
+    confidence: asNumber(cell.confidence),
+    isColumnHeader: Boolean(pick(cell, 'isColumnHeader', 'is_column_header')),
+    isProjectedRowHeader: Boolean(pick(cell, 'isProjectedRowHeader', 'is_projected_row_header')),
+    pageBBox: asNumberArray(pick(cell, 'pageBBox', 'page_bbox') ?? cell.bbox),
+    pagePolygon: asPolygon(pick(cell, 'pagePolygon', 'page_polygon')),
+    cropBBox: asNumberArray(pick(cell, 'cropBBox', 'crop_bbox') ?? cell.local_bbox),
+    cropPolygon: asPolygon(pick(cell, 'cropPolygon', 'crop_polygon')),
+  }
+}
+
 const normalizeTableExtractResponse = (payload: unknown): TableExtractResponse => {
   const envelope = (payload || {}) as TableExtractApiEnvelope
   const core = ((envelope.data && typeof envelope.data === 'object') ? envelope.data : payload) as Record<string, unknown>
@@ -257,23 +292,7 @@ const normalizeTableExtractResponse = (payload: unknown): TableExtractResponse =
         tableType: asString(pick(table, 'tableType', 'table_type')),
         rowCount: asNumber(pick(table, 'rowCount', 'row_count')),
         colCount: asNumber(pick(table, 'colCount', 'col_count')),
-        cells: cellsRaw.map(cellRaw => {
-          const cell = (cellRaw || {}) as Record<string, unknown>
-          return {
-            rowIndex: asNumber(pick(cell, 'rowIndex', 'row_index')),
-            colIndex: asNumber(pick(cell, 'colIndex', 'col_index')),
-            rowSpan: asNumber(pick(cell, 'rowSpan', 'row_span'), 1),
-            colSpan: asNumber(pick(cell, 'colSpan', 'col_span'), 1),
-            text: asString(cell.text),
-            confidence: asNumber(cell.confidence),
-            isColumnHeader: Boolean(pick(cell, 'isColumnHeader', 'is_column_header')),
-            isProjectedRowHeader: Boolean(pick(cell, 'isProjectedRowHeader', 'is_projected_row_header')),
-            pageBBox: asNumberArray(pick(cell, 'pageBBox', 'page_bbox')),
-            pagePolygon: asPolygon(pick(cell, 'pagePolygon', 'page_polygon')),
-            cropBBox: asNumberArray(pick(cell, 'cropBBox', 'crop_bbox')),
-            cropPolygon: asPolygon(pick(cell, 'cropPolygon', 'crop_polygon')),
-          }
-        }),
+        cells: cellsRaw.map(normalizeCell),
         structures: {
           rows: mapBoxes(structures.rows),
           columns: mapBoxes(structures.columns),
@@ -350,23 +369,7 @@ const normalizeTableExtractResponse = (payload: unknown): TableExtractResponse =
         tableType: asString(pick(table, 'tableType', 'table_type')),
         rowCount: asNumber(pick(table, 'rowCount', 'row_count')),
         colCount: asNumber(pick(table, 'colCount', 'col_count')),
-        cells: cellsRaw.map(cellRaw => {
-          const cell = (cellRaw || {}) as Record<string, unknown>
-          return {
-            rowIndex: asNumber(pick(cell, 'rowIndex', 'row_index')),
-            colIndex: asNumber(pick(cell, 'colIndex', 'col_index')),
-            rowSpan: asNumber(pick(cell, 'rowSpan', 'row_span'), 1),
-            colSpan: asNumber(pick(cell, 'colSpan', 'col_span'), 1),
-            text: asString(cell.text),
-            confidence: asNumber(cell.confidence),
-            isColumnHeader: Boolean(pick(cell, 'isColumnHeader', 'is_column_header')),
-            isProjectedRowHeader: Boolean(pick(cell, 'isProjectedRowHeader', 'is_projected_row_header')),
-            pageBBox: asNumberArray(pick(cell, 'pageBBox', 'page_bbox')),
-            pagePolygon: asPolygon(pick(cell, 'pagePolygon', 'page_polygon')),
-            cropBBox: asNumberArray(pick(cell, 'cropBBox', 'crop_bbox')),
-            cropPolygon: asPolygon(pick(cell, 'cropPolygon', 'crop_polygon')),
-          }
-        }),
+        cells: cellsRaw.map(normalizeCell),
         structures: {
           rows: [],
           columns: [],
@@ -1159,6 +1162,7 @@ export default function TableExtractDemoPage() {
   const [params, setParams] = useState(PARAM_DEFAULTS)
   const [submitting, setSubmitting] = useState(false)
   const [lastRequest, setLastRequest] = useState<Record<string, unknown> | null>(null)
+  const [rawResponse, setRawResponse] = useState<unknown>(null)
   const [result, setResult] = useState<TableExtractResponse | null>(null)
   const [selectedPageNo, setSelectedPageNo] = useState<number | null>(null)
   const [selectedTableId, setSelectedTableId] = useState<string>('')
@@ -1231,6 +1235,7 @@ export default function TableExtractDemoPage() {
 
   const resetState = () => {
     setUploadFile(null)
+    setRawResponse(null)
     setResult(null)
     setLastRequest(null)
     setSelectedPageNo(null)
@@ -1285,6 +1290,7 @@ export default function TableExtractDemoPage() {
       }
       setManualReview(null)
       setTableDraftById({})
+      setRawResponse(raw)
       setResult(normalized)
       const firstPage = normalized.pages[0] || null
       setSelectedPageNo(firstPage?.pageNo || null)
@@ -1337,6 +1343,7 @@ export default function TableExtractDemoPage() {
       if (!reviewedTable) {
         throw new Error('手动矫正后的图像未检出表格')
       }
+      setRawResponse(raw)
       setManualReview({
         sourceTableId: selectedTable.tableId,
         rectifiedImageDataUrl: dataUrl,
@@ -1385,7 +1392,21 @@ export default function TableExtractDemoPage() {
     const href = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = href
-    link.download = `table-extract-${Date.now()}.json`
+    link.download = `table-extract-normalized-${Date.now()}.json`
+    link.click()
+    URL.revokeObjectURL(href)
+  }
+
+  const downloadRawResponse = () => {
+    if (!rawResponse) {
+      msgApi.warning('暂无原始返回结果')
+      return
+    }
+    const blob = new Blob([pretty(rawResponse)], { type: 'application/json;charset=utf-8' })
+    const href = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = href
+    link.download = `table-extract-raw-${Date.now()}.json`
     link.click()
     URL.revokeObjectURL(href)
   }
@@ -1483,7 +1504,12 @@ export default function TableExtractDemoPage() {
 
       <Card
         title="提取结果"
-        extra={<Button icon={<DownloadOutlined />} onClick={downloadResponse}>下载 JSON</Button>}
+        extra={(
+          <Space>
+            <Button icon={<DownloadOutlined />} onClick={downloadResponse}>下载归一化 JSON</Button>
+            <Button icon={<DownloadOutlined />} onClick={downloadRawResponse}>下载原始 JSON</Button>
+          </Space>
+        )}
       >
         {!result ? (
           <Empty description="请先上传文件并执行表格提取" />
