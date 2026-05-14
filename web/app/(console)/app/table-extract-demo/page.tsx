@@ -6,6 +6,7 @@ import type { UploadFile } from 'antd/es/upload/interface'
 import { CopyOutlined, DownloadOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { isSingleUploadOversized, MAX_SINGLE_UPLOAD_TEXT } from '@/lib/upload-limit'
 import UniverTableEditor from '@/components/enterprise-projects/UniverTableEditor'
+import type { SelectionRange } from '@/components/enterprise-projects/UniverTableEditor'
 
 type BoxPolygon = number[][]
 type Point = { x: number; y: number }
@@ -35,6 +36,11 @@ type TableCell = {
 type CellCoord = {
   row: number
   col: number
+}
+
+type ActiveSelection = {
+  primary: CellCoord | null
+  ranges: SelectionRange[]
 }
 
 type WarpPreviewResult = {
@@ -781,7 +787,7 @@ function TableResultViewer({
   valueHtml: string
   onChange: (nextHtml: string) => void
   activeCell: CellCoord | null
-  onSelectionChange: (coord: CellCoord) => void
+  onSelectionChange: (coord: CellCoord, meta?: { ranges: SelectionRange[]; source: string; fromKeyboard?: boolean }) => void
   onHoverCellChange: (coord: CellCoord | null) => void
 }) {
   const [error, setError] = useState<string>('')
@@ -805,7 +811,7 @@ function TableResultViewer({
         onChange={onChange}
         onError={setError}
         activeCell={activeCell}
-        onSelectionChange={(row, col) => onSelectionChange({ row, col })}
+        onSelectionChange={(row, col, meta) => onSelectionChange({ row, col }, meta)}
         onHoverCellChange={(row, col) => {
           if (col === null || row < 0) {
             onHoverCellChange(null)
@@ -1046,17 +1052,19 @@ function TableRectifyPreview({
 
 function CropPreview({
   table,
-  activeCellKey,
+  activeCellKeys,
+  hoverCellKey,
   onHoverCellCoordChange,
   onSelectCellCoordChange,
 }: {
   table: ExtractedTable
-  activeCellKey: string
+  activeCellKeys: Set<string>
+  hoverCellKey: string
   onHoverCellCoordChange: (coord: CellCoord | null) => void
   onSelectCellCoordChange: (coord: CellCoord) => void
 }) {
   const cells = Array.isArray(table.cells) ? table.cells : []
-  const hoveredCell = cells.find((cell, index) => getCellKey(cell, index) === activeCellKey) || null
+  const hoveredCell = cells.find((cell, index) => getCellKey(cell, index) === hoverCellKey) || null
 
   return (
     <Space orientation="vertical" size={12} style={{ width: '100%' }}>
@@ -1074,7 +1082,8 @@ function CropPreview({
             return null
           }
           const cellKey = getCellKey(cell, index)
-          const isHovered = activeCellKey === cellKey
+          const isHovered = hoverCellKey === cellKey
+          const isActive = activeCellKeys.has(cellKey)
           const isMerged = cell.rowSpan > 1 || cell.colSpan > 1
           const accent = isMerged ? '#ff7875' : '#52c41a'
 
@@ -1082,10 +1091,10 @@ function CropPreview({
             <div
               key={`${table.tableId}-cell-${index}`}
               style={buildInteractiveOverlayStyle(cell.cropBBox, table.meta.cropWidth, table.meta.cropHeight, {
-                borderColor: isHovered ? accent : isMerged ? 'rgba(255, 120, 117, 0.45)' : 'rgba(82, 196, 26, 0.32)',
-                backgroundColor: isHovered ? (isMerged ? 'rgba(255, 120, 117, 0.18)' : 'rgba(82, 196, 26, 0.16)') : isMerged ? 'rgba(255, 120, 117, 0.07)' : 'rgba(82, 196, 26, 0.04)',
-                lineWidth: isHovered ? 2 : 1,
-                zIndex: isHovered ? 2 : 1,
+                borderColor: isHovered || isActive ? accent : isMerged ? 'rgba(255, 120, 117, 0.45)' : 'rgba(82, 196, 26, 0.32)',
+                backgroundColor: isHovered || isActive ? (isMerged ? 'rgba(255, 120, 117, 0.18)' : 'rgba(82, 196, 26, 0.16)') : isMerged ? 'rgba(255, 120, 117, 0.07)' : 'rgba(82, 196, 26, 0.04)',
+                lineWidth: isHovered || isActive ? 2 : 1,
+                zIndex: isHovered || isActive ? 2 : 1,
               })}
               onMouseEnter={() => onHoverCellCoordChange({ row: cell.rowIndex, col: cell.colIndex })}
               onClick={() => onSelectCellCoordChange({ row: cell.rowIndex, col: cell.colIndex })}
@@ -1146,7 +1155,7 @@ export default function TableExtractDemoPage() {
   const [result, setResult] = useState<TableExtractResponse | null>(null)
   const [selectedPageNo, setSelectedPageNo] = useState<number | null>(null)
   const [selectedTableId, setSelectedTableId] = useState<string>('')
-  const [activeCellCoord, setActiveCellCoord] = useState<CellCoord | null>(null)
+  const [activeSelection, setActiveSelection] = useState<ActiveSelection>({ primary: null, ranges: [] })
   const [hoverCellCoord, setHoverCellCoord] = useState<CellCoord | null>(null)
   const [manualReview, setManualReview] = useState<ManualReviewState | null>(null)
   const [tableDraftById, setTableDraftById] = useState<Record<string, string>>({})
@@ -1185,21 +1194,42 @@ export default function TableExtractDemoPage() {
   const pageTables = Array.isArray(selectedPage?.tables) ? selectedPage.tables : []
   const showPageSelector = pages.length > 1
   const showTableSelector = pageTables.length > 1
-  const cellKeyByCoord = useMemo(() => {
-    const map = new Map<string, string>()
-    const cells = Array.isArray(inspectedTable?.cells) ? inspectedTable.cells : []
-    cells.forEach((cell, index) => {
-      map.set(`${cell.rowIndex}:${cell.colIndex}`, getCellKey(cell, index))
-    })
-    return map
-  }, [inspectedTable])
-  const activeCellKey = useMemo(() => {
-    const displayCoord = hoverCellCoord || activeCellCoord
-    if (!displayCoord) {
+  const hoverCellKey = useMemo(() => {
+    if (!hoverCellCoord) {
       return ''
     }
-    return cellKeyByCoord.get(getCoordKey(displayCoord)) || ''
-  }, [activeCellCoord, cellKeyByCoord, hoverCellCoord])
+    const cells = Array.isArray(inspectedTable?.cells) ? inspectedTable.cells : []
+    const index = cells.findIndex(cell => cell.rowIndex === hoverCellCoord.row && cell.colIndex === hoverCellCoord.col)
+    return index >= 0 ? getCellKey(cells[index], index) : ''
+  }, [hoverCellCoord, inspectedTable])
+  const activeCellKeys = useMemo(() => {
+    const highlighted = new Set<string>()
+    const cells = Array.isArray(inspectedTable?.cells) ? inspectedTable.cells : []
+    if (hoverCellKey) {
+      highlighted.add(hoverCellKey)
+      return highlighted
+    }
+    const ranges = activeSelection.ranges
+    if (!ranges.length) {
+      return highlighted
+    }
+    cells.forEach((cell, index) => {
+      const cellStartRow = cell.rowIndex
+      const cellEndRow = cell.rowIndex + Math.max(1, cell.rowSpan) - 1
+      const cellStartCol = cell.colIndex
+      const cellEndCol = cell.colIndex + Math.max(1, cell.colSpan) - 1
+      const intersects = ranges.some((range) => (
+        cellStartRow <= range.endRow
+        && cellEndRow >= range.startRow
+        && cellStartCol <= range.endCol
+        && cellEndCol >= range.startCol
+      ))
+      if (intersects) {
+        highlighted.add(getCellKey(cell, index))
+      }
+    })
+    return highlighted
+  }, [activeSelection.ranges, hoverCellKey, inspectedTable])
 
   useEffect(() => {
     if (!selectedPage) {
@@ -1221,13 +1251,13 @@ export default function TableExtractDemoPage() {
   useEffect(() => {
     const inspectedCells = Array.isArray(inspectedTable?.cells) ? inspectedTable.cells : []
     const coordSet = new Set(inspectedCells.map(cell => `${cell.rowIndex}:${cell.colIndex}`))
-    if (activeCellCoord && !coordSet.has(getCoordKey(activeCellCoord))) {
-      setActiveCellCoord(null)
+    if (activeSelection.primary && !coordSet.has(getCoordKey(activeSelection.primary))) {
+      setActiveSelection({ primary: null, ranges: [] })
     }
     if (hoverCellCoord && !coordSet.has(getCoordKey(hoverCellCoord))) {
       setHoverCellCoord(null)
     }
-  }, [activeCellCoord, hoverCellCoord, inspectedTable])
+  }, [activeSelection.primary, hoverCellCoord, inspectedTable])
 
   const resetState = () => {
     setUploadFile(null)
@@ -1239,7 +1269,7 @@ export default function TableExtractDemoPage() {
     setParams(PARAM_DEFAULTS)
     setManualReview(null)
     setTableDraftById({})
-    setActiveCellCoord(null)
+    setActiveSelection({ primary: null, ranges: [] })
     setHoverCellCoord(null)
   }
 
@@ -1292,7 +1322,7 @@ export default function TableExtractDemoPage() {
       const firstPage = normalized.pages[0] || null
       setSelectedPageNo(firstPage?.pageNo || null)
       setSelectedTableId(firstPage?.tables[0]?.tableId || '')
-      setActiveCellCoord(null)
+      setActiveSelection({ primary: null, ranges: [] })
       setHoverCellCoord(null)
       msgApi.success(`提取完成，共 ${normalized.tableCount} 张表`)
     } catch (error) {
@@ -1528,7 +1558,7 @@ export default function TableExtractDemoPage() {
                     const nextPage = pages.find(page => page.pageNo === value) || null
                     setSelectedPageNo(value)
                     setSelectedTableId(nextPage?.tables[0]?.tableId || '')
-                    setActiveCellCoord(null)
+                    setActiveSelection({ primary: null, ranges: [] })
                     setHoverCellCoord(null)
                   }}
                 />
@@ -1544,7 +1574,7 @@ export default function TableExtractDemoPage() {
                   }))}
                   onChange={value => {
                     setSelectedTableId(value)
-                    setActiveCellCoord(null)
+                    setActiveSelection({ primary: null, ranges: [] })
                     setHoverCellCoord(null)
                   }}
                 />
@@ -1555,14 +1585,18 @@ export default function TableExtractDemoPage() {
                 {inspectedTable && Array.isArray(inspectedTable.cells) && inspectedTable.cells.length > 0 ? (
                   <CropPreview
                     table={inspectedTable}
-                    activeCellKey={activeCellKey}
+                    activeCellKeys={activeCellKeys}
+                    hoverCellKey={hoverCellKey}
                     onHoverCellCoordChange={(coord) => {
                       setHoverCellCoord(previous => (
                         previous?.row === coord?.row && previous?.col === coord?.col ? previous : coord
                       ))
                     }}
                     onSelectCellCoordChange={(coord) => {
-                      setActiveCellCoord(previous => (previous?.row === coord.row && previous.col === coord.col ? previous : coord))
+                      setActiveSelection({
+                        primary: coord,
+                        ranges: [{ startRow: coord.row, endRow: coord.row, startCol: coord.col, endCol: coord.col }],
+                      })
                     }}
                   />
                 ) : (
@@ -1575,9 +1609,14 @@ export default function TableExtractDemoPage() {
                     table={inspectedTable}
                     tableId={currentTableId}
                     valueHtml={currentTableHtml}
-                    activeCell={activeCellCoord}
-                    onSelectionChange={(coord) => {
-                      setActiveCellCoord(previous => (previous?.row === coord.row && previous.col === coord.col ? previous : coord))
+                    activeCell={activeSelection.primary}
+                    onSelectionChange={(coord, meta) => {
+                      setActiveSelection({
+                        primary: coord,
+                        ranges: meta?.ranges?.length
+                          ? meta.ranges
+                          : [{ startRow: coord.row, endRow: coord.row, startCol: coord.col, endCol: coord.col }],
+                      })
                     }}
                     onHoverCellChange={(coord) => {
                       setHoverCellCoord(previous => (

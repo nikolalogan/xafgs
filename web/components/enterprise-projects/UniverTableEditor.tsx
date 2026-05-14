@@ -10,11 +10,22 @@ type UniverTableEditorProps = {
   onChange: (nextHtml: string) => void
   onError?: (message: string) => void
   activeCell?: { row: number; col: number } | null
-  onSelectionChange?: (row: number, col: number) => void
+  onSelectionChange?: (
+    row: number,
+    col: number,
+    meta?: { ranges: SelectionRange[]; source: string; fromKeyboard?: boolean },
+  ) => void
   onHoverCellChange?: (row: number, col: number | null) => void
   onInteractionDebug?: (phase: 'selection-event' | 'selection-fallback' | 'hover' | 'focus', payload: Record<string, unknown>) => void
   exportFileNamePrefix?: string
   hideExportButton?: boolean
+}
+
+export type SelectionRange = {
+  startRow: number
+  endRow: number
+  startCol: number
+  endCol: number
 }
 
 type ParsedTable = {
@@ -71,6 +82,23 @@ const normalizeCellText = (value: string) => String(value || '')
   .replaceAll('\u00A0', ' ')
   .replace(/\s+/g, ' ')
   .trim()
+
+const THOUSANDS_NUMBER_PATTERN = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/
+
+const normalizeCellValueForSheet = (value: string): string | number => {
+  const trimmed = String(value || '').trim()
+  if (!trimmed || trimmed.startsWith('=')) {
+    return trimmed
+  }
+  if (!THOUSANDS_NUMBER_PATTERN.test(trimmed)) {
+    return trimmed
+  }
+  const parsed = Number(trimmed.replaceAll(',', ''))
+  if (!Number.isFinite(parsed)) {
+    return trimmed
+  }
+  return parsed
+}
 
 const decodeHtmlEntitiesOnce = (value: string) => {
   if (!value) {
@@ -496,6 +524,45 @@ const serializeWorkbookToHtml = (api: any): string => {
   return sheets.map((sheet: any) => serializeSheetToHtml(sheet)).join('')
 }
 
+const normalizeSelectionRange = (rawRange: any): SelectionRange | null => {
+  if (!rawRange) {
+    return null
+  }
+  const startRow = Number(rawRange?.startRow ?? rawRange?.startRowIndex ?? rawRange?.row)
+  const endRow = Number(rawRange?.endRow ?? rawRange?.endRowIndex ?? rawRange?.row ?? startRow)
+  const startCol = Number(rawRange?.startColumn ?? rawRange?.startColumnIndex ?? rawRange?.column ?? rawRange?.col)
+  const endCol = Number(rawRange?.endColumn ?? rawRange?.endColumnIndex ?? rawRange?.column ?? rawRange?.col ?? startCol)
+  if (![startRow, endRow, startCol, endCol].every(Number.isFinite)) {
+    return null
+  }
+  return {
+    startRow: Math.min(startRow, endRow),
+    endRow: Math.max(startRow, endRow),
+    startCol: Math.min(startCol, endCol),
+    endCol: Math.max(startCol, endCol),
+  }
+}
+
+const collectSelectionRangesFromEvent = (event: any): SelectionRange[] => {
+  const payload = event?.payload
+  const candidates = [
+    ...(Array.isArray(payload?.selections) ? payload.selections.map((item: any) => item?.range) : []),
+    ...(Array.isArray(payload?.selectionRanges) ? payload.selectionRanges : []),
+    ...(Array.isArray(payload?.ranges) ? payload.ranges : []),
+    payload?.selection?.range,
+    payload?.range,
+    ...(Array.isArray(event?.selections) ? event.selections.map((item: any) => item?.range) : []),
+    ...(Array.isArray(event?.selectionRanges) ? event.selectionRanges : []),
+    event?.range,
+  ]
+  const ranges = candidates.map(normalizeSelectionRange).filter((range): range is SelectionRange => Boolean(range))
+  const unique = new Map<string, SelectionRange>()
+  for (const range of ranges) {
+    unique.set(`${range.startRow}:${range.endRow}:${range.startCol}:${range.endCol}`, range)
+  }
+  return Array.from(unique.values())
+}
+
 export default function UniverTableEditor({
   editorSessionKey,
   valueHtml,
@@ -520,7 +587,7 @@ export default function UniverTableEditor({
   const hoverTimerRef = useRef<number>(0)
   const lastHoverAtRef = useRef(0)
   const pointerHoverRef = useRef<{ row: number; col: number | null }>({ row: -1, col: null })
-  const lastSelectionRef = useRef<{ row: number; col: number } | null>(null)
+  const lastSelectionRef = useRef<{ row: number; col: number; rangeKey: string } | null>(null)
   const suppressSelectionEmitRef = useRef(false)
   const lastEmittedHTMLRef = useRef('')
   const onChangeRef = useRef(onChange)
@@ -656,7 +723,8 @@ export default function UniverTableEditor({
           sheet.clear()
           const rowCount = Math.max(parsed.values.length, 1)
           const colCount = Math.max(parsed.values[0]?.length || 1, 1)
-          sheet.getRange(0, 0, rowCount, colCount).setValues(parsed.values)
+          const normalizedValues = parsed.values.map(row => row.map(cell => normalizeCellValueForSheet(cell)))
+          sheet.getRange(0, 0, rowCount, colCount).setValues(normalizedValues)
           for (const merge of parsed.merges) {
             if (merge.rowSpan <= 1 && merge.colSpan <= 1) {
               continue
@@ -716,18 +784,29 @@ export default function UniverTableEditor({
         const emitSelection = (
           row: number,
           col: number,
+          ranges: SelectionRange[],
           phase: 'selection-event' | 'selection-fallback',
           payload?: Record<string, unknown>,
         ) => {
           if (!Number.isFinite(row) || !Number.isFinite(col)) {
             return
           }
-          if (lastSelectionRef.current?.row === row && lastSelectionRef.current?.col === col) {
+          const normalizedRanges = ranges.length > 0 ? ranges : [{ startRow: row, endRow: row, startCol: col, endCol: col }]
+          const rangeKey = normalizedRanges.map(range => `${range.startRow}:${range.endRow}:${range.startCol}:${range.endCol}`).join('|')
+          if (
+            lastSelectionRef.current?.row === row
+            && lastSelectionRef.current?.col === col
+            && lastSelectionRef.current?.rangeKey === rangeKey
+          ) {
             return
           }
-          lastSelectionRef.current = { row, col }
-          onSelectionChangeRef.current?.(row, col)
-          onInteractionDebugRef.current?.(phase, { row, col, ...(payload || {}) })
+          lastSelectionRef.current = { row, col, rangeKey }
+          onSelectionChangeRef.current?.(row, col, {
+            ranges: normalizedRanges,
+            source: String(payload?.source || phase),
+            fromKeyboard: Boolean(payload?.fromKeyboard),
+          })
+          onInteractionDebugRef.current?.(phase, { row, col, ranges: normalizedRanges, ...(payload || {}) })
         }
         const readActiveCellCoord = (): { row: number; col: number } | null => {
           try {
@@ -746,36 +825,23 @@ export default function UniverTableEditor({
             return null
           }
         }
-        const resolveSelectionCoord = (event: any): { row: number; col: number } | null => {
-          const payload = event?.payload
-          const primaryRange = payload?.selections?.[0]?.range
-            || payload?.selectionRanges?.[0]
-            || payload?.ranges?.[0]
-            || payload?.range
-            || payload?.selection?.range
-            || event?.selections?.[0]?.range
-            || event?.selectionRanges?.[0]
-            || event?.range
-          const row = Number(
-            primaryRange?.startRow
-            ?? primaryRange?.row
-            ?? primaryRange?.startRowIndex
-            ?? payload?.row
-            ?? payload?.rowIndex
-          )
-          const col = Number(
-            primaryRange?.startColumn
-            ?? primaryRange?.column
-            ?? primaryRange?.startColumnIndex
-            ?? payload?.col
-            ?? payload?.column
-            ?? payload?.colIndex
-            ?? payload?.columnIndex
-          )
-          if (Number.isFinite(row) && Number.isFinite(col)) {
-            return { row, col }
+        const resolveSelection = (event: any): { row: number; col: number; ranges: SelectionRange[] } | null => {
+          try {
+            const ranges = collectSelectionRangesFromEvent(event)
+            const primary = ranges[0]
+            if (primary) {
+              return { row: primary.startRow, col: primary.startCol, ranges }
+            }
+            const fallback = readActiveCellCoord()
+            if (!fallback) {
+              return null
+            }
+            return { row: fallback.row, col: fallback.col, ranges: [{ startRow: fallback.row, endRow: fallback.row, startCol: fallback.col, endCol: fallback.col }] }
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : 'unknown error'
+            emitError(`[selection-parse-failed] ${detail}`)
+            return null
           }
-          return readActiveCellCoord()
         }
         if (selectionEventName) {
           selectionListenerRef.current = api.addEvent(
@@ -784,25 +850,48 @@ export default function UniverTableEditor({
             if (suppressSelectionEmitRef.current) {
               return
             }
-            const selection = resolveSelectionCoord(event)
+            const selection = resolveSelection(event)
             if (!selection) {
               return
             }
-            emitSelection(selection.row, selection.col, 'selection-event')
+            emitSelection(selection.row, selection.col, selection.ranges, 'selection-event', { source: 'selection-event', fromKeyboard: false })
             },
           )
         }
         const hostElement = hostRef.current
-        const syncSelectionFromActiveCell = (phase: 'selection-fallback', source: string) => {
+        const readCurrentSelection = (): { row: number; col: number; ranges: SelectionRange[] } | null => {
+          try {
+            const workbook = api?.getActiveWorkbook?.()
+            const sheet = workbook?.getActiveSheet?.() as any
+            const selectionRaw = sheet?.getSelections?.() || sheet?.getSelection?.() || []
+            const selections = Array.isArray(selectionRaw) ? selectionRaw : [selectionRaw]
+            const ranges = Array.isArray(selections)
+              ? selections.map((selection: any) => normalizeSelectionRange(selection?.getRange?.() || selection?.range || selection)).filter((range): range is SelectionRange => Boolean(range))
+              : []
+            if (ranges.length > 0) {
+              const primary = ranges[0]
+              return { row: primary.startRow, col: primary.startCol, ranges }
+            }
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : 'unknown error'
+            emitError(`[selection-read-failed] ${detail}`)
+          }
+          const active = readActiveCellCoord()
+          if (!active) {
+            return null
+          }
+          return { row: active.row, col: active.col, ranges: [{ startRow: active.row, endRow: active.row, startCol: active.col, endCol: active.col }] }
+        }
+        const syncSelectionFromCurrent = (phase: 'selection-fallback', source: string, fromKeyboard = false) => {
           if (suppressSelectionEmitRef.current) {
             return
           }
-          const selection = readActiveCellCoord()
+          const selection = readCurrentSelection()
           if (!selection) {
             emitError('[selection-sync-failed] 无法读取当前活动单元格')
             return
           }
-          emitSelection(selection.row, selection.col, phase, { source })
+          emitSelection(selection.row, selection.col, selection.ranges, phase, { source, fromKeyboard })
         }
         const tryEmitHover = (row: number, col: number | null) => {
           const previous = pointerHoverRef.current
@@ -853,11 +942,16 @@ export default function UniverTableEditor({
         const ensureSheetFocus = () => {
           try {
             const workbook = api.getActiveWorkbook?.()
-            const sheet = workbook?.getActiveSheet?.()
-            const active = sheet?.getActiveCell?.()
-            const range = active || sheet?.getRange?.(0, 0, 1, 1)
+            const sheet = workbook?.getActiveSheet?.() as any
+            if (sheet) {
+              workbook?.setActiveSheet?.(sheet)
+            }
+            const selection = readCurrentSelection()
+            const primary = selection?.ranges?.[0]
+            const range: any = primary
+              ? sheet?.getRange?.(primary.startRow, primary.startCol, primary.endRow - primary.startRow + 1, primary.endCol - primary.startCol + 1)
+              : (sheet?.getActiveCell?.() || sheet?.getRange?.(0, 0, 1, 1))
             range?.activate?.()
-            range?.setActive?.()
             range?.focus?.()
             onInteractionDebugRef.current?.('focus', { focused: true })
           } catch (error) {
@@ -867,19 +961,29 @@ export default function UniverTableEditor({
         }
         const handlePointerUp = () => {
           ensureSheetFocus()
-          syncSelectionFromActiveCell('selection-fallback', 'pointerup')
+          syncSelectionFromCurrent('selection-fallback', 'pointerup')
         }
         const handleMouseUp = () => {
-          syncSelectionFromActiveCell('selection-fallback', 'mouseup')
+          syncSelectionFromCurrent('selection-fallback', 'mouseup')
         }
-        const handleKeyUp = () => {
-          syncSelectionFromActiveCell('selection-fallback', 'keyup')
+        const handlePointerDown = () => {
+          hostElement?.focus()
+        }
+        const handleKeySelection = (event: KeyboardEvent) => {
+          if (!event.key?.startsWith?.('Arrow')) {
+            return
+          }
+          window.requestAnimationFrame(() => {
+            syncSelectionFromCurrent('selection-fallback', event.type, true)
+          })
         }
         hostElement?.addEventListener('pointermove', handlePointerMove, { passive: true })
         hostElement?.addEventListener('pointerleave', handlePointerLeave)
+        hostElement?.addEventListener('pointerdown', handlePointerDown)
         hostElement?.addEventListener('pointerup', handlePointerUp)
         hostElement?.addEventListener('mouseup', handleMouseUp)
-        hostElement?.addEventListener('keyup', handleKeyUp)
+        hostElement?.addEventListener('keydown', handleKeySelection)
+        hostElement?.addEventListener('keyup', handleKeySelection)
         hoverTimerRef.current = window.setTimeout(() => {
           if (!hostRef.current) {
             return
@@ -892,9 +996,11 @@ export default function UniverTableEditor({
         ;(hostElement as any).__univerHoverCleanup = () => {
           hostElement?.removeEventListener('pointermove', handlePointerMove as EventListener)
           hostElement?.removeEventListener('pointerleave', handlePointerLeave as EventListener)
+          hostElement?.removeEventListener('pointerdown', handlePointerDown as EventListener)
           hostElement?.removeEventListener('pointerup', handlePointerUp as EventListener)
           hostElement?.removeEventListener('mouseup', handleMouseUp as EventListener)
-          hostElement?.removeEventListener('keyup', handleKeyUp as EventListener)
+          hostElement?.removeEventListener('keydown', handleKeySelection as EventListener)
+          hostElement?.removeEventListener('keyup', handleKeySelection as EventListener)
         }
         univerRef.current = univer
         apiRef.current = api
@@ -956,9 +1062,8 @@ export default function UniverTableEditor({
       const sheet = workbook?.getActiveSheet?.()
       const range = sheet?.getRange?.(row, col, 1, 1)
       range?.activate?.()
-      range?.setActive?.()
       range?.focus?.()
-      lastSelectionRef.current = { row, col }
+      lastSelectionRef.current = { row, col, rangeKey: `${row}:${row}:${col}:${col}` }
     } finally {
       window.setTimeout(() => {
         suppressSelectionEmitRef.current = false
@@ -1059,7 +1164,7 @@ export default function UniverTableEditor({
           </button>
         </div>
       ) : null}
-      <div ref={hostRef} className="h-[620px] w-full overflow-hidden" />
+      <div ref={hostRef} tabIndex={0} className="h-[620px] w-full overflow-hidden" />
     </div>
   )
 }
