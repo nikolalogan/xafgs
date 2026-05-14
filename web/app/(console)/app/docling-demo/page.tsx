@@ -259,7 +259,7 @@ export default function DoclingDemoPage() {
                 onChange={value => setEngine(value)}
               />
               <Typography.Text type="secondary">
-                Docling 调用 `/docling/convert`；GLM OCR 调用 `/api/ocr/table-repair-preview`。
+                所有 OCR 相关请求统一通过 `/api/*` 网关入口；GLM OCR 调用 `/api/ocr/table-repair-preview`。
               </Typography.Text>
               <Space>
                 <Button type="primary" onClick={runConvert} loading={submitting} disabled={!canSubmit}>开始转换</Button>

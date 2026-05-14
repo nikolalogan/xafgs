@@ -803,7 +803,7 @@ export default function TableExtractDemoPage() {
         ...params,
       }
       setLastRequest(payload)
-      const response = await fetch('/ocr/table-extract', {
+      const response = await fetch('/api/ocr/table-repair-preview', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload),
@@ -837,7 +837,7 @@ export default function TableExtractDemoPage() {
         fileType: 1,
         ...params,
       }
-      const response = await fetch('/ocr/table-extract', {
+      const response = await fetch('/api/ocr/table-repair-preview', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload),
