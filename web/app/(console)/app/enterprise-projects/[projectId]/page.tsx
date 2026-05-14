@@ -2,9 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Button, Card, Descriptions, Popconfirm, Space, Tag, Upload, message } from 'antd'
+import { Button, Card, Descriptions, Empty, Popconfirm, Space, Tabs, Tag, Upload, message } from 'antd'
 import type { UploadFile } from 'antd/es/upload/interface'
-import ProjectWorkflowSteps from '@/components/enterprise-projects/ProjectWorkflowSteps'
 import { MAX_SINGLE_UPLOAD_TEXT, isSingleUploadOversized } from '@/lib/upload-limit'
 
 type ApiResponse<T> = {
@@ -123,7 +122,7 @@ export default function EnterpriseProjectPage() {
     const response = await fetch(url, { ...init, headers, credentials: 'include' })
     const payload = await response.json() as ApiResponse<T>
     if (response.status === 401) {
-      router.push('/?redirect=/app/enterprises')
+      router.push('/?redirect=/app/enterprise-projects')
       throw new Error('未登录或登录已过期')
     }
     if (!response.ok)
@@ -215,10 +214,10 @@ export default function EnterpriseProjectPage() {
 
     if (readyCategories.length === 0) {
       if (hasUploadedHistory) {
-        msgApi.info('当前没有待上传文件，可继续添加附件或进入文件确认')
+        msgApi.info('当前没有待上传文件，可继续添加附件')
         return
       }
-      msgApi.warning('请先添加附件，再点击保存')
+      msgApi.warning('请先添加附件，再点击保存上传')
       return
     }
 
@@ -273,144 +272,171 @@ export default function EnterpriseProjectPage() {
   return (
     <div className="space-y-4">
       {contextHolder}
-      <ProjectWorkflowSteps projectId={projectId} currentStep={0} />
       <Card
-        title="新增项目-附件准备"
+        title="企业新增项目"
         extra={(
           <Space>
             <Button onClick={() => router.push('/app/enterprise-projects')}>项目列表</Button>
             <Button onClick={() => router.push('/app/enterprises')}>企业列表</Button>
             <Button onClick={loadDetail} loading={loading}>刷新详情</Button>
-            <Button type="primary" loading={saving} onClick={saveAndUploadAll}>保存并上传</Button>
           </Space>
         )}
       >
-        {detail && (
-          <Descriptions bordered size="small" column={2}>
-            <Descriptions.Item label="项目">{detail.project.name}</Descriptions.Item>
-            <Descriptions.Item label="项目状态"><Tag color={parseStatusColor(detail.project.status)}>{detail.project.status}</Tag></Descriptions.Item>
-            <Descriptions.Item label="企业">{detail.enterprise.shortName}</Descriptions.Item>
-            <Descriptions.Item label="统一信用代码">{detail.enterprise.unifiedCreditCode}</Descriptions.Item>
-            <Descriptions.Item label="报告模板">{detail.template.name}</Descriptions.Item>
-            <Descriptions.Item label="模板键">{detail.template.templateKey}</Descriptions.Item>
-          </Descriptions>
-        )}
-      </Card>
-
-      <Card title="按模板分类添加附件（保存后统一上传并排队处理）">
-        <div className="space-y-3">
-          {categories.length === 0 && <div className="text-sm text-gray-500">当前模板未配置分类。</div>}
-          {categories.map((category) => {
-            const categoryKey = category.key || category.name
-            const fileList = uploadFilesByCategory[categoryKey] || []
-            const uploadedItems = getUploadedItemsForCategory(category)
-            const totalCount = fileList.length + uploadedItems.length
-            const showUploader = Boolean(showUploaderByCategory[categoryKey]) || uploadedItems.length === 0 || fileList.length > 0
-            return (
-              <div key={categoryKey} className="rounded-lg border border-gray-200 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="text-sm font-semibold text-gray-900">
-                    {category.name}
-                    {category.required ? <Tag color="blue" className="ml-2">必填</Tag> : null}
+        <Tabs
+          items={[
+            {
+              key: 'basic',
+              label: '企业主要信息',
+              children: detail
+                ? (
+                    <Descriptions bordered size="small" column={2}>
+                      <Descriptions.Item label="项目">{detail.project.name}</Descriptions.Item>
+                      <Descriptions.Item label="项目状态"><Tag color={parseStatusColor(detail.project.status)}>{detail.project.status}</Tag></Descriptions.Item>
+                      <Descriptions.Item label="企业">{detail.enterprise.shortName}</Descriptions.Item>
+                      <Descriptions.Item label="统一信用代码">{detail.enterprise.unifiedCreditCode}</Descriptions.Item>
+                      <Descriptions.Item label="报告模板">{detail.template.name}</Descriptions.Item>
+                      <Descriptions.Item label="模板键">{detail.template.templateKey}</Descriptions.Item>
+                    </Descriptions>
+                  )
+                : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无项目信息" />,
+            },
+            {
+              key: 'finance',
+              label: '财务数据',
+              children: (
+                <Card size="small" bordered={false}>
+                  <div className="text-sm text-gray-600">本轮仅保留财务数据模块占位，后续在此接入财务指标录入与核验。</div>
+                </Card>
+              ),
+            },
+            {
+              key: 'attachments',
+              label: '资料附件',
+              children: (
+                <div className="space-y-3">
+                  <div className="flex justify-end">
+                    <Button type="primary" loading={saving} onClick={saveAndUploadAll}>保存上传</Button>
                   </div>
-                  <Space size={4}>
-                    <Tag>{totalCount} 个附件</Tag>
-                    <Tag>已上传 {uploadedItems.length}</Tag>
-                    <Tag>待上传 {fileList.length}</Tag>
-                  </Space>
-                </div>
-                {uploadedItems.length > 0 && (
-                  <div className="mb-2 rounded-md border border-gray-100 bg-gray-50 p-2">
-                    <div className="mb-1 flex items-center justify-between">
-                      <div className="text-xs font-medium text-gray-600">已上传附件</div>
-                      <Space size={4}>
-                        {!showUploader && (
-                          <Button
-                            size="small"
-                            type="link"
-                            onClick={() => setShowUploaderByCategory(prev => ({ ...prev, [categoryKey]: true }))}
-                          >
-                            继续添加
-                          </Button>
+                  {categories.length === 0 && <div className="rounded border border-dashed border-amber-300 bg-amber-50 p-3 text-sm text-amber-700">当前模板未配置分类。</div>}
+                  {categories.map((category) => {
+                    const categoryKey = category.key || category.name
+                    const fileList = uploadFilesByCategory[categoryKey] || []
+                    const uploadedItems = getUploadedItemsForCategory(category)
+                    const totalCount = fileList.length + uploadedItems.length
+                    const showUploader = Boolean(showUploaderByCategory[categoryKey]) || uploadedItems.length === 0 || fileList.length > 0
+                    return (
+                      <div key={categoryKey} className="rounded-lg border border-gray-200 p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="text-sm font-semibold text-gray-900">
+                            {category.name}
+                            {category.required ? <Tag color="blue" className="ml-2">必填</Tag> : null}
+                          </div>
+                          <Space size={4}>
+                            <Tag>{totalCount} 个附件</Tag>
+                            <Tag>已上传 {uploadedItems.length}</Tag>
+                            <Tag>待上传 {fileList.length}</Tag>
+                          </Space>
+                        </div>
+                        {uploadedItems.length > 0 && (
+                          <div className="mb-2 rounded-md border border-gray-100 bg-gray-50 p-2">
+                            <div className="mb-1 flex items-center justify-between">
+                              <div className="text-xs font-medium text-gray-600">已上传附件</div>
+                              <Space size={4}>
+                                {!showUploader && (
+                                  <Button
+                                    size="small"
+                                    type="link"
+                                    onClick={() => setShowUploaderByCategory(prev => ({ ...prev, [categoryKey]: true }))}
+                                  >
+                                    继续添加
+                                  </Button>
+                                )}
+                                {showUploader && (
+                                  <Button
+                                    size="small"
+                                    type="link"
+                                    onClick={() => setShowUploaderByCategory(prev => ({ ...prev, [categoryKey]: false }))}
+                                  >
+                                    收起添加
+                                  </Button>
+                                )}
+                              </Space>
+                            </div>
+                            <div className="space-y-1">
+                              {uploadedItems.map(item => (
+                                <div key={`${item.caseFileId}-${item.fileId}-${item.versionNo}`} className="flex flex-wrap items-center gap-2 text-xs">
+                                  <span className="font-medium text-gray-800">{item.fileName}</span>
+                                  <Tag color={parseProcessStatusColor(item.parseStatus)}>{item.parseStatus || '-'}</Tag>
+                                  <Tag color={parseProcessStatusColor(item.vectorStatus)}>{item.vectorStatus || '-'}</Tag>
+                                  <span className="text-gray-500">{item.currentStage || '-'}</span>
+                                  {item.lastError ? <span className="text-red-500">{item.lastError}</span> : null}
+                                  <Popconfirm
+                                    title="确认移除该附件？"
+                                    description="移除后该附件将不再参与当前项目处理。"
+                                    okText="移除"
+                                    cancelText="取消"
+                                    onConfirm={() => removeUploadedFile(item.caseFileId)}
+                                  >
+                                    <Button
+                                      size="small"
+                                      type="link"
+                                      danger
+                                      loading={Boolean(removingCaseFileIDs[item.caseFileId])}
+                                    >
+                                      移除
+                                    </Button>
+                                  </Popconfirm>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         )}
                         {showUploader && (
-                          <Button
-                            size="small"
-                            type="link"
-                            onClick={() => setShowUploaderByCategory(prev => ({ ...prev, [categoryKey]: false }))}
+                          <Dragger
+                            multiple
+                            beforeUpload={(file) => {
+                              if (isSingleUploadOversized(file as File)) {
+                                msgApi.warning(`单文件大小不能超过 ${MAX_SINGLE_UPLOAD_TEXT}`)
+                                return Upload.LIST_IGNORE
+                              }
+                              return false
+                            }}
+                            fileList={fileList}
+                            onChange={({ fileList: nextFileList }) => {
+                              const filtered = nextFileList
+                                .filter(item => !isSingleUploadOversized(item.originFileObj as File | undefined))
+                              const ignoredCount = nextFileList.length - filtered.length
+                              if (ignoredCount > 0)
+                                msgApi.warning(`已忽略 ${ignoredCount} 个超限文件，单文件上限 ${MAX_SINGLE_UPLOAD_TEXT}`)
+                              const normalized = filtered.slice(-50)
+                              setUploadFilesByCategory(prev => ({ ...prev, [categoryKey]: normalized }))
+                            }}
+                            showUploadList={{ showRemoveIcon: true }}
+                            style={{ background: '#fafafa' }}
                           >
-                            收起添加
-                          </Button>
+                            <div className="py-2">
+                              <div className="mb-1 text-sm text-gray-700">拖拽文件到此处，或点击此区域添加文件</div>
+                              <div className="text-xs text-gray-500">当前分类：{category.name}</div>
+                            </div>
+                          </Dragger>
                         )}
-                      </Space>
-                    </div>
-                    <div className="space-y-1">
-                      {uploadedItems.map(item => (
-                        <div key={`${item.caseFileId}-${item.fileId}-${item.versionNo}`} className="flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-medium text-gray-800">{item.fileName}</span>
-                          <Tag color={parseProcessStatusColor(item.parseStatus)}>{item.parseStatus || '-'}</Tag>
-                          <Tag color={parseProcessStatusColor(item.vectorStatus)}>{item.vectorStatus || '-'}</Tag>
-                          <span className="text-gray-500">{item.currentStage || '-'}</span>
-                          {item.lastError ? <span className="text-red-500">{item.lastError}</span> : null}
-                          <Popconfirm
-                            title="确认移除该附件？"
-                            description="移除后该附件将不再参与当前项目处理。"
-                            okText="移除"
-                            cancelText="取消"
-                            onConfirm={() => removeUploadedFile(item.caseFileId)}
-                          >
-                            <Button
-                              size="small"
-                              type="link"
-                              danger
-                              loading={Boolean(removingCaseFileIDs[item.caseFileId])}
-                            >
-                              移除
-                            </Button>
-                          </Popconfirm>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {showUploader && (
-                  <Dragger
-                    multiple
-                    beforeUpload={(file) => {
-                      if (isSingleUploadOversized(file as File)) {
-                        msgApi.warning(`单文件大小不能超过 ${MAX_SINGLE_UPLOAD_TEXT}`)
-                        return Upload.LIST_IGNORE
-                      }
-                      return false
-                    }}
-                    fileList={fileList}
-                    onChange={({ fileList: nextFileList }) => {
-                      const filtered = nextFileList
-                        .filter(item => !isSingleUploadOversized(item.originFileObj as File | undefined))
-                      const ignoredCount = nextFileList.length - filtered.length
-                      if (ignoredCount > 0)
-                        msgApi.warning(`已忽略 ${ignoredCount} 个超限文件，单文件上限 ${MAX_SINGLE_UPLOAD_TEXT}`)
-                      const normalized = filtered.slice(-50)
-                      setUploadFilesByCategory(prev => ({ ...prev, [categoryKey]: normalized }))
-                    }}
-                    showUploadList={{ showRemoveIcon: true }}
-                    style={{ background: '#fafafa' }}
-                  >
-                    <div className="py-2">
-                      <div className="mb-1 text-sm text-gray-700">拖拽文件到此处，或点击此区域添加文件</div>
-                      <div className="text-xs text-gray-500">当前分类：{category.name}</div>
-                    </div>
-                  </Dragger>
-                )}
-                {!showUploader && uploadedItems.length > 0 && (
-                  <div className="rounded border border-dashed border-gray-200 p-2 text-xs text-gray-500">
-                    当前分类已上传 {uploadedItems.length} 个附件，可点击“继续添加”追加上传。
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
+                        {!showUploader && uploadedItems.length > 0 && (
+                          <div className="rounded border border-dashed border-gray-200 p-2 text-xs text-gray-500">
+                            当前分类已上传 {uploadedItems.length} 个附件，可点击“继续添加”追加上传。
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              ),
+            },
+          ]}
+        />
+      </Card>
+
+      <Card title="报告模块">
+        <div className="text-sm text-gray-600">本轮先保留报告模块基础占位，后续在此接入报告生成与内容编辑能力。</div>
       </Card>
     </div>
   )

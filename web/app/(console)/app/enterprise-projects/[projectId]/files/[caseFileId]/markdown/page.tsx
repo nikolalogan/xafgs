@@ -178,7 +178,7 @@ export default function EnterpriseProjectFileMarkdownPage() {
         extra={(
           <Space>
             <Tag color={saving ? 'processing' : 'success'}>{saving ? '保存中' : '已自动保存'}</Tag>
-            <Button onClick={() => router.push(`/app/enterprise-projects/${projectId}/confirm`)}>返回确认页</Button>
+            <Button onClick={() => router.push(`/app/enterprise-projects/${projectId}`)}>返回项目首页</Button>
             <Button
               type="primary"
               loading={saving}
@@ -222,3 +222,4 @@ export default function EnterpriseProjectFileMarkdownPage() {
     </div>
   )
 }
+
