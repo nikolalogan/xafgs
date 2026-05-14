@@ -26,6 +26,8 @@ type AntdTableEditorProps = {
   onInteractionDebug?: (phase: 'selection-event' | 'selection-fallback' | 'hover' | 'focus', payload: Record<string, unknown>) => void
   exportFileNamePrefix?: string
   hideExportButton?: boolean
+  cellConfidenceByCoord?: Record<string, number>
+  lowConfidenceThreshold?: number
 }
 
 type CellModel = {
@@ -179,6 +181,8 @@ export default function AntdTableEditor({
   onInteractionDebug,
   exportFileNamePrefix = 'table-export',
   hideExportButton = false,
+  cellConfidenceByCoord,
+  lowConfidenceThreshold = 0.85,
 }: AntdTableEditorProps) {
   const [grid, setGrid] = useState<GridState>(() => parseHtmlToGrid(valueHtml))
   const [selection, setSelection] = useState(() => {
@@ -508,6 +512,8 @@ export default function AntdTableEditor({
                   const isActive = rowIndex === selection.active.row && colIndex === selection.active.col
                   const inRange = selection.ranges.some(range => rowIndex >= range.startRow && rowIndex <= range.endRow && colIndex >= range.startCol && colIndex <= range.endCol)
                   const isEditing = editing?.row === rowIndex && editing?.col === colIndex
+                  const cellConfidence = cellConfidenceByCoord?.[`${rowIndex}:${colIndex}`]
+                  const isLowConfidence = typeof cellConfidence === 'number' && cellConfidence < lowConfidenceThreshold
                   return (
                     <td
                       key={`c-${rowIndex}-${colIndex}`}
@@ -552,7 +558,7 @@ export default function AntdTableEditor({
                           }}
                         />
                       ) : (
-                        <span>{evaluated[rowIndex]?.[colIndex] || ''}</span>
+                        <span className={isLowConfidence ? 'text-red-500' : ''}>{evaluated[rowIndex]?.[colIndex] || ''}</span>
                       )}
                     </td>
                   )

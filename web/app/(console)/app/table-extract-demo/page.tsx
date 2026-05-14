@@ -5,8 +5,8 @@ import { Alert, Button, Card, Empty, InputNumber, Select, Space, Typography, Upl
 import type { UploadFile } from 'antd/es/upload/interface'
 import { CopyOutlined, DownloadOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { isSingleUploadOversized, MAX_SINGLE_UPLOAD_TEXT } from '@/lib/upload-limit'
-import UniverTableEditor from '@/components/enterprise-projects/UniverTableEditor'
-import type { SelectionRange } from '@/components/enterprise-projects/UniverTableEditor'
+import AntdTableEditor from '@/components/enterprise-projects/AntdTableEditor'
+import type { SelectionRange } from '@/components/enterprise-projects/AntdTableEditor'
 
 type BoxPolygon = number[][]
 type Point = { x: number; y: number }
@@ -779,6 +779,8 @@ function TableResultViewer({
   valueHtml,
   onChange,
   activeCell,
+  cellConfidenceByCoord,
+  lowConfidenceThreshold,
   onSelectionChange,
   onHoverCellChange,
 }: {
@@ -787,6 +789,8 @@ function TableResultViewer({
   valueHtml: string
   onChange: (nextHtml: string) => void
   activeCell: CellCoord | null
+  cellConfidenceByCoord: Record<string, number>
+  lowConfidenceThreshold: number
   onSelectionChange: (coord: CellCoord, meta?: { ranges: SelectionRange[]; source: string; fromKeyboard?: boolean }) => void
   onHoverCellChange: (coord: CellCoord | null) => void
 }) {
@@ -803,7 +807,7 @@ function TableResultViewer({
   return (
     <Space orientation="vertical" size={8} style={{ width: '100%' }}>
       {error ? <Alert type="warning" showIcon message={error} /> : null}
-      <UniverTableEditor
+      <AntdTableEditor
         editorSessionKey={tableId}
         exportFileNamePrefix={tableId ? `table-${tableId}` : 'table-export'}
         valueHtml={valueHtml}
@@ -811,6 +815,8 @@ function TableResultViewer({
         onChange={onChange}
         onError={setError}
         activeCell={activeCell}
+        cellConfidenceByCoord={cellConfidenceByCoord}
+        lowConfidenceThreshold={lowConfidenceThreshold}
         onSelectionChange={(row, col, meta) => onSelectionChange({ row, col }, meta)}
         onHoverCellChange={(row, col) => {
           if (col === null || row < 0) {
@@ -1054,17 +1060,27 @@ function CropPreview({
   table,
   activeCellKeys,
   hoverCellKey,
+  currentCellCoord,
   onHoverCellCoordChange,
   onSelectCellCoordChange,
 }: {
   table: ExtractedTable
   activeCellKeys: Set<string>
   hoverCellKey: string
+  currentCellCoord: CellCoord | null
   onHoverCellCoordChange: (coord: CellCoord | null) => void
   onSelectCellCoordChange: (coord: CellCoord) => void
 }) {
   const cells = Array.isArray(table.cells) ? table.cells : []
-  const hoveredCell = cells.find((cell, index) => getCellKey(cell, index) === hoverCellKey) || null
+  const focusedCell = useMemo(() => {
+    if (hoverCellKey) {
+      return cells.find((cell, index) => getCellKey(cell, index) === hoverCellKey) || null
+    }
+    if (!currentCellCoord) {
+      return null
+    }
+    return cells.find(cell => cell.rowIndex === currentCellCoord.row && cell.colIndex === currentCellCoord.col) || null
+  }, [cells, currentCellCoord, hoverCellKey])
 
   return (
     <Space orientation="vertical" size={12} style={{ width: '100%' }}>
@@ -1124,14 +1140,14 @@ function CropPreview({
       </div>
 
       <Card size="small" styles={{ body: { padding: 12, background: '#fafafa' } }}>
-        {hoveredCell ? (
+        {focusedCell ? (
           <Space wrap size={12}>
             <Typography.Text strong>当前单元格</Typography.Text>
-            <Typography.Text>r{hoveredCell.rowIndex} c{hoveredCell.colIndex}</Typography.Text>
-            <Typography.Text>rowSpan {hoveredCell.rowSpan}</Typography.Text>
-            <Typography.Text>colSpan {hoveredCell.colSpan}</Typography.Text>
-            <Typography.Text>列表头 {hoveredCell.isColumnHeader ? '是' : '否'}</Typography.Text>
-            <Typography.Text>投影行头 {hoveredCell.isProjectedRowHeader ? '是' : '否'}</Typography.Text>
+            <Typography.Text>r{focusedCell.rowIndex} c{focusedCell.colIndex}</Typography.Text>
+            <Typography.Text>rowSpan {focusedCell.rowSpan}</Typography.Text>
+            <Typography.Text>colSpan {focusedCell.colSpan}</Typography.Text>
+            <Typography.Text>列表头 {focusedCell.isColumnHeader ? '是' : '否'}</Typography.Text>
+            <Typography.Text>投影行头 {focusedCell.isProjectedRowHeader ? '是' : '否'}</Typography.Text>
           </Space>
         ) : (
           <Space wrap size={12}>
@@ -1146,6 +1162,7 @@ function CropPreview({
 }
 
 export default function TableExtractDemoPage() {
+  const LOW_CONFIDENCE_THRESHOLD = 0.85
   const [msgApi, contextHolder] = message.useMessage()
   const [uploadFile, setUploadFile] = useState<UploadFile | null>(null)
   const [params, setParams] = useState(PARAM_DEFAULTS)
@@ -1206,31 +1223,37 @@ export default function TableExtractDemoPage() {
   const activeCellKeys = useMemo(() => {
     const highlighted = new Set<string>()
     const cells = Array.isArray(inspectedTable?.cells) ? inspectedTable.cells : []
+    const ranges = activeSelection.ranges
+    if (ranges.length) {
+      cells.forEach((cell, index) => {
+        const cellStartRow = cell.rowIndex
+        const cellEndRow = cell.rowIndex + Math.max(1, cell.rowSpan) - 1
+        const cellStartCol = cell.colIndex
+        const cellEndCol = cell.colIndex + Math.max(1, cell.colSpan) - 1
+        const intersects = ranges.some((range) => (
+          cellStartRow <= range.endRow
+          && cellEndRow >= range.startRow
+          && cellStartCol <= range.endCol
+          && cellEndCol >= range.startCol
+        ))
+        if (intersects) {
+          highlighted.add(getCellKey(cell, index))
+        }
+      })
+    }
     if (hoverCellKey) {
       highlighted.add(hoverCellKey)
-      return highlighted
     }
-    const ranges = activeSelection.ranges
-    if (!ranges.length) {
-      return highlighted
-    }
-    cells.forEach((cell, index) => {
-      const cellStartRow = cell.rowIndex
-      const cellEndRow = cell.rowIndex + Math.max(1, cell.rowSpan) - 1
-      const cellStartCol = cell.colIndex
-      const cellEndCol = cell.colIndex + Math.max(1, cell.colSpan) - 1
-      const intersects = ranges.some((range) => (
-        cellStartRow <= range.endRow
-        && cellEndRow >= range.startRow
-        && cellStartCol <= range.endCol
-        && cellEndCol >= range.startCol
-      ))
-      if (intersects) {
-        highlighted.add(getCellKey(cell, index))
-      }
-    })
     return highlighted
   }, [activeSelection.ranges, hoverCellKey, inspectedTable])
+  const cellConfidenceByCoord = useMemo(() => {
+    const mapped: Record<string, number> = {}
+    const cells = Array.isArray(inspectedTable?.cells) ? inspectedTable.cells : []
+    cells.forEach((cell) => {
+      mapped[`${cell.rowIndex}:${cell.colIndex}`] = Number(cell.confidence)
+    })
+    return mapped
+  }, [inspectedTable])
 
   useEffect(() => {
     if (!selectedPage) {
@@ -1592,6 +1615,7 @@ export default function TableExtractDemoPage() {
                     table={inspectedTable}
                     activeCellKeys={activeCellKeys}
                     hoverCellKey={hoverCellKey}
+                    currentCellCoord={hoverCellCoord || activeSelection.primary}
                     onHoverCellCoordChange={(coord) => {
                       setHoverCellCoord(previous => (
                         previous?.row === coord?.row && previous?.col === coord?.col ? previous : coord
@@ -1624,6 +1648,9 @@ export default function TableExtractDemoPage() {
                           ? meta.ranges
                           : [{ startRow: coord.row, endRow: coord.row, startCol: coord.col, endCol: coord.col }],
                       })
+                      setHoverCellCoord(previous => (
+                        previous?.row === coord.row && previous?.col === coord.col ? previous : coord
+                      ))
                     }}
                     onHoverCellChange={(coord) => {
                       setHoverCellCoord(previous => (
@@ -1636,6 +1663,8 @@ export default function TableExtractDemoPage() {
                       }
                       setTableDraftById(previous => ({ ...previous, [currentTableId]: nextHtml }))
                     }}
+                    cellConfidenceByCoord={cellConfidenceByCoord}
+                    lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
                   />
                 ) : (
                   <Empty description="当前表格无 cells，无法展示表格联动视图" />
