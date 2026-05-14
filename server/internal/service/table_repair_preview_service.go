@@ -3,12 +3,16 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"io"
+	"mime"
 	"net/http"
 	"time"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -60,7 +64,7 @@ func (service *tableRepairPreviewService) postTATRRecognize(ctx context.Context,
 		return err
 	}
 	requestPayload := cloneMap(payload)
-	err = service.postJSON(ctx, baseURL+"/api/recognize", requestPayload, responseBody)
+	err = service.postMultipart(ctx, baseURL+"/api/recognize", requestPayload, responseBody)
 	if err == nil {
 		return nil
 	}
@@ -72,19 +76,42 @@ func (service *tableRepairPreviewService) postTATRRecognize(ctx context.Context,
 		return err
 	}
 	requestPayload["fileType"] = 1 - fileType
-	return service.postJSON(ctx, baseURL+"/api/recognize", requestPayload, responseBody)
+	return service.postMultipart(ctx, baseURL+"/api/recognize", requestPayload, responseBody)
 }
 
-func (service *tableRepairPreviewService) postJSON(ctx context.Context, url string, requestBody any, responseBody any) error {
-	raw, err := json.Marshal(requestBody)
+func (service *tableRepairPreviewService) postMultipart(ctx context.Context, endpoint string, requestBody map[string]any, responseBody any) error {
+	fileRaw := strings.TrimSpace(getString(requestBody["file"]))
+	fileBytes, err := decodeBase64Payload(fileRaw)
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+	filename, _ := resolveUploadMeta(fileBytes, requestBody)
+	delete(requestBody, "file")
+	formFields := buildTATRFormFields(requestBody)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	fileWriter, err := writer.CreateFormFile("file", filename)
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Content-Type", "application/json")
+	if _, err = fileWriter.Write(fileBytes); err != nil {
+		return err
+	}
+	for key, value := range formFields {
+		if err = writer.WriteField(key, value); err != nil {
+			return err
+		}
+	}
+	if err = writer.Close(); err != nil {
+		return err
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := service.httpClient.Do(request)
 	if err != nil {
@@ -112,6 +139,8 @@ func (service *tableRepairPreviewService) buildReadableError(err error) string {
 		return "调用 TATR 服务失败: 上游拒绝访问" + envHint + "；原始错误: " + raw
 	case strings.Contains(lower, "status=404"):
 		return "调用 TATR 服务失败: 上游接口不存在，请检查 remoteOcrTableBaseUrl 是否指向 TATR 服务根地址（应包含 /api/recognize）" + envHint + "；原始错误: " + raw
+	case strings.Contains(lower, "status=422"):
+		return "调用 TATR 服务失败: 请求体已转发到 TATR，但字段格式不符合 /api/recognize 契约" + envHint + "；原始错误: " + raw
 	case strings.Contains(lower, "不可达"), strings.Contains(lower, "connection refused"), strings.Contains(lower, "no such host"), strings.Contains(lower, "timeout"):
 		return "调用 TATR 服务失败: 上游不可达，请检查系统设置中的 remoteOcrTableBaseUrl" + envHint + "；原始错误: " + raw
 	default:
@@ -203,5 +232,179 @@ func cloneMap(input map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+var tableRecognizeAllowedFields = map[string]string{
+	"fileType":                    "file_type",
+	"file_type":                   "file_type",
+	"visualize":                   "visualize",
+	"logId":                       "log_id",
+	"log_id":                      "log_id",
+	"detection_threshold":         "detection_threshold",
+	"structure_threshold":         "structure_threshold",
+	"use_table_deskew":            "use_table_deskew",
+	"useDocOrientationClassify":   "use_doc_orientation_classify",
+	"use_doc_orientation_classify": "use_doc_orientation_classify",
+	"useDocUnwarping":             "use_doc_unwarping",
+	"use_doc_unwarping":           "use_doc_unwarping",
+	"useTextlineOrientation":      "use_textline_orientation",
+	"use_textline_orientation":    "use_textline_orientation",
+	"useSealRecognition":          "use_seal_recognition",
+	"use_seal_recognition":        "use_seal_recognition",
+	"useTableRecognition":         "use_table_recognition",
+	"use_table_recognition":       "use_table_recognition",
+	"useFormulaRecognition":       "use_formula_recognition",
+	"use_formula_recognition":     "use_formula_recognition",
+	"useChartRecognition":         "use_chart_recognition",
+	"use_chart_recognition":       "use_chart_recognition",
+	"useRegionDetection":          "use_region_detection",
+	"use_region_detection":        "use_region_detection",
+	"formatBlockContent":          "format_block_content",
+	"format_block_content":        "format_block_content",
+	"layoutNms":                   "layout_nms",
+	"layout_nms":                  "layout_nms",
+	"layoutThreshold":             "layout_threshold",
+	"layout_threshold":            "layout_threshold",
+	"layoutUnclipRatio":           "layout_unclip_ratio",
+	"layout_unclip_ratio":         "layout_unclip_ratio",
+	"layoutMergeBboxesMode":       "layout_merge_bboxes_mode",
+	"layout_merge_bboxes_mode":    "layout_merge_bboxes_mode",
+	"textDetLimitSideLen":         "text_det_limit_side_len",
+	"text_det_limit_side_len":     "text_det_limit_side_len",
+	"textDetLimitType":            "text_det_limit_type",
+	"text_det_limit_type":         "text_det_limit_type",
+	"textDetThresh":               "text_det_thresh",
+	"text_det_thresh":             "text_det_thresh",
+	"textDetBoxThresh":            "text_det_box_thresh",
+	"text_det_box_thresh":         "text_det_box_thresh",
+	"textDetUnclipRatio":          "text_det_unclip_ratio",
+	"text_det_unclip_ratio":       "text_det_unclip_ratio",
+	"textRecScoreThresh":          "text_rec_score_thresh",
+	"text_rec_score_thresh":       "text_rec_score_thresh",
+	"sealDetLimitSideLen":         "seal_det_limit_side_len",
+	"seal_det_limit_side_len":     "seal_det_limit_side_len",
+	"sealDetLimitType":            "seal_det_limit_type",
+	"seal_det_limit_type":         "seal_det_limit_type",
+	"sealDetThresh":               "seal_det_thresh",
+	"seal_det_thresh":             "seal_det_thresh",
+	"sealDetBoxThresh":            "seal_det_box_thresh",
+	"seal_det_box_thresh":         "seal_det_box_thresh",
+	"sealDetUnclipRatio":          "seal_det_unclip_ratio",
+	"seal_det_unclip_ratio":       "seal_det_unclip_ratio",
+	"sealRecScoreThresh":          "seal_rec_score_thresh",
+	"seal_rec_score_thresh":       "seal_rec_score_thresh",
+	"useWiredTableCellsTransToHtml": "use_wired_table_cells_trans_to_html",
+	"use_wired_table_cells_trans_to_html": "use_wired_table_cells_trans_to_html",
+	"useWirelessTableCellsTransToHtml": "use_wireless_table_cells_trans_to_html",
+	"use_wireless_table_cells_trans_to_html": "use_wireless_table_cells_trans_to_html",
+	"useTableOrientationClassify": "use_table_orientation_classify",
+	"use_table_orientation_classify": "use_table_orientation_classify",
+	"useOcrResultsWithTableCells": "use_ocr_results_with_table_cells",
+	"use_ocr_results_with_table_cells": "use_ocr_results_with_table_cells",
+	"useE2eWiredTableRecModel":    "use_e2e_wired_table_rec_model",
+	"use_e2e_wired_table_rec_model": "use_e2e_wired_table_rec_model",
+	"useE2eWirelessTableRecModel": "use_e2e_wireless_table_rec_model",
+	"use_e2e_wireless_table_rec_model": "use_e2e_wireless_table_rec_model",
+	"markdownIgnoreLabels":        "markdown_ignore_labels",
+	"markdown_ignore_labels":      "markdown_ignore_labels",
+	"prettifyMarkdown":            "prettify_markdown",
+	"prettify_markdown":           "prettify_markdown",
+	"showFormulaNumber":           "show_formula_number",
+	"show_formula_number":         "show_formula_number",
+}
+
+func buildTATRFormFields(payload map[string]any) map[string]string {
+	result := make(map[string]string)
+	for key, value := range payload {
+		mapped, ok := tableRecognizeAllowedFields[key]
+		if !ok {
+			continue
+		}
+		text := toFormValue(value)
+		if text == "" {
+			continue
+		}
+		result[mapped] = text
+	}
+	return result
+}
+
+func toFormValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case bool:
+		return strconv.FormatBool(typed)
+	case int:
+		return strconv.Itoa(typed)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(typed), 'f', -1, 32)
+	case json.Number:
+		return typed.String()
+	case []string:
+		trimmed := make([]string, 0, len(typed))
+		for _, item := range typed {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				trimmed = append(trimmed, item)
+			}
+		}
+		return strings.Join(trimmed, ",")
+	case []any:
+		trimmed := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text := strings.TrimSpace(toFormValue(item))
+			if text != "" {
+				trimmed = append(trimmed, text)
+			}
+		}
+		return strings.Join(trimmed, ",")
+	}
+	return ""
+}
+
+func decodeBase64Payload(file string) ([]byte, error) {
+	payload := strings.TrimSpace(file)
+	if payload == "" {
+		return nil, fmt.Errorf("file 不能为空")
+	}
+	if idx := strings.Index(payload, ","); idx >= 0 && strings.Contains(payload[:idx], ";base64") {
+		payload = payload[idx+1:]
+	}
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return nil, fmt.Errorf("file base64 无法解码: %w", err)
+	}
+	if len(decoded) == 0 {
+		return nil, fmt.Errorf("file base64 无法解码: 内容为空")
+	}
+	return decoded, nil
+}
+
+func resolveUploadMeta(fileBytes []byte, payload map[string]any) (string, string) {
+	fileType, hasFileType := getOptionalInt(payload["fileType"])
+	binaryKind := detectBinaryKind(base64.StdEncoding.EncodeToString(fileBytes))
+	if !hasFileType {
+		if binaryKind == "image" {
+			fileType = 1
+		}
+	}
+	if fileType == 1 {
+		return "upload.png", "image/png"
+	}
+	if binaryKind == "image" {
+		contentType := http.DetectContentType(fileBytes)
+		exts, _ := mime.ExtensionsByType(contentType)
+		ext := ".png"
+		if len(exts) > 0 {
+			ext = exts[0]
+		}
+		return "upload" + filepath.Clean(ext), contentType
+	}
+	return "upload.pdf", "application/pdf"
 }
 

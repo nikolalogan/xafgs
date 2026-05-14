@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -78,7 +79,7 @@ func (client *HTTPOCRClient) SubmitTask(ctx context.Context, request OCRTaskSubm
 
 func (client *HTTPOCRClient) postOfficialLayoutParsing(ctx context.Context, payload map[string]any, response any) error {
 	requestPayload := cloneAnyMap(payload)
-	err := client.postJSON(ctx, "/api/recognize", requestPayload, response)
+	err := client.postMultipart(ctx, "/api/recognize", requestPayload, response)
 	if err == nil {
 		return nil
 	}
@@ -90,7 +91,7 @@ func (client *HTTPOCRClient) postOfficialLayoutParsing(ctx context.Context, payl
 		return err
 	}
 	requestPayload["fileType"] = 1 - fileType
-	return client.postJSON(ctx, "/api/recognize", requestPayload, response)
+	return client.postMultipart(ctx, "/api/recognize", requestPayload, response)
 }
 
 func (client *HTTPOCRClient) GetTask(ctx context.Context, taskID string) (OCRTaskStatusResponse, error) {
@@ -118,6 +119,55 @@ func (client *HTTPOCRClient) postJSON(ctx context.Context, path string, request 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return json.NewDecoder(resp.Body).Decode(response)
+}
+
+func (client *HTTPOCRClient) postMultipart(ctx context.Context, path string, request map[string]any, response any) error {
+	baseURL, err := client.resolveBaseURL(ctx)
+	if err != nil {
+		return err
+	}
+	fileRaw := strings.TrimSpace(firstString(request["file"]))
+	fileBytes, err := decodeBase64Payload(fileRaw)
+	if err != nil {
+		return err
+	}
+	filename, _ := resolveUploadMeta(fileBytes, request)
+	delete(request, "file")
+	fields := buildTATRFormFields(request)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	fileWriter, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return err
+	}
+	if _, err = fileWriter.Write(fileBytes); err != nil {
+		return err
+	}
+	for key, value := range fields {
+		if err = writer.WriteField(key, value); err != nil {
+			return err
+		}
+	}
+	if err = writer.Close(); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	resp, err := client.httpClient.Do(req)
 	if err != nil {
 		return err
