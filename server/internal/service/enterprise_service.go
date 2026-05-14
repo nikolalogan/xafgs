@@ -18,6 +18,7 @@ type EnterpriseService interface {
 	Create(ctx context.Context, request model.CreateEnterpriseRequest, operatorID int64) (model.EnterpriseDetailDTO, *model.APIError)
 	Update(ctx context.Context, enterpriseID int64, request model.UpdateEnterpriseRequest, operatorID int64) (model.EnterpriseDetailDTO, *model.APIError)
 	ValidateConflict(ctx context.Context, request model.CreateEnterpriseRequest, excludeEnterpriseID *int64) (model.ConflictResponse, *model.APIError)
+	ImportSnapshot(ctx context.Context, request model.SnapshotEntpImportRequest, operatorID int64) (model.EnterpriseSnapshotImportResult, *model.APIError)
 	Delete(ctx context.Context, enterpriseID int64, operatorID int64) *model.APIError
 }
 
@@ -261,6 +262,12 @@ func normalizeEnterpriseRequest(request model.CreateEnterpriseRequest) model.Cre
 	for i := range request.Shareholders {
 		request.Shareholders[i].ShareholderID = strings.TrimSpace(request.Shareholders[i].ShareholderID)
 	}
+	for i := range request.FinancialReports {
+		request.FinancialReports[i].AccountingFirm = strings.TrimSpace(request.FinancialReports[i].AccountingFirm)
+		request.FinancialReports[i].ReportName = strings.TrimSpace(request.FinancialReports[i].ReportName)
+		request.FinancialReports[i].ReportType = strings.TrimSpace(request.FinancialReports[i].ReportType)
+		request.FinancialReports[i].ReportDate = strings.TrimSpace(request.FinancialReports[i].ReportDate)
+	}
 	if request.FinanceSnapshot != nil {
 		request.FinanceSnapshot.MainBusiness1 = strings.TrimSpace(request.FinanceSnapshot.MainBusiness1)
 		request.FinanceSnapshot.MainBusiness2 = strings.TrimSpace(request.FinanceSnapshot.MainBusiness2)
@@ -315,6 +322,9 @@ func toAggregate(request model.CreateEnterpriseRequest, operatorID int64) model.
 		FinanceSnapshot:   request.FinanceSnapshot,
 		FinanceSubjects:   request.FinanceSubjects,
 		Shareholders:      request.Shareholders,
+		FinancialReports:  request.FinancialReports,
+		FinancialReportItems: request.FinancialReportItems,
+		SnapshotExtension: request.SnapshotExtension,
 	}
 }
 
@@ -358,6 +368,9 @@ func enterpriseDetailToCreateRequest(detail model.EnterpriseDetailDTO) model.Cre
 		FinanceSnapshot:                   detail.FinanceSnapshot,
 		FinanceSubjects:                   detail.FinanceSubjects,
 		Shareholders:                      detail.Shareholders,
+		FinancialReports:                  detail.FinancialReports,
+		FinancialReportItems:              detail.FinancialReportItems,
+		SnapshotExtension:                 detail.SnapshotExtension,
 	}
 }
 

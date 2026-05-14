@@ -176,6 +176,9 @@ type EnterpriseAggregate struct {
 	FinanceSnapshot   *EnterpriseFinanceSnapshot   `json:"financeSnapshot,omitempty"`
 	FinanceSubjects   []EnterpriseFinanceSubject   `json:"financeSubjects"`
 	Shareholders      []EnterpriseShareholder      `json:"shareholders"`
+	FinancialReports  []EnterpriseFinancialReport  `json:"financialReports"`
+	FinancialReportItems []EnterpriseFinancialReportItem `json:"financialReportItems"`
+	SnapshotExtension *EnterpriseSnapshotExtension `json:"snapshotExtension,omitempty"`
 }
 
 type EnterpriseDTO struct {
@@ -227,6 +230,9 @@ type EnterpriseDetailDTO struct {
 	FinanceSnapshot                   *EnterpriseFinanceSnapshot   `json:"financeSnapshot,omitempty"`
 	FinanceSubjects                   []EnterpriseFinanceSubject   `json:"financeSubjects"`
 	Shareholders                      []EnterpriseShareholder      `json:"shareholders"`
+	FinancialReports                  []EnterpriseFinancialReport  `json:"financialReports"`
+	FinancialReportItems              []EnterpriseFinancialReportItem `json:"financialReportItems"`
+	SnapshotExtension                 *EnterpriseSnapshotExtension `json:"snapshotExtension,omitempty"`
 }
 
 type EnterpriseListQuery struct {
@@ -294,5 +300,8 @@ func (aggregate EnterpriseAggregate) ToDetailDTO() EnterpriseDetailDTO {
 		FinanceSnapshot:                   aggregate.FinanceSnapshot,
 		FinanceSubjects:                   aggregate.FinanceSubjects,
 		Shareholders:                      aggregate.Shareholders,
+		FinancialReports:                  aggregate.FinancialReports,
+		FinancialReportItems:              aggregate.FinancialReportItems,
+		SnapshotExtension:                 aggregate.SnapshotExtension,
 	}
 }

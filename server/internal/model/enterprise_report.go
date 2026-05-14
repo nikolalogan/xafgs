@@ -7,6 +7,9 @@ type EnterpriseFinancialReport struct {
 	Month           int    `json:"month"`
 	Level           int    `json:"level"`
 	AccountingFirm  string `json:"accountingFirm"`
+	ReportName      string `json:"reportName"`
+	ReportType      string `json:"reportType"`
+	ReportDate      string `json:"reportDate"`
 }
 
 type EnterpriseFinancialReportItem struct {

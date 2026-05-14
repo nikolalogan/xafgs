@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -520,12 +521,18 @@ INSERT INTO enterprise_finance_snapshot (
 	if _, err := tx.ExecContext(ctx, `DELETE FROM enterprise_finance_subject WHERE enterprise_id = $1`, aggregate.Enterprise.ID); err != nil {
 		return err
 	}
+	subjectByID := map[int64]int64{}
 	for i, item := range aggregate.FinanceSubjects {
-		if _, err := tx.ExecContext(ctx, `
+		var subjectID int64
+		if err := tx.QueryRowContext(ctx, `
 INSERT INTO enterprise_finance_subject (enterprise_id, subject_name, subject_type, order_no)
 VALUES ($1, $2, $3, $4)
-`, aggregate.Enterprise.ID, strings.TrimSpace(item.SubjectName), strings.TrimSpace(item.SubjectType), i+1); err != nil {
+RETURNING id
+`, aggregate.Enterprise.ID, strings.TrimSpace(item.SubjectName), strings.TrimSpace(item.SubjectType), i+1).Scan(&subjectID); err != nil {
 			return err
+		}
+		if item.ID > 0 {
+			subjectByID[item.ID] = subjectID
 		}
 	}
 
@@ -537,6 +544,62 @@ VALUES ($1, $2, $3, $4)
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO enterprise_shareholder (enterprise_id, shareholder_id, order_no) VALUES ($1, $2, $3)`, aggregate.Enterprise.ID, strings.TrimSpace(item.ShareholderID), i+1); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM enterprise_financial_report_item WHERE financial_report_id IN (SELECT id FROM enterprise_financial_report WHERE enterprise_id = $1)`, aggregate.Enterprise.ID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM enterprise_financial_report WHERE enterprise_id = $1`, aggregate.Enterprise.ID); err != nil {
+		return err
+	}
+	reportIDMap := map[int64]int64{}
+	now := time.Now().UTC()
+	for i, item := range aggregate.FinancialReports {
+		var reportID int64
+		if err := tx.QueryRowContext(ctx, `
+INSERT INTO enterprise_financial_report (enterprise_id, year, month, level, accounting_firm, report_name, report_type, report_date, created_at, updated_at, created_by, updated_by)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$10)
+RETURNING id
+`, aggregate.Enterprise.ID, item.Year, item.Month, item.Level, strings.TrimSpace(item.AccountingFirm), strings.TrimSpace(item.ReportName), strings.TrimSpace(item.ReportType), strings.TrimSpace(item.ReportDate), now, aggregate.Enterprise.UpdatedBy).Scan(&reportID); err != nil {
+			return err
+		}
+		reportIDMap[int64(i+1)] = reportID
+	}
+	for _, item := range aggregate.FinancialReportItems {
+		reportID := reportIDMap[item.FinancialReportID]
+		subjectID := item.SubjectID
+		if mapped, ok := subjectByID[subjectID]; ok {
+			subjectID = mapped
+		}
+		if reportID <= 0 || subjectID <= 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO enterprise_financial_report_item (financial_report_id, subject_id, value, created_at, updated_at, created_by, updated_by)
+VALUES ($1,$2,$3,$4,$4,$5,$5)
+`, reportID, subjectID, item.Value, now, aggregate.Enterprise.UpdatedBy); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM enterprise_snapshot_extension WHERE enterprise_id = $1`, aggregate.Enterprise.ID); err != nil {
+		return err
+	}
+	if aggregate.SnapshotExtension != nil {
+		rawJSON := json.RawMessage(aggregate.SnapshotExtension.RawEntpJSON)
+		if len(rawJSON) == 0 {
+			rawJSON = json.RawMessage(`{}`)
+		}
+		extraJSON := json.RawMessage(aggregate.SnapshotExtension.NormalizedExtraJSON)
+		if len(extraJSON) == 0 {
+			extraJSON = json.RawMessage(`{}`)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO enterprise_snapshot_extension (enterprise_id, source_snapshot_id, raw_entp_json, normalized_extra_json, created_at, updated_at)
+VALUES ($1,$2,$3::jsonb,$4::jsonb,$5,$5)
+`, aggregate.Enterprise.ID, strings.TrimSpace(aggregate.SnapshotExtension.SourceSnapshotID), string(rawJSON), string(extraJSON), now); err != nil {
 			return err
 		}
 	}
@@ -773,6 +836,51 @@ WHERE enterprise_id = $1
 		}
 	}
 	_ = rows.Close()
+
+	rows, err = query(`SELECT id, year, month, level, accounting_firm, report_name, report_type, report_date FROM enterprise_financial_report WHERE enterprise_id = $1 ORDER BY year DESC, month DESC, id DESC`, enterpriseID)
+	if err != nil {
+		return model.EnterpriseAggregate{}, false
+	}
+	reportIDs := make([]int64, 0)
+	reportOrderMap := map[int64]int64{}
+	for rows.Next() {
+		var row model.EnterpriseFinancialReport
+		if err := rows.Scan(&row.ID, &row.Year, &row.Month, &row.Level, &row.AccountingFirm, &row.ReportName, &row.ReportType, &row.ReportDate); err == nil {
+			aggregate.FinancialReports = append(aggregate.FinancialReports, row)
+			reportIDs = append(reportIDs, row.ID)
+			reportOrderMap[row.ID] = int64(len(aggregate.FinancialReports))
+		}
+	}
+	_ = rows.Close()
+	for _, reportID := range reportIDs {
+		itemRows, queryErr := query(`SELECT id, financial_report_id, subject_id, value FROM enterprise_financial_report_item WHERE financial_report_id = $1 ORDER BY id ASC`, reportID)
+		if queryErr != nil {
+			return model.EnterpriseAggregate{}, false
+		}
+		for itemRows.Next() {
+			var row model.EnterpriseFinancialReportItem
+			if scanErr := itemRows.Scan(&row.ID, &row.FinancialReportID, &row.SubjectID, floatPtrScanner{dst: &row.Value}); scanErr == nil {
+				row.FinancialReportID = reportOrderMap[row.FinancialReportID]
+				aggregate.FinancialReportItems = append(aggregate.FinancialReportItems, row)
+			}
+		}
+		_ = itemRows.Close()
+	}
+
+	var sourceSnapshotID string
+	var rawEntpJSON string
+	var normalizedExtraJSON string
+	if err := queryRow(`
+SELECT source_snapshot_id, raw_entp_json::text, normalized_extra_json::text
+FROM enterprise_snapshot_extension
+WHERE enterprise_id = $1
+`, enterpriseID).Scan(&sourceSnapshotID, &rawEntpJSON, &normalizedExtraJSON); err == nil {
+		aggregate.SnapshotExtension = &model.EnterpriseSnapshotExtension{
+			SourceSnapshotID:    sourceSnapshotID,
+			RawEntpJSON:         rawEntpJSON,
+			NormalizedExtraJSON: normalizedExtraJSON,
+		}
+	}
 
 	return aggregate, true
 }

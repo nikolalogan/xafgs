@@ -709,6 +709,9 @@ CREATE TABLE IF NOT EXISTS enterprise_financial_report (
   month INT NOT NULL CHECK (month >= 1 AND month <= 12),
   level INT NOT NULL DEFAULT 1 CHECK (level >= 1),
   accounting_firm VARCHAR(256) NOT NULL DEFAULT '',
+  report_name VARCHAR(256) NOT NULL DEFAULT '',
+  report_type VARCHAR(128) NOT NULL DEFAULT '',
+  report_date VARCHAR(64) NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_by BIGINT NOT NULL DEFAULT 0,
@@ -726,6 +729,15 @@ CREATE TABLE IF NOT EXISTS enterprise_financial_report_item (
   created_by BIGINT NOT NULL DEFAULT 0,
   updated_by BIGINT NOT NULL DEFAULT 0,
   UNIQUE (financial_report_id, subject_id)
+);
+
+CREATE TABLE IF NOT EXISTS enterprise_snapshot_extension (
+  enterprise_id BIGINT PRIMARY KEY REFERENCES enterprise(id) ON DELETE CASCADE,
+  source_snapshot_id VARCHAR(128) NOT NULL DEFAULT '',
+  raw_entp_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  normalized_extra_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_enterprise_credit_code_active
@@ -956,6 +968,20 @@ ALTER TABLE enterprise_finance_snapshot
 ADD COLUMN IF NOT EXISTS ebitda_coverage_industry_3_4 NUMERIC(12, 6);
 ALTER TABLE enterprise_financial_report
 ADD COLUMN IF NOT EXISTS level INT NOT NULL DEFAULT 1;
+ALTER TABLE enterprise_financial_report
+ADD COLUMN IF NOT EXISTS report_name VARCHAR(256) NOT NULL DEFAULT '';
+ALTER TABLE enterprise_financial_report
+ADD COLUMN IF NOT EXISTS report_type VARCHAR(128) NOT NULL DEFAULT '';
+ALTER TABLE enterprise_financial_report
+ADD COLUMN IF NOT EXISTS report_date VARCHAR(64) NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS enterprise_snapshot_extension (
+  enterprise_id BIGINT PRIMARY KEY REFERENCES enterprise(id) ON DELETE CASCADE,
+  source_snapshot_id VARCHAR(128) NOT NULL DEFAULT '',
+  raw_entp_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  normalized_extra_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ALTER TABLE enterprise_bond_detail
 ADD COLUMN IF NOT EXISTS guarantor_type VARCHAR(128) NOT NULL DEFAULT '';
 ALTER TABLE enterprise_bond_detail

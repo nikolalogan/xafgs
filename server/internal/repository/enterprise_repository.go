@@ -255,5 +255,7 @@ func normalizeAggregate(aggregate model.EnterpriseAggregate) model.EnterpriseAgg
 	aggregate.FinanceSubjects = copySubjects
 	aggregate.Shareholders = copyShareholders
 	aggregate.FinanceSnapshot = finance
+	aggregate.FinancialReports = append([]model.EnterpriseFinancialReport{}, aggregate.FinancialReports...)
+	aggregate.FinancialReportItems = append([]model.EnterpriseFinancialReportItem{}, aggregate.FinancialReportItems...)
 	return aggregate
 }

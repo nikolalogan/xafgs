@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -154,6 +155,13 @@ type updateEnterpriseRequest struct {
 	Shareholders                      []model.EnterpriseShareholder    `json:"shareholders"`
 }
 
+type importSnapshotRequest struct {
+	SnapshotID string `json:"snapshotId"`
+	Snapshot   any    `json:"snapshot" validate:"required"`
+	DryRun     bool   `json:"dryRun"`
+	Confirm    bool   `json:"confirm"`
+}
+
 type EnterpriseHandler struct {
 	service  service.EnterpriseService
 	registry *apimeta.Registry
@@ -206,6 +214,13 @@ func (handler *EnterpriseHandler) Register(router fiber.Router) {
 		Auth:               "auth",
 		SuccessDataExample: apimeta.ExampleFromType[model.EnterpriseDetailDTO](),
 	}, handler.Update)
+	apimeta.Register(router, handler.registry, apimeta.RouteSpec[importSnapshotRequest]{
+		Method:             fiber.MethodPost,
+		Path:               "/enterprises/import-snapshot",
+		Summary:            "导入企业快照",
+		Auth:               "auth",
+		SuccessDataExample: apimeta.ExampleFromType[model.EnterpriseSnapshotImportResult](),
+	}, handler.ImportSnapshot)
 	apimeta.Register(router, handler.registry, apimeta.RouteSpec[enterpriseIDPathRequest]{
 		Method:             fiber.MethodDelete,
 		Path:               "/enterprises/:enterpriseId",
@@ -213,6 +228,27 @@ func (handler *EnterpriseHandler) Register(router fiber.Router) {
 		Auth:               "auth",
 		SuccessDataExample: apimeta.ExampleFromType[bool](),
 	}, handler.Delete)
+}
+
+func (handler *EnterpriseHandler) ImportSnapshot(c *fiber.Ctx, request *importSnapshotRequest) error {
+	operatorID, ok := c.Locals(middleware.LocalAuthUserID).(int64)
+	if !ok || operatorID <= 0 {
+		return response.Error(c, fiber.StatusUnauthorized, response.CodeUnauthorized, "未找到认证用户")
+	}
+	snapshotBytes, err := json.Marshal(request.Snapshot)
+	if err != nil {
+		return response.Error(c, fiber.StatusBadRequest, response.CodeBadRequest, "snapshot 无法解析")
+	}
+	result, apiError := handler.service.ImportSnapshot(c.UserContext(), model.SnapshotEntpImportRequest{
+		SnapshotID: request.SnapshotID,
+		Snapshot:   snapshotBytes,
+		DryRun:     request.DryRun,
+		Confirm:    request.Confirm,
+	}, operatorID)
+	if apiError != nil {
+		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)
+	}
+	return response.Success(c, fiber.StatusOK, result, "快照导入完成")
 }
 
 func (handler *EnterpriseHandler) GetByShortName(c *fiber.Ctx, request *enterpriseShortNameRequest) error {

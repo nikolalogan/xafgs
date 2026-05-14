@@ -41,6 +41,9 @@ type CreateEnterpriseRequest struct {
 	FinanceSnapshot                   *EnterpriseFinanceSnapshot     `json:"financeSnapshot"`
 	FinanceSubjects                   []EnterpriseFinanceSubject     `json:"financeSubjects"`
 	Shareholders                      []EnterpriseShareholder        `json:"shareholders"`
+	FinancialReports                  []EnterpriseFinancialReport     `json:"financialReports"`
+	FinancialReportItems              []EnterpriseFinancialReportItem `json:"financialReportItems"`
+	SnapshotExtension                 *EnterpriseSnapshotExtension    `json:"snapshotExtension"`
 }
 
 type UpdateEnterpriseRequest = CreateEnterpriseRequest
