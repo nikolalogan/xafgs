@@ -1,11 +1,11 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Card, Empty, InputNumber, Select, Space, Table, Tabs, Typography, Upload, message } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
+import { Alert, Button, Card, Empty, InputNumber, Select, Space, Typography, Upload, message } from 'antd'
 import type { UploadFile } from 'antd/es/upload/interface'
 import { CopyOutlined, DownloadOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { isSingleUploadOversized, MAX_SINGLE_UPLOAD_TEXT } from '@/lib/upload-limit'
+import UniverTableEditor from '@/components/enterprise-projects/UniverTableEditor'
 
 type BoxPolygon = number[][]
 type Point = { x: number; y: number }
@@ -22,6 +22,7 @@ type TableCell = {
   colIndex: number
   rowSpan: number
   colSpan: number
+  text?: string
   confidence: number
   isColumnHeader: boolean
   isProjectedRowHeader: boolean
@@ -419,29 +420,96 @@ const buildInteractiveOverlayStyle = (
   zIndex: options.zIndex || 1,
 })
 
-const cellColumns: ColumnsType<TableCell> = [
-  { title: '行', dataIndex: 'rowIndex', width: 60 },
-  { title: '列', dataIndex: 'colIndex', width: 60 },
-  { title: 'rowSpan', dataIndex: 'rowSpan', width: 90 },
-  { title: 'colSpan', dataIndex: 'colSpan', width: 90 },
-  {
-    title: '表头',
-    dataIndex: 'isColumnHeader',
-    width: 80,
-    render: value => (value ? '是' : '否'),
-  },
-  {
-    title: '投影行头',
-    dataIndex: 'isProjectedRowHeader',
-    width: 100,
-    render: value => (value ? '是' : '否'),
-  },
-  {
-    title: '页坐标',
-    dataIndex: 'pageBBox',
-    render: value => String(Array.isArray(value) ? value.join(', ') : '-'),
-  },
-]
+const escapeHtml = (value: string) => value
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll('\'', '&#39;')
+
+const buildTableHtmlFromCells = (table: ExtractedTable | null): string => {
+  if (!table) {
+    return '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+  }
+  const cells = Array.isArray(table.cells) ? table.cells : []
+  if (!cells.length) {
+    return '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+  }
+  const maxRow = cells.reduce((max, cell) => Math.max(max, cell.rowIndex + Math.max(cell.rowSpan, 1) - 1), 0)
+  const maxCol = cells.reduce((max, cell) => Math.max(max, cell.colIndex + Math.max(cell.colSpan, 1) - 1), 0)
+  const rowCount = Math.max(maxRow + 1, 1)
+  const colCount = Math.max(maxCol + 1, 1)
+  const grid: Array<Array<{ text: string; rowSpan: number; colSpan: number } | null>> = Array.from(
+    { length: rowCount },
+    () => Array.from({ length: colCount }, () => null),
+  )
+  const covered = new Set<string>()
+  const sortedCells = [...cells].sort((left, right) => (
+    left.rowIndex - right.rowIndex || left.colIndex - right.colIndex
+  ))
+  for (const cell of sortedCells) {
+    const rowIndex = Math.max(0, cell.rowIndex)
+    const colIndex = Math.max(0, cell.colIndex)
+    if (rowIndex >= rowCount || colIndex >= colCount) {
+      continue
+    }
+    if (covered.has(`${rowIndex}:${colIndex}`)) {
+      continue
+    }
+    const rowSpan = Math.max(1, Math.min(cell.rowSpan || 1, rowCount - rowIndex))
+    const colSpan = Math.max(1, Math.min(cell.colSpan || 1, colCount - colIndex))
+    grid[rowIndex][colIndex] = { text: String(cell.text || ''), rowSpan, colSpan }
+    for (let rowOffset = 0; rowOffset < rowSpan; rowOffset += 1) {
+      for (let colOffset = 0; colOffset < colSpan; colOffset += 1) {
+        if (rowOffset === 0 && colOffset === 0) {
+          continue
+        }
+        covered.add(`${rowIndex + rowOffset}:${colIndex + colOffset}`)
+      }
+    }
+  }
+  const rowsHtml = grid.map((row, rowIndex) => {
+    const cellsHtml = row.map((value, colIndex) => {
+      if (covered.has(`${rowIndex}:${colIndex}`)) {
+        return ''
+      }
+      if (!value) {
+        return '<td></td>'
+      }
+      const rowSpanAttr = value.rowSpan > 1 ? ` rowspan="${value.rowSpan}"` : ''
+      const colSpanAttr = value.colSpan > 1 ? ` colspan="${value.colSpan}"` : ''
+      return `<td${rowSpanAttr}${colSpanAttr}>${escapeHtml(value.text)}</td>`
+    }).join('')
+    return `<tr>${cellsHtml}</tr>`
+  }).join('')
+  return `<div class="table-wrapper"><table><tbody>${rowsHtml}</tbody></table></div>`
+}
+
+function TableResultViewer({
+  table,
+  tableId,
+  valueHtml,
+  onChange,
+}: {
+  table: ExtractedTable | null
+  tableId: string
+  valueHtml: string
+  onChange: (nextHtml: string) => void
+}) {
+  const [error, setError] = useState<string>('')
+  useEffect(() => {
+    setError('')
+  }, [tableId])
+  if (!table) {
+    return <Empty description="暂无可渲染表格" />
+  }
+  return (
+    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+      {error ? <Alert type="warning" showIcon message={error} /> : null}
+      <UniverTableEditor valueHtml={valueHtml} onChange={onChange} onError={setError} />
+    </Space>
+  )
+}
 
 function PagePreview({ page, selectedTableId }: { page: ExtractedPage; selectedTableId: string }) {
   return (
@@ -766,6 +834,7 @@ export default function TableExtractDemoPage() {
   const [selectedPageNo, setSelectedPageNo] = useState<number | null>(null)
   const [selectedTableId, setSelectedTableId] = useState<string>('')
   const [manualReview, setManualReview] = useState<ManualReviewState | null>(null)
+  const [tableDraftById, setTableDraftById] = useState<Record<string, string>>({})
   const [reviewSubmitting, setReviewSubmitting] = useState(false)
 
   const canSubmit = useMemo(() => !!uploadFile?.originFileObj && !submitting, [uploadFile, submitting])
@@ -783,12 +852,17 @@ export default function TableExtractDemoPage() {
     }
     return manualReview.table
   }, [manualReview, selectedTable])
-  const inspectedRaw = useMemo(() => {
-    if (!selectedTable || manualReview?.sourceTableId !== selectedTable.tableId) {
-      return result
+  const currentTableId = inspectedTable?.tableId || ''
+  const currentTableHtml = useMemo(() => {
+    if (!currentTableId) {
+      return buildTableHtmlFromCells(null)
     }
-    return manualReview.response
-  }, [manualReview, result, selectedTable])
+    return tableDraftById[currentTableId] || buildTableHtmlFromCells(inspectedTable)
+  }, [currentTableId, inspectedTable, tableDraftById])
+  const pages = Array.isArray(result?.pages) ? result.pages : []
+  const pageTables = Array.isArray(selectedPage?.tables) ? selectedPage.tables : []
+  const showPageSelector = pages.length > 1
+  const showTableSelector = pageTables.length > 1
 
   const resetState = () => {
     setUploadFile(null)
@@ -798,6 +872,7 @@ export default function TableExtractDemoPage() {
     setSelectedTableId('')
     setParams(PARAM_DEFAULTS)
     setManualReview(null)
+    setTableDraftById({})
   }
 
   const runExtract = async () => {
@@ -835,6 +910,7 @@ export default function TableExtractDemoPage() {
         throw new Error(raw.detail || `请求失败(${response.status})`)
       }
       setManualReview(null)
+      setTableDraftById({})
       setResult(raw)
       const firstPage = raw.pages[0] || null
       setSelectedPageNo(firstPage?.pageNo || null)
@@ -934,13 +1010,6 @@ export default function TableExtractDemoPage() {
   return (
     <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       {contextHolder}
-      <Alert
-        type="info"
-        showIcon
-        title="表格提取测试页"
-        description="链路为整页 PDF/图片 -> DocLayout-YOLO 表格定位 -> 矩形矫正/回退 -> Table Transformer 结构识别。下方按阶段拆分为表格定位、矩形矫正、表格裁剪三个主视图。"
-      />
-
       <Card title="输入参数" extra={<Button icon={<ReloadOutlined />} onClick={resetState}>重置</Button>}>
         <Space wrap size={16} style={{ width: '100%' }} align="end">
           <Upload beforeUpload={() => false} maxCount={1} fileList={uploadFile ? [uploadFile] : []} onChange={({ fileList }) => setUploadFile(fileList[0] || null)}>
@@ -1036,104 +1105,61 @@ export default function TableExtractDemoPage() {
         {!result ? (
           <Empty description="请先上传文件并执行表格提取" />
         ) : (
-          <Tabs
-            defaultActiveKey="locate"
-            items={[
-              {
-                key: 'locate',
-                label: '1. 表格定位',
-                children: (
-                  <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-                    <Space wrap size={12}>
-                      <Typography.Text>provider: {result.provider}</Typography.Text>
-                      <Typography.Text>pages: {result.pageCount}</Typography.Text>
-                      <Typography.Text>tables: {result.tableCount}</Typography.Text>
-                      <Typography.Text>duration: {result.durationMs}ms</Typography.Text>
-                    </Space>
-
-                    <Space wrap size={12}>
-                      <Select
-                        value={selectedPage?.pageNo}
-                        placeholder="选择页面"
-                        style={{ width: 180 }}
-                        options={(Array.isArray(result?.pages) ? result.pages : []).map(page => ({ label: `第 ${page.pageNo} 页 (${page.tableCount} tables)`, value: page.pageNo }))}
-                        onChange={value => {
-                          const pages = Array.isArray(result?.pages) ? result.pages : []
-                          const nextPage = pages.find(page => page.pageNo === value) || null
-                          setSelectedPageNo(value)
-                          setSelectedTableId(nextPage?.tables[0]?.tableId || '')
-                        }}
-                      />
-                      <Select
-                        value={selectedTable?.tableId}
-                        placeholder="选择表格"
-                        style={{ width: 220 }}
-                        options={(selectedPage?.tables || []).map(table => ({
-                          label: `T${table.tableIndex} ${table.tableType} ${table.rowCount}x${table.colCount}`,
-                          value: table.tableId,
-                        }))}
-                        onChange={value => setSelectedTableId(value)}
-                      />
-                    </Space>
-
-                    {selectedPage ? (
-                      <Card size="small" title={`整页预览 · 第 ${selectedPage.pageNo} 页`}>
-                        <PagePreview page={selectedPage} selectedTableId={selectedTable?.tableId || ''} />
-                      </Card>
-                    ) : (
-                      <Empty description="当前没有可预览页面" />
-                    )}
-                  </Space>
-                ),
-              },
-              {
-                key: 'rectify',
-                label: '2. 矩形矫正',
-                children: (
-                  <Alert
-                    type="info"
-                    showIcon
-                    message="已移除旧版手动四点/梯形校正"
-                    description="当前仅保留与 tatr 一致的自动 deskew 校正链路（阈值与实现一致），不再提供旧版页面内手动梯形矫正。"
-                  />
-                ),
-              },
-              {
-                key: 'crop',
-                label: '3. 表格裁剪',
-                children: inspectedTable ? (
-                  <CropPreview table={inspectedTable} />
+          <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+            <Space wrap size={12}>
+              <Typography.Text>provider: {result.provider}</Typography.Text>
+              <Typography.Text>pages: {result.pageCount}</Typography.Text>
+              <Typography.Text>tables: {result.tableCount}</Typography.Text>
+              <Typography.Text>duration: {result.durationMs}ms</Typography.Text>
+              {showPageSelector ? (
+                <Select
+                  value={selectedPage?.pageNo}
+                  placeholder="选择页面"
+                  style={{ width: 180 }}
+                  options={pages.map(page => ({ label: `第 ${page.pageNo} 页 (${page.tableCount} tables)`, value: page.pageNo }))}
+                  onChange={value => {
+                    const nextPage = pages.find(page => page.pageNo === value) || null
+                    setSelectedPageNo(value)
+                    setSelectedTableId(nextPage?.tables[0]?.tableId || '')
+                  }}
+                />
+              ) : null}
+              {showTableSelector ? (
+                <Select
+                  value={selectedTable?.tableId}
+                  placeholder="选择表格"
+                  style={{ width: 220 }}
+                  options={pageTables.map(table => ({
+                    label: `T${table.tableIndex} ${table.tableType} ${table.rowCount}x${table.colCount}`,
+                    value: table.tableId,
+                  }))}
+                  onChange={value => setSelectedTableId(value)}
+                />
+              ) : null}
+            </Space>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(420px, 1fr)', gap: 16, alignItems: 'start' }}>
+              <Card size="small" title={selectedPage ? `整页预览 · 第 ${selectedPage.pageNo} 页` : '整页预览'}>
+                {selectedPage ? (
+                  <PagePreview page={selectedPage} selectedTableId={selectedTable?.tableId || ''} />
                 ) : (
-                  <Empty description={selectedPage ? '当前页面未检测到表格' : '当前没有可预览表格'} />
-                ),
-              },
-              {
-                key: 'cells',
-                label: 'Cells',
-                children: inspectedTable ? (
-                  <Table<TableCell>
-                    rowKey={(record, index) => `${record.rowIndex}-${record.colIndex}-${index}`}
-                    columns={cellColumns}
-                    dataSource={inspectedTable.cells}
-                    pagination={{ pageSize: 10 }}
-                    size="small"
-                    scroll={{ x: 1000 }}
-                  />
-                ) : (
-                  <Empty description="当前没有表格单元格结果" />
-                ),
-              },
-              {
-                key: 'raw',
-                label: '原始响应',
-                children: (
-                  <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflow: 'auto', fontSize: 12 }}>
-                    {pretty(inspectedRaw)}
-                  </pre>
-                ),
-              },
-            ]}
-          />
+                  <Empty description="当前没有可预览页面" />
+                )}
+              </Card>
+              <Card size="small" title={inspectedTable ? `表格视图 · T${inspectedTable.tableIndex}` : '表格视图'}>
+                <TableResultViewer
+                  table={inspectedTable}
+                  tableId={currentTableId}
+                  valueHtml={currentTableHtml}
+                  onChange={(nextHtml) => {
+                    if (!currentTableId) {
+                      return
+                    }
+                    setTableDraftById(previous => ({ ...previous, [currentTableId]: nextHtml }))
+                  }}
+                />
+              </Card>
+            </div>
+          </Space>
         )}
       </Card>
     </Space>
