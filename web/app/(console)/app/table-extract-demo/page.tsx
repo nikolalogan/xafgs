@@ -683,6 +683,16 @@ const buildInteractiveOverlayStyle = (
   zIndex: options.zIndex || 1,
 })
 
+const getCellKey = (cell: TableCell, index: number) => `${cell.rowIndex}-${cell.colIndex}-${index}`
+
+const isValidBBox = (bbox: number[]) => (
+  Array.isArray(bbox)
+  && bbox.length === 4
+  && bbox.every(value => Number.isFinite(value))
+  && bbox[2] > bbox[0]
+  && bbox[3] > bbox[1]
+)
+
 const escapeHtml = (value: string) => value
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
@@ -692,11 +702,11 @@ const escapeHtml = (value: string) => value
 
 const buildTableHtmlFromCells = (table: ExtractedTable | null): string => {
   if (!table) {
-    return '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+    return ''
   }
   const cells = Array.isArray(table.cells) ? table.cells : []
   if (!cells.length) {
-    return '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+    return ''
   }
   const maxRow = cells.reduce((max, cell) => Math.max(max, cell.rowIndex + Math.max(cell.rowSpan, 1) - 1), 0)
   const maxCol = cells.reduce((max, cell) => Math.max(max, cell.colIndex + Math.max(cell.colSpan, 1) - 1), 0)
@@ -766,6 +776,9 @@ function TableResultViewer({
   if (!table) {
     return <Empty description="暂无可渲染表格" />
   }
+  if (!Array.isArray(table.cells) || table.cells.length === 0) {
+    return <Empty description="暂无可渲染表格" />
+  }
   return (
     <Space orientation="vertical" size={8} style={{ width: '100%' }}>
       {error ? <Alert type="warning" showIcon message={error} /> : null}
@@ -774,7 +787,15 @@ function TableResultViewer({
   )
 }
 
-function PagePreview({ page, selectedTableId }: { page: ExtractedPage; selectedTableId: string }) {
+function PagePreview({
+  page,
+  selectedTableId,
+  onSelectTable,
+}: {
+  page: ExtractedPage
+  selectedTableId: string
+  onSelectTable: (tableId: string) => void
+}) {
   const detections = Array.isArray(page.detections) ? page.detections : []
   const tables = Array.isArray(page.tables) ? page.tables : []
   return (
@@ -785,15 +806,38 @@ function PagePreview({ page, selectedTableId }: { page: ExtractedPage; selectedT
         <div style={{ padding: 24 }}><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前页面无预览图" /></div>
       )}
       {detections.map((item, index) => (
-        <div key={`${page.pageNo}-det-${index}`} style={buildOverlayStyle(item.bbox, page.width, page.height, '#fa8c16', 2)}>
+        <div key={`${page.pageNo}-det-${index}`} style={buildOverlayStyle(item.bbox, page.width, page.height, '#fa8c16', 1)}>
           <span style={{ position: 'absolute', top: -24, left: 0, background: '#fa8c16', color: '#fff', fontSize: 12, padding: '0 6px', borderRadius: 4 }}>
             T{index + 1}
           </span>
         </div>
       ))}
-      {tables.filter(table => table.tableId === selectedTableId).map(table => (
-        <div key={table.tableId} style={buildOverlayStyle(table.bbox, page.width, page.height, '#1677ff', 3)} />
-      ))}
+      {tables.map((table) => {
+        if (!isValidBBox(table.bbox)) {
+          return null
+        }
+        const isSelected = table.tableId === selectedTableId
+        const detection = detections[table.tableIndex - 1]
+        const label = Number.isFinite(detection?.score) ? `T${table.tableIndex} (${(detection!.score! * 100).toFixed(1)}%)` : `T${table.tableIndex}`
+        return (
+          <div
+            key={table.tableId}
+            style={buildInteractiveOverlayStyle(table.bbox, page.width, page.height, {
+              borderColor: isSelected ? '#1677ff' : 'rgba(22, 119, 255, 0.55)',
+              backgroundColor: isSelected ? 'rgba(22, 119, 255, 0.18)' : 'rgba(22, 119, 255, 0.06)',
+              lineWidth: isSelected ? 3 : 1,
+              zIndex: isSelected ? 4 : 2,
+            })}
+            onClick={() => onSelectTable(table.tableId)}
+            role="button"
+            aria-label={`选择表格 ${table.tableIndex}`}
+          >
+            <span style={{ position: 'absolute', top: -24, left: 0, background: isSelected ? '#1677ff' : 'rgba(22, 119, 255, 0.75)', color: '#fff', fontSize: 12, padding: '0 6px', borderRadius: 4 }}>
+              {label}
+            </span>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -1019,21 +1063,31 @@ function TableRectifyPreview({
   )
 }
 
-function CropPreview({ table }: { table: ExtractedTable }) {
-  const [hoveredCellKey, setHoveredCellKey] = useState<string>('')
+function CropPreview({
+  table,
+  activeCellKey,
+  onActiveCellKeyChange,
+}: {
+  table: ExtractedTable
+  activeCellKey: string
+  onActiveCellKeyChange: (cellKey: string) => void
+}) {
   const cells = Array.isArray(table.cells) ? table.cells : []
-  const hoveredCell = cells.find((cell, index) => `${cell.rowIndex}-${cell.colIndex}-${index}` === hoveredCellKey) || null
+  const hoveredCell = cells.find((cell, index) => getCellKey(cell, index) === activeCellKey) || null
 
   return (
     <Space direction="vertical" size={12} style={{ width: '100%' }}>
       <div
         style={{ position: 'relative', width: '100%', border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden' }}
-        onMouseLeave={() => setHoveredCellKey('')}
+        onMouseLeave={() => onActiveCellKeyChange('')}
       >
         <img src={table.tableImageDataUrl} alt={table.tableId} style={{ display: 'block', width: '100%' }} />
         {cells.map((cell, index) => {
-          const cellKey = `${cell.rowIndex}-${cell.colIndex}-${index}`
-          const isHovered = hoveredCellKey === cellKey
+          if (!isValidBBox(cell.cropBBox)) {
+            return null
+          }
+          const cellKey = getCellKey(cell, index)
+          const isHovered = activeCellKey === cellKey
           const isMerged = cell.rowSpan > 1 || cell.colSpan > 1
           const accent = isMerged ? '#ff7875' : '#52c41a'
 
@@ -1046,7 +1100,8 @@ function CropPreview({ table }: { table: ExtractedTable }) {
                 lineWidth: isHovered ? 2 : 1,
                 zIndex: isHovered ? 2 : 1,
               })}
-              onMouseEnter={() => setHoveredCellKey(cellKey)}
+              onMouseEnter={() => onActiveCellKeyChange(cellKey)}
+              onClick={() => onActiveCellKeyChange(cellKey)}
             >
               {isHovered ? (
                 <span
@@ -1085,7 +1140,7 @@ function CropPreview({ table }: { table: ExtractedTable }) {
         ) : (
           <Space wrap size={12}>
             <Typography.Text strong>预览说明</Typography.Text>
-            <Typography.Text>移动到单元格上查看行列位置和跨度信息</Typography.Text>
+            <Typography.Text>移动或点击单元格查看行列位置和跨度信息</Typography.Text>
             <Typography.Text type="secondary">红色表示跨行或跨列单元格</Typography.Text>
           </Space>
         )}
@@ -1103,6 +1158,7 @@ export default function TableExtractDemoPage() {
   const [result, setResult] = useState<TableExtractResponse | null>(null)
   const [selectedPageNo, setSelectedPageNo] = useState<number | null>(null)
   const [selectedTableId, setSelectedTableId] = useState<string>('')
+  const [activeCellKey, setActiveCellKey] = useState<string>('')
   const [manualReview, setManualReview] = useState<ManualReviewState | null>(null)
   const [tableDraftById, setTableDraftById] = useState<Record<string, string>>({})
   const [reviewSubmitting, setReviewSubmitting] = useState(false)
@@ -1134,15 +1190,40 @@ export default function TableExtractDemoPage() {
     if (inspectedCells.length > 0) {
       return buildTableHtmlFromCells(inspectedTable)
     }
-    if (inspectedTable?.tableHtml) {
-      return inspectedTable.tableHtml
-    }
-    return result?.flatHtml || buildTableHtmlFromCells(inspectedTable)
-  }, [currentTableId, inspectedTable, result?.flatHtml, tableDraftById])
+    return ''
+  }, [currentTableId, inspectedTable, tableDraftById])
   const pages = Array.isArray(result?.pages) ? result.pages : []
   const pageTables = Array.isArray(selectedPage?.tables) ? selectedPage.tables : []
   const showPageSelector = pages.length > 1
   const showTableSelector = pageTables.length > 1
+
+  useEffect(() => {
+    if (!selectedPage) {
+      return
+    }
+    const tables = Array.isArray(selectedPage.tables) ? selectedPage.tables : []
+    if (tables.length === 0) {
+      if (selectedTableId) {
+        setSelectedTableId('')
+      }
+      return
+    }
+    const matched = tables.some(table => table.tableId === selectedTableId)
+    if (!matched) {
+      setSelectedTableId(tables[0].tableId)
+    }
+  }, [selectedPage, selectedTableId])
+
+  useEffect(() => {
+    const inspectedCells = Array.isArray(inspectedTable?.cells) ? inspectedTable.cells : []
+    if (!activeCellKey) {
+      return
+    }
+    const activeExists = inspectedCells.some((cell, index) => getCellKey(cell, index) === activeCellKey)
+    if (!activeExists) {
+      setActiveCellKey('')
+    }
+  }, [activeCellKey, inspectedTable])
 
   const resetState = () => {
     setUploadFile(null)
@@ -1153,6 +1234,7 @@ export default function TableExtractDemoPage() {
     setParams(PARAM_DEFAULTS)
     setManualReview(null)
     setTableDraftById({})
+    setActiveCellKey('')
   }
 
   const runExtract = async () => {
@@ -1203,6 +1285,7 @@ export default function TableExtractDemoPage() {
       const firstPage = normalized.pages[0] || null
       setSelectedPageNo(firstPage?.pageNo || null)
       setSelectedTableId(firstPage?.tables[0]?.tableId || '')
+      setActiveCellKey('')
       msgApi.success(`提取完成，共 ${normalized.tableCount} 张表`)
     } catch (error) {
       msgApi.error(error instanceof Error ? error.message : '提取失败')
@@ -1417,6 +1500,7 @@ export default function TableExtractDemoPage() {
                     const nextPage = pages.find(page => page.pageNo === value) || null
                     setSelectedPageNo(value)
                     setSelectedTableId(nextPage?.tables[0]?.tableId || '')
+                    setActiveCellKey('')
                   }}
                 />
               ) : null}
@@ -1429,31 +1513,54 @@ export default function TableExtractDemoPage() {
                     label: `T${table.tableIndex} ${table.tableType} ${table.rowCount}x${table.colCount}`,
                     value: table.tableId,
                   }))}
-                  onChange={value => setSelectedTableId(value)}
+                  onChange={value => {
+                    setSelectedTableId(value)
+                    setActiveCellKey('')
+                  }}
                 />
               ) : null}
             </Space>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(420px, 1fr)', gap: 16, alignItems: 'start' }}>
               <Card size="small" title={selectedPage ? `整页预览 · 第 ${selectedPage.pageNo} 页` : '整页预览'}>
                 {selectedPage ? (
-                  <PagePreview page={selectedPage} selectedTableId={selectedTable?.tableId || ''} />
+                  <PagePreview
+                    page={selectedPage}
+                    selectedTableId={selectedTable?.tableId || ''}
+                    onSelectTable={(tableId) => {
+                      setSelectedTableId(tableId)
+                      setActiveCellKey('')
+                    }}
+                  />
                 ) : (
                   <Empty description="当前没有可预览页面" />
                 )}
               </Card>
-              <Card size="small" title={inspectedTable ? `表格视图 · T${inspectedTable.tableIndex}` : '表格视图'}>
-                <TableResultViewer
-                  table={inspectedTable}
-                  tableId={currentTableId}
-                  valueHtml={currentTableHtml}
-                  onChange={(nextHtml) => {
-                    if (!currentTableId) {
-                      return
-                    }
-                    setTableDraftById(previous => ({ ...previous, [currentTableId]: nextHtml }))
-                  }}
-                />
-              </Card>
+              <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                <Card size="small" title={inspectedTable ? `表格视图 · T${inspectedTable.tableIndex}` : '表格视图'}>
+                  <TableResultViewer
+                    table={inspectedTable}
+                    tableId={currentTableId}
+                    valueHtml={currentTableHtml}
+                    onChange={(nextHtml) => {
+                      if (!currentTableId) {
+                        return
+                      }
+                      setTableDraftById(previous => ({ ...previous, [currentTableId]: nextHtml }))
+                    }}
+                  />
+                </Card>
+                <Card size="small" title={inspectedTable ? `单元格预览 · T${inspectedTable.tableIndex}` : '单元格预览'}>
+                  {inspectedTable && Array.isArray(inspectedTable.cells) && inspectedTable.cells.length > 0 ? (
+                    <CropPreview
+                      table={inspectedTable}
+                      activeCellKey={activeCellKey}
+                      onActiveCellKeyChange={setActiveCellKey}
+                    />
+                  ) : (
+                    <Empty description="当前表格无 cells，无法展示单元格联动预览" />
+                  )}
+                </Card>
+              </Space>
             </div>
           </Space>
         )}
