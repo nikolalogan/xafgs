@@ -58,6 +58,9 @@ func (repository *systemConfigRepository) Upsert(config model.SystemConfig) (mod
 	existing.LocalEmbeddingAPIKey = config.LocalEmbeddingAPIKey
 	existing.LocalEmbeddingModel = config.LocalEmbeddingModel
 	existing.LocalEmbeddingDimension = config.LocalEmbeddingDimension
+	existing.RemoteOCRBaseURL = config.RemoteOCRBaseURL
+	existing.RemoteOCRTableBaseURL = config.RemoteOCRTableBaseURL
+	existing.RemoteDoclingBaseURL = config.RemoteDoclingBaseURL
 	existing.UpdatedAt = now
 	existing.UpdatedBy = config.UpdatedBy
 	repository.config = &existing

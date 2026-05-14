@@ -26,7 +26,6 @@ services:
         APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
         PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
         PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-        OCR_WHEELS_ONLY: "${OCR_WHEELS_ONLY:-0}"
         GOPROXY: "${GOPROXY:-https://goproxy.cn,direct}"
         GOSUMDB: "${GOSUMDB:-sum.golang.google.cn}"
     image: sxfgssever-backend-prod:latest
@@ -36,7 +35,6 @@ services:
       APP_NAME: "sxfgssever-api"
       API_TOKEN: "dev-token"
       FILE_STORAGE_ROOT: "/data/uploads"
-      OCR_SERVICE_BASE_URL: "http://ocr-service:8090"
       GOPROXY: "https://goproxy.cn,direct"
       GOSUMDB: "sum.golang.google.cn"
       DATABASE_URL: "postgres://sxfgs:Jbb%401234@192.168.109.4:5432/sxfgs?sslmode=disable"
@@ -47,140 +45,6 @@ services:
     depends_on:
       redis:
         condition: service_started
-      ocr-service:
-        condition: service_started
-    restart: unless-stopped
-
-  ocr-service:
-    build:
-      context: ./ocr-service
-      dockerfile: Dockerfile
-      args:
-        BASE_REGISTRY: "${BASE_REGISTRY:-docker.1panel.live}"
-        APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
-        APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
-        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-        OCR_WHEELS_ONLY: "${OCR_WHEELS_ONLY:-1}"
-        OCR_PPSTRUCTURE_PRELOAD: "${OCR_PPSTRUCTURE_PRELOAD:-1}"
-        OCR_PADDLE_PACKAGE: "${OCR_PADDLE_PACKAGE:-paddlepaddle-gpu==3.2.0}"
-        OCR_PADDLE_EXTRA_INDEX_URL: "${OCR_PADDLE_EXTRA_INDEX_URL:-https://www.paddlepaddle.org.cn/packages/stable/cu118/}"
-        OCR_PADDLE_EXPECT_VERSION: "${OCR_PADDLE_EXPECT_VERSION:-3.2.0}"
-    image: sxfgssever-ocr-service-prod:latest
-    gpus: all
-    environment:
-      TZ: "Asia/Shanghai"
-      PADDLEX_HOME: "/root/.paddlex"
-      PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: "False"
-      OCR_V3_PIPELINE: "${OCR_V3_PIPELINE:-PP-StructureV3}"
-      OCR_V3_DEVICE: "${OCR_V3_DEVICE:-gpu:0}"
-      OCR_PPSTRUCTURE_ENABLE_TABLES: "${OCR_PPSTRUCTURE_ENABLE_TABLES:-1}"
-      NVIDIA_VISIBLE_DEVICES: "all"
-      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
-      OMP_NUM_THREADS: "1"
-      MKL_NUM_THREADS: "1"
-      OPENBLAS_NUM_THREADS: "1"
-      FLAGS_use_mkldnn: "0"
-      FLAGS_enable_pir_api: "0"
-      FLAGS_enable_pir_in_executor: "0"
-      CPU_NUM: "1"
-    volumes:
-      - ./ocr-service/model_cache:/root/.paddlex
-    command: >
-      sh -c "paddlex --install serving
-      && paddlex --serve --pipeline $${OCR_V3_PIPELINE} --host 0.0.0.0 --port 8090 --device $${OCR_V3_DEVICE}"
-    expose:
-      - "8090"
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8090)); s.close(); sys.exit(0)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-    restart: unless-stopped
-
-  ocr-table-service:
-    build:
-      context: ./ocr-table-service
-      dockerfile: Dockerfile
-      args:
-        BASE_REGISTRY: "${OCR_BASE_REGISTRY:-docker.1panel.live}"
-        APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
-        APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
-        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-        PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
-        PIP_RETRIES: "${PIP_RETRIES:-10}"
-        OCR_TABLE_WHEELS_ONLY: "${OCR_TABLE_WHEELS_ONLY:-1}"
-    image: sxfgssever-ocr-table-service-prod:latest
-    gpus: all
-    environment:
-      TZ: "Asia/Shanghai"
-      NVIDIA_VISIBLE_DEVICES: "all"
-      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
-      OMP_NUM_THREADS: "1"
-      MKL_NUM_THREADS: "1"
-      OPENBLAS_NUM_THREADS: "1"
-      FLAGS_use_mkldnn: "0"
-      FLAGS_enable_pir_api: "0"
-      FLAGS_enable_pir_in_executor: "0"
-      CPU_NUM: "1"
-      HF_HOME: "/app/model_cache/hf"
-      HF_HUB_CACHE: "/app/model_cache/hf/hub"
-      TRANSFORMERS_CACHE: "/app/model_cache/hf"
-      TABLE_EXTRACT_MODEL_CACHE_DIR: "/app/model_cache/table_extract"
-      TABLE_EXTRACT_LAYOUT_MODEL: "${TABLE_EXTRACT_LAYOUT_MODEL:-juliozhao/DocLayout-YOLO-DocStructBench}"
-      TABLE_EXTRACT_STRUCTURE_MODEL: "${TABLE_EXTRACT_STRUCTURE_MODEL:-microsoft/table-transformer-structure-recognition-v1.1-pub}"
-    volumes:
-      - ./ocr-table-service/model_cache:/app/model_cache
-    command: >
-      sh -c "python /app/scripts/check_startup.py
-      && uvicorn app.service:app --host 0.0.0.0 --port 8090"
-    expose:
-      - "8090"
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8090)); s.close(); sys.exit(0)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-    restart: unless-stopped
-
-  docling-service:
-    build:
-      context: ./docling-service
-      dockerfile: Dockerfile
-      args:
-        BASE_REGISTRY: "${BASE_REGISTRY:-docker.1panel.live}"
-        APT_MIRROR: "${APT_MIRROR:-https://mirrors.aliyun.com/debian}"
-        APT_SECURITY_MIRROR: "${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
-        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
-        PIP_DEFAULT_TIMEOUT: "${PIP_DEFAULT_TIMEOUT:-600}"
-        PIP_RETRIES: "${PIP_RETRIES:-10}"
-        DOCLING_WHEELS_ONLY: "${DOCLING_WHEELS_ONLY:-1}"
-    image: sxfgssever-docling-service-prod:latest
-    environment:
-      TZ: "Asia/Shanghai"
-      DOCLING_ARTIFACTS_PATH: "/opt/docling-models"
-      DOCLING_SERVE_ARTIFACTS_PATH: "/opt/docling-models/serve_artifacts"
-      DOCLING_OCR_PROVIDER: "${DOCLING_OCR_PROVIDER:-none}"
-      DOCLING_GLM_KSERVE_URL: "http://ocr-service:8090"
-      DOCLING_GLM_KSERVE_MODEL: "glm-ocr"
-      DOCLING_IMAGE_OCR_TIMEOUT_SECONDS: "${DOCLING_IMAGE_OCR_TIMEOUT_SECONDS:-450}"
-      OCR_SERVICE_BASE_URL: "http://ocr-service:8090"
-      HF_HOME: "/opt/docling-models/hf"
-      HF_HUB_CACHE: "/opt/docling-models/hf/hub"
-      HF_ENDPOINT: "${HF_ENDPOINT:-https://huggingface.co}"
-      HF_HUB_OFFLINE: "1"
-      TRANSFORMERS_OFFLINE: "1"
-    expose:
-      - "8091"
-    volumes:
-      - ./docling-service/model_cache:/opt/docling-models
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8091)); s.close(); sys.exit(0)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 12
     restart: unless-stopped
 
   gateway:
@@ -197,10 +61,6 @@ services:
         condition: service_started
       backend:
         condition: service_started
-      docling-service:
-        condition: service_healthy
-      ocr-table-service:
-        condition: service_healthy
     restart: unless-stopped
 
   redis:

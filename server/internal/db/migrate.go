@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS system_config (
   local_embedding_api_key TEXT NOT NULL DEFAULT '',
   local_embedding_model VARCHAR(256) NOT NULL DEFAULT '',
   local_embedding_dimension INT NOT NULL DEFAULT 0,
+  remote_ocr_base_url TEXT NOT NULL DEFAULT '',
+  remote_ocr_table_base_url TEXT NOT NULL DEFAULT '',
+  remote_docling_base_url TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_by BIGINT NOT NULL DEFAULT 0,
@@ -1008,14 +1011,26 @@ ALTER TABLE system_config
 ADD COLUMN IF NOT EXISTS local_embedding_model VARCHAR(256) NOT NULL DEFAULT '';
 ALTER TABLE system_config
 ADD COLUMN IF NOT EXISTS local_embedding_dimension INT NOT NULL DEFAULT 0;
+ALTER TABLE system_config
+ADD COLUMN IF NOT EXISTS remote_ocr_base_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE system_config
+ADD COLUMN IF NOT EXISTS remote_ocr_table_base_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE system_config
+ADD COLUMN IF NOT EXISTS remote_docling_base_url TEXT NOT NULL DEFAULT '';
 UPDATE system_config SET local_embedding_base_url = '' WHERE local_embedding_base_url IS NULL;
 UPDATE system_config SET local_embedding_api_key = '' WHERE local_embedding_api_key IS NULL;
 UPDATE system_config SET local_embedding_model = '' WHERE local_embedding_model IS NULL;
 UPDATE system_config SET local_embedding_dimension = 0 WHERE local_embedding_dimension IS NULL OR local_embedding_dimension < 0;
+UPDATE system_config SET remote_ocr_base_url = '' WHERE remote_ocr_base_url IS NULL;
+UPDATE system_config SET remote_ocr_table_base_url = '' WHERE remote_ocr_table_base_url IS NULL;
+UPDATE system_config SET remote_docling_base_url = '' WHERE remote_docling_base_url IS NULL;
 ALTER TABLE system_config ALTER COLUMN local_embedding_base_url SET DEFAULT '';
 ALTER TABLE system_config ALTER COLUMN local_embedding_api_key SET DEFAULT '';
 ALTER TABLE system_config ALTER COLUMN local_embedding_model SET DEFAULT '';
 ALTER TABLE system_config ALTER COLUMN local_embedding_dimension SET DEFAULT 0;
+ALTER TABLE system_config ALTER COLUMN remote_ocr_base_url SET DEFAULT '';
+ALTER TABLE system_config ALTER COLUMN remote_ocr_table_base_url SET DEFAULT '';
+ALTER TABLE system_config ALTER COLUMN remote_docling_base_url SET DEFAULT '';
 `); err != nil {
 		return fmt.Errorf("migrate system_config code_default_model: %w", err)
 	}
@@ -1102,6 +1117,7 @@ ADD COLUMN IF NOT EXISTS manual_category VARCHAR(128) NOT NULL DEFAULT '';
 INSERT INTO system_config (
   id, models_json, default_model, code_default_model, search_service,
   local_embedding_base_url, local_embedding_api_key, local_embedding_model, local_embedding_dimension,
+  remote_ocr_base_url, remote_ocr_table_base_url, remote_docling_base_url,
   created_at, updated_at, created_by, updated_by
 )
 VALUES (
@@ -1114,6 +1130,9 @@ VALUES (
   '',
   '',
   0,
+  '',
+  '',
+  '',
   NOW(),
   NOW(),
   1,

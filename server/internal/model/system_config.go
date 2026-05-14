@@ -10,37 +10,46 @@ type SystemModelOption struct {
 
 type SystemConfig struct {
 	BaseEntity
-	Models                  []SystemModelOption `json:"models"`
-	DefaultModel            string              `json:"defaultModel"`
-	CodeDefaultModel        string              `json:"codeDefaultModel"`
-	SearchService           string              `json:"searchService"`
-	LocalEmbeddingBaseURL   string              `json:"localEmbeddingBaseUrl"`
-	LocalEmbeddingAPIKey    string              `json:"localEmbeddingApiKey"`
-	LocalEmbeddingModel     string              `json:"localEmbeddingModel"`
-	LocalEmbeddingDimension int                 `json:"localEmbeddingDimension"`
+	Models                 []SystemModelOption `json:"models"`
+	DefaultModel           string              `json:"defaultModel"`
+	CodeDefaultModel       string              `json:"codeDefaultModel"`
+	SearchService          string              `json:"searchService"`
+	LocalEmbeddingBaseURL  string              `json:"localEmbeddingBaseUrl"`
+	LocalEmbeddingAPIKey   string              `json:"localEmbeddingApiKey"`
+	LocalEmbeddingModel    string              `json:"localEmbeddingModel"`
+	LocalEmbeddingDimension int                `json:"localEmbeddingDimension"`
+	RemoteOCRBaseURL       string              `json:"remoteOcrBaseUrl"`
+	RemoteOCRTableBaseURL  string              `json:"remoteOcrTableBaseUrl"`
+	RemoteDoclingBaseURL   string              `json:"remoteDoclingBaseUrl"`
 }
 
 type SystemConfigDTO struct {
-	Models                  []SystemModelOption `json:"models"`
-	DefaultModel            string              `json:"defaultModel"`
-	CodeDefaultModel        string              `json:"codeDefaultModel"`
-	SearchService           string              `json:"searchService"`
-	LocalEmbeddingBaseURL   string              `json:"localEmbeddingBaseUrl"`
-	LocalEmbeddingAPIKey    string              `json:"localEmbeddingApiKey"`
-	LocalEmbeddingModel     string              `json:"localEmbeddingModel"`
-	LocalEmbeddingDimension int                 `json:"localEmbeddingDimension"`
-	UpdatedAt               time.Time           `json:"updatedAt"`
+	Models                 []SystemModelOption `json:"models"`
+	DefaultModel           string              `json:"defaultModel"`
+	CodeDefaultModel       string              `json:"codeDefaultModel"`
+	SearchService          string              `json:"searchService"`
+	LocalEmbeddingBaseURL  string              `json:"localEmbeddingBaseUrl"`
+	LocalEmbeddingAPIKey   string              `json:"localEmbeddingApiKey"`
+	LocalEmbeddingModel    string              `json:"localEmbeddingModel"`
+	LocalEmbeddingDimension int                `json:"localEmbeddingDimension"`
+	RemoteOCRBaseURL       string              `json:"remoteOcrBaseUrl"`
+	RemoteOCRTableBaseURL  string              `json:"remoteOcrTableBaseUrl"`
+	RemoteDoclingBaseURL   string              `json:"remoteDoclingBaseUrl"`
+	UpdatedAt              time.Time           `json:"updatedAt"`
 }
 
 type UpdateSystemConfigRequest struct {
-	Models                  []SystemModelOption `json:"models"`
-	DefaultModel            string              `json:"defaultModel"`
-	CodeDefaultModel        string              `json:"codeDefaultModel"`
-	SearchService           string              `json:"searchService"`
-	LocalEmbeddingBaseURL   string              `json:"localEmbeddingBaseUrl"`
-	LocalEmbeddingAPIKey    string              `json:"localEmbeddingApiKey"`
-	LocalEmbeddingModel     string              `json:"localEmbeddingModel"`
-	LocalEmbeddingDimension int                 `json:"localEmbeddingDimension"`
+	Models                 []SystemModelOption `json:"models"`
+	DefaultModel           string              `json:"defaultModel"`
+	CodeDefaultModel       string              `json:"codeDefaultModel"`
+	SearchService          string              `json:"searchService"`
+	LocalEmbeddingBaseURL  string              `json:"localEmbeddingBaseUrl"`
+	LocalEmbeddingAPIKey   string              `json:"localEmbeddingApiKey"`
+	LocalEmbeddingModel    string              `json:"localEmbeddingModel"`
+	LocalEmbeddingDimension int                `json:"localEmbeddingDimension"`
+	RemoteOCRBaseURL       string              `json:"remoteOcrBaseUrl"`
+	RemoteOCRTableBaseURL  string              `json:"remoteOcrTableBaseUrl"`
+	RemoteDoclingBaseURL   string              `json:"remoteDoclingBaseUrl"`
 }
 
 func (config SystemConfig) ToDTO() SystemConfigDTO {
@@ -55,6 +64,9 @@ func (config SystemConfig) ToDTO() SystemConfigDTO {
 		LocalEmbeddingAPIKey:    config.LocalEmbeddingAPIKey,
 		LocalEmbeddingModel:     config.LocalEmbeddingModel,
 		LocalEmbeddingDimension: config.LocalEmbeddingDimension,
+		RemoteOCRBaseURL:        config.RemoteOCRBaseURL,
+		RemoteOCRTableBaseURL:   config.RemoteOCRTableBaseURL,
+		RemoteDoclingBaseURL:    config.RemoteDoclingBaseURL,
 		UpdatedAt:               config.UpdatedAt,
 	}
 }

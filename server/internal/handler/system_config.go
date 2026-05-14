@@ -21,6 +21,9 @@ type updateSystemConfigRequest struct {
 	LocalEmbeddingAPIKey    string                    `json:"localEmbeddingApiKey"`
 	LocalEmbeddingModel     string                    `json:"localEmbeddingModel"`
 	LocalEmbeddingDimension int                       `json:"localEmbeddingDimension"`
+	RemoteOCRBaseURL        string                    `json:"remoteOcrBaseUrl"`
+	RemoteOCRTableBaseURL   string                    `json:"remoteOcrTableBaseUrl"`
+	RemoteDoclingBaseURL    string                    `json:"remoteDoclingBaseUrl"`
 }
 
 type SystemConfigHandler struct {
@@ -86,6 +89,9 @@ func (handler *SystemConfigHandler) Update(c *fiber.Ctx, request *updateSystemCo
 		LocalEmbeddingAPIKey:    strings.TrimSpace(request.LocalEmbeddingAPIKey),
 		LocalEmbeddingModel:     strings.TrimSpace(request.LocalEmbeddingModel),
 		LocalEmbeddingDimension: request.LocalEmbeddingDimension,
+		RemoteOCRBaseURL:        strings.TrimSpace(request.RemoteOCRBaseURL),
+		RemoteOCRTableBaseURL:   strings.TrimSpace(request.RemoteOCRTableBaseURL),
+		RemoteDoclingBaseURL:    strings.TrimSpace(request.RemoteDoclingBaseURL),
 	}, operatorID)
 	if apiError != nil {
 		return response.Error(c, apiError.HTTPStatus, apiError.Code, apiError.Message)

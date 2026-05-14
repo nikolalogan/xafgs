@@ -26,6 +26,7 @@ func (repository *PostgresSystemConfigRepository) Get() (model.SystemConfigDTO, 
 	err := repository.db.QueryRowContext(ctx, `
 SELECT id, models_json, default_model, code_default_model, search_service,
        local_embedding_base_url, local_embedding_api_key, local_embedding_model, local_embedding_dimension,
+       remote_ocr_base_url, remote_ocr_table_base_url, remote_docling_base_url,
        created_at, updated_at, created_by, updated_by
 FROM system_config
 WHERE id = 1
@@ -39,6 +40,9 @@ WHERE id = 1
 		&entity.LocalEmbeddingAPIKey,
 		&entity.LocalEmbeddingModel,
 		&entity.LocalEmbeddingDimension,
+		&entity.RemoteOCRBaseURL,
+		&entity.RemoteOCRTableBaseURL,
+		&entity.RemoteDoclingBaseURL,
 		&entity.CreatedAt,
 		&entity.UpdatedAt,
 		&entity.CreatedBy,
@@ -70,9 +74,10 @@ func (repository *PostgresSystemConfigRepository) Upsert(config model.SystemConf
 INSERT INTO system_config (
   id, models_json, default_model, code_default_model, search_service,
   local_embedding_base_url, local_embedding_api_key, local_embedding_model, local_embedding_dimension,
+  remote_ocr_base_url, remote_ocr_table_base_url, remote_docling_base_url,
   created_at, updated_at, created_by, updated_by
 )
-VALUES (1, $1::jsonb, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $10)
+VALUES (1, $1::jsonb, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $13)
 ON CONFLICT (id) DO UPDATE SET
   models_json = EXCLUDED.models_json,
   default_model = EXCLUDED.default_model,
@@ -82,9 +87,12 @@ ON CONFLICT (id) DO UPDATE SET
   local_embedding_api_key = EXCLUDED.local_embedding_api_key,
   local_embedding_model = EXCLUDED.local_embedding_model,
   local_embedding_dimension = EXCLUDED.local_embedding_dimension,
+  remote_ocr_base_url = EXCLUDED.remote_ocr_base_url,
+  remote_ocr_table_base_url = EXCLUDED.remote_ocr_table_base_url,
+  remote_docling_base_url = EXCLUDED.remote_docling_base_url,
   updated_at = EXCLUDED.updated_at,
   updated_by = EXCLUDED.updated_by
-`, string(modelsRaw), config.DefaultModel, config.CodeDefaultModel, config.SearchService, config.LocalEmbeddingBaseURL, config.LocalEmbeddingAPIKey, config.LocalEmbeddingModel, config.LocalEmbeddingDimension, now, config.UpdatedBy)
+`, string(modelsRaw), config.DefaultModel, config.CodeDefaultModel, config.SearchService, config.LocalEmbeddingBaseURL, config.LocalEmbeddingAPIKey, config.LocalEmbeddingModel, config.LocalEmbeddingDimension, config.RemoteOCRBaseURL, config.RemoteOCRTableBaseURL, config.RemoteDoclingBaseURL, now, config.UpdatedBy)
 	if err != nil {
 		return model.SystemConfigDTO{}, false
 	}

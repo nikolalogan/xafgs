@@ -42,7 +42,7 @@ func (service *systemConfigService) Update(
 		return model.SystemConfigDTO{}, model.NewAPIError(401, response.CodeUnauthorized, "未找到认证用户")
 	}
 
-	models, defaultModel, codeDefaultModel, searchService, localEmbeddingBaseURL, localEmbeddingAPIKey, localEmbeddingModel, localEmbeddingDimension, apiError := service.validateAndNormalizeRequest(request)
+	models, defaultModel, codeDefaultModel, searchService, localEmbeddingBaseURL, localEmbeddingAPIKey, localEmbeddingModel, localEmbeddingDimension, remoteOCRBaseURL, remoteOCRTableBaseURL, remoteDoclingBaseURL, apiError := service.validateAndNormalizeRequest(request)
 	if apiError != nil {
 		return model.SystemConfigDTO{}, apiError
 	}
@@ -60,6 +60,9 @@ func (service *systemConfigService) Update(
 		LocalEmbeddingAPIKey:    localEmbeddingAPIKey,
 		LocalEmbeddingModel:     localEmbeddingModel,
 		LocalEmbeddingDimension: localEmbeddingDimension,
+		RemoteOCRBaseURL:        remoteOCRBaseURL,
+		RemoteOCRTableBaseURL:   remoteOCRTableBaseURL,
+		RemoteDoclingBaseURL:    remoteDoclingBaseURL,
 	})
 	if !ok {
 		return model.SystemConfigDTO{}, model.NewAPIError(500, response.CodeInternal, "更新系统配置失败")
@@ -83,6 +86,9 @@ func (service *systemConfigService) defaultConfig() model.SystemConfigDTO {
 		LocalEmbeddingAPIKey:    "",
 		LocalEmbeddingModel:     "",
 		LocalEmbeddingDimension: 0,
+		RemoteOCRBaseURL:        "",
+		RemoteOCRTableBaseURL:   "",
+		RemoteDoclingBaseURL:    "",
 	}
 }
 
@@ -137,15 +143,18 @@ func (service *systemConfigService) normalizeForRead(config model.SystemConfigDT
 		LocalEmbeddingAPIKey:    strings.TrimSpace(config.LocalEmbeddingAPIKey),
 		LocalEmbeddingModel:     strings.TrimSpace(config.LocalEmbeddingModel),
 		LocalEmbeddingDimension: normalizeEmbeddingDimension(config.LocalEmbeddingDimension),
+		RemoteOCRBaseURL:        strings.TrimSpace(config.RemoteOCRBaseURL),
+		RemoteOCRTableBaseURL:   strings.TrimSpace(config.RemoteOCRTableBaseURL),
+		RemoteDoclingBaseURL:    strings.TrimSpace(config.RemoteDoclingBaseURL),
 		UpdatedAt:               config.UpdatedAt,
 	}
 }
 
 func (service *systemConfigService) validateAndNormalizeRequest(
 	request model.UpdateSystemConfigRequest,
-) ([]model.SystemModelOption, string, string, string, string, string, string, int, *model.APIError) {
+) ([]model.SystemModelOption, string, string, string, string, string, string, int, string, string, string, *model.APIError) {
 	if len(request.Models) == 0 {
-		return nil, "", "", "", "", "", "", 0, model.NewAPIError(400, response.CodeBadRequest, "模型列表不能为空")
+		return nil, "", "", "", "", "", "", 0, "", "", "", model.NewAPIError(400, response.CodeBadRequest, "模型列表不能为空")
 	}
 
 	models := make([]model.SystemModelOption, 0, len(request.Models))
@@ -154,10 +163,10 @@ func (service *systemConfigService) validateAndNormalizeRequest(
 	for _, raw := range request.Models {
 		name := strings.TrimSpace(raw.Name)
 		if name == "" {
-			return nil, "", "", "", "", "", "", 0, model.NewAPIError(400, response.CodeBadRequest, "模型名称不能为空")
+			return nil, "", "", "", "", "", "", 0, "", "", "", model.NewAPIError(400, response.CodeBadRequest, "模型名称不能为空")
 		}
 		if _, exists := seen[name]; exists {
-			return nil, "", "", "", "", "", "", 0, model.NewAPIError(400, response.CodeBadRequest, "模型名称不能重复："+name)
+			return nil, "", "", "", "", "", "", 0, "", "", "", model.NewAPIError(400, response.CodeBadRequest, "模型名称不能重复："+name)
 		}
 		seen[name] = struct{}{}
 		item := model.SystemModelOption{
@@ -171,29 +180,32 @@ func (service *systemConfigService) validateAndNormalizeRequest(
 		models = append(models, item)
 	}
 	if len(enabled) == 0 {
-		return nil, "", "", "", "", "", "", 0, model.NewAPIError(400, response.CodeBadRequest, "至少需要启用一个模型")
+		return nil, "", "", "", "", "", "", 0, "", "", "", model.NewAPIError(400, response.CodeBadRequest, "至少需要启用一个模型")
 	}
 
 	defaultModel := strings.TrimSpace(request.DefaultModel)
 	if defaultModel == "" {
-		return nil, "", "", "", "", "", "", 0, model.NewAPIError(400, response.CodeBadRequest, "defaultModel 不能为空")
+		return nil, "", "", "", "", "", "", 0, "", "", "", model.NewAPIError(400, response.CodeBadRequest, "defaultModel 不能为空")
 	}
 	if _, exists := enabled[defaultModel]; !exists {
-		return nil, "", "", "", "", "", "", 0, model.NewAPIError(400, response.CodeBadRequest, "defaultModel 必须是已启用模型")
+		return nil, "", "", "", "", "", "", 0, "", "", "", model.NewAPIError(400, response.CodeBadRequest, "defaultModel 必须是已启用模型")
 	}
 	codeDefaultModel := strings.TrimSpace(request.CodeDefaultModel)
 	if codeDefaultModel == "" {
 		codeDefaultModel = defaultModel
 	}
 	if _, exists := enabled[codeDefaultModel]; !exists {
-		return nil, "", "", "", "", "", "", 0, model.NewAPIError(400, response.CodeBadRequest, "codeDefaultModel 必须是已启用模型")
+		return nil, "", "", "", "", "", "", 0, "", "", "", model.NewAPIError(400, response.CodeBadRequest, "codeDefaultModel 必须是已启用模型")
 	}
 	searchService := normalizeSearchService(request.SearchService)
 	localEmbeddingBaseURL := strings.TrimSpace(request.LocalEmbeddingBaseURL)
 	localEmbeddingAPIKey := strings.TrimSpace(request.LocalEmbeddingAPIKey)
 	localEmbeddingModel := strings.TrimSpace(request.LocalEmbeddingModel)
 	localEmbeddingDimension := normalizeEmbeddingDimension(request.LocalEmbeddingDimension)
-	return models, defaultModel, codeDefaultModel, searchService, localEmbeddingBaseURL, localEmbeddingAPIKey, localEmbeddingModel, localEmbeddingDimension, nil
+	remoteOCRBaseURL := strings.TrimSpace(request.RemoteOCRBaseURL)
+	remoteOCRTableBaseURL := strings.TrimSpace(request.RemoteOCRTableBaseURL)
+	remoteDoclingBaseURL := strings.TrimSpace(request.RemoteDoclingBaseURL)
+	return models, defaultModel, codeDefaultModel, searchService, localEmbeddingBaseURL, localEmbeddingAPIKey, localEmbeddingModel, localEmbeddingDimension, remoteOCRBaseURL, remoteOCRTableBaseURL, remoteDoclingBaseURL, nil
 }
 
 func normalizeSearchService(raw string) string {

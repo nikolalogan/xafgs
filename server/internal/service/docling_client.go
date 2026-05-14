@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -17,7 +16,7 @@ import (
 )
 
 type HTTPDoclingClient struct {
-	baseURL    string
+	systemConfigService SystemConfigService
 	httpClient *http.Client
 	results    sync.Map
 }
@@ -45,13 +44,9 @@ type doclingTextBlock struct {
 	DoclingRef string
 }
 
-func NewHTTPDoclingClient() OCRClient {
-	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("DOCLING_SERVICE_BASE_URL")), "/")
-	if baseURL == "" {
-		baseURL = "http://docling-service:8091"
-	}
+func NewHTTPDoclingClient(systemConfigService SystemConfigService) OCRClient {
 	return &HTTPDoclingClient{
-		baseURL: baseURL,
+		systemConfigService: systemConfigService,
 		httpClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
@@ -102,11 +97,15 @@ func (client *HTTPDoclingClient) GetTask(_ context.Context, taskID string) (OCRT
 }
 
 func (client *HTTPDoclingClient) postJSON(ctx context.Context, path string, request any, response any) error {
+	baseURL, err := client.resolveBaseURL(ctx)
+	if err != nil {
+		return err
+	}
 	body, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -121,6 +120,18 @@ func (client *HTTPDoclingClient) postJSON(ctx context.Context, path string, requ
 		return fmt.Errorf("status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	return json.NewDecoder(resp.Body).Decode(response)
+}
+
+func (client *HTTPDoclingClient) resolveBaseURL(ctx context.Context) (string, error) {
+	config, apiError := client.systemConfigService.Get(ctx)
+	if apiError != nil {
+		return "", fmt.Errorf("load system config failed: %s", apiError.Message)
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(config.RemoteDoclingBaseURL), "/")
+	if baseURL == "" {
+		return "", fmt.Errorf("系统设置未配置远程 Docling 地址")
+	}
+	return baseURL, nil
 }
 
 func mapDoclingResponseToTaskResult(payload doclingConvertResponse) OCRTaskResult {

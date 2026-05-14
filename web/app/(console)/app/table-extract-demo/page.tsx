@@ -24,7 +24,7 @@ type TableCell = {
   rowSpan: number
   colSpan: number
   text?: string
-  confidence: number
+  ocrScore?: number
   isColumnHeader: boolean
   isProjectedRowHeader: boolean
   pageBBox: number[]
@@ -136,6 +136,7 @@ type RawTableCell = {
   col_start?: unknown
   col_end?: unknown
   ocr_text?: unknown
+  ocr_score?: unknown
   local_bbox?: unknown
   bbox?: unknown
 }
@@ -252,7 +253,7 @@ const normalizeCell = (cellRaw: unknown): TableCell => {
     rowSpan: Math.max(1, asNumber(pick(cell, 'rowSpan', 'row_span'), inferredRowSpan)),
     colSpan: Math.max(1, asNumber(pick(cell, 'colSpan', 'col_span'), inferredColSpan)),
     text: asString(cell.text ?? cell.ocr_text),
-    confidence: asNumber(cell.confidence),
+    ocrScore: Number.isFinite(Number(pick(cell, 'ocrScore', 'ocr_score'))) ? Number(pick(cell, 'ocrScore', 'ocr_score')) : undefined,
     isColumnHeader: Boolean(pick(cell, 'isColumnHeader', 'is_column_header')),
     isProjectedRowHeader: Boolean(pick(cell, 'isProjectedRowHeader', 'is_projected_row_header')),
     pageBBox: asNumberArray(pick(cell, 'pageBBox', 'page_bbox') ?? cell.bbox),
@@ -1249,8 +1250,11 @@ export default function TableExtractDemoPage() {
   const cellConfidenceByCoord = useMemo(() => {
     const mapped: Record<string, number> = {}
     const cells = Array.isArray(inspectedTable?.cells) ? inspectedTable.cells : []
+    const missingOcrScoreEquivalent = -1
     cells.forEach((cell) => {
-      mapped[`${cell.rowIndex}:${cell.colIndex}`] = Number(cell.confidence)
+      mapped[`${cell.rowIndex}:${cell.colIndex}`] = typeof cell.ocrScore === 'number'
+        ? cell.ocrScore
+        : missingOcrScoreEquivalent
     })
     return mapped
   }, [inspectedTable])
