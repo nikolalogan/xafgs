@@ -275,11 +275,9 @@ export default function EnterpriseProjectPage() {
       <Card
         title="企业新增项目"
         extra={(
-          <Space>
-            <Button onClick={() => router.push('/app/enterprise-projects')}>项目列表</Button>
-            <Button onClick={() => router.push('/app/enterprises')}>企业列表</Button>
-            <Button onClick={loadDetail} loading={loading}>刷新详情</Button>
-          </Space>
+          <Button type="primary" onClick={() => router.push('/app/report-cases')}>
+            {detail?.project?.reportCaseId && detail.project.reportCaseId > 0 ? '修改报告' : '生成报告'}
+          </Button>
         )}
       >
         <Tabs
@@ -294,8 +292,6 @@ export default function EnterpriseProjectPage() {
                       <Descriptions.Item label="项目状态"><Tag color={parseStatusColor(detail.project.status)}>{detail.project.status}</Tag></Descriptions.Item>
                       <Descriptions.Item label="企业">{detail.enterprise.shortName}</Descriptions.Item>
                       <Descriptions.Item label="统一信用代码">{detail.enterprise.unifiedCreditCode}</Descriptions.Item>
-                      <Descriptions.Item label="报告模板">{detail.template.name}</Descriptions.Item>
-                      <Descriptions.Item label="模板键">{detail.template.templateKey}</Descriptions.Item>
                     </Descriptions>
                   )
                 : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无项目信息" />,
