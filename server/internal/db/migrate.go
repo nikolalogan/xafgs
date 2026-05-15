@@ -691,7 +691,8 @@ CREATE TABLE IF NOT EXISTS enterprise_finance_subject (
   id BIGSERIAL PRIMARY KEY,
   enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
   subject_name VARCHAR(256) NOT NULL DEFAULT '',
-  subject_type VARCHAR(128) NOT NULL DEFAULT ''
+  subject_type VARCHAR(128) NOT NULL DEFAULT '',
+  level INT NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS enterprise_shareholder (
@@ -975,6 +976,11 @@ ALTER TABLE enterprise_financial_report
 ADD COLUMN IF NOT EXISTS report_date VARCHAR(64) NOT NULL DEFAULT '';
 ALTER TABLE enterprise_finance_subject
 DROP COLUMN IF EXISTS order_no;
+ALTER TABLE enterprise_finance_subject
+ADD COLUMN IF NOT EXISTS level INT NOT NULL DEFAULT 1;
+UPDATE enterprise_finance_subject
+SET level = 1
+WHERE level IS NULL OR level < 1 OR level > 4;
 ALTER TABLE enterprise_financial_report_item
 ADD COLUMN IF NOT EXISTS order_no INT NOT NULL DEFAULT 1;
 DROP INDEX IF EXISTS idx_enterprise_finance_subject_enterprise_order;

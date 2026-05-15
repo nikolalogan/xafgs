@@ -223,5 +223,21 @@ func parseBondTenders(value any, result *model.EnterpriseSnapshotImportResult) [
 func parseBondRegistrations(_ any) []model.EnterpriseBondRegistration { return []model.EnterpriseBondRegistration{} }
 func parsePublicOpinions(_ any) []model.EnterprisePublicOpinion       { return []model.EnterprisePublicOpinion{} }
 func parseTags(_ any) []model.EnterpriseTag                           { return []model.EnterpriseTag{} }
-func parseFinanceSubjects(_ any) []model.EnterpriseFinanceSubject     { return []model.EnterpriseFinanceSubject{} }
+func parseFinanceSubjects(value any) []model.EnterpriseFinanceSubject {
+	arr, _ := value.([]any)
+	subjects := make([]model.EnterpriseFinanceSubject, 0, len(arr))
+	for _, row := range arr {
+		m, ok := row.(map[string]any)
+		if !ok {
+			continue
+		}
+		subjects = append(subjects, model.EnterpriseFinanceSubject{
+			ID:          int64Value(m["id"]),
+			SubjectName: stringValue(m["subject_name"], m["subjectName"]),
+			SubjectType: stringValue(m["subject_type"], m["subjectType"]),
+			Level:       normalizeFinanceSubjectLevel(int(int64Value(m["level"]))),
+		})
+	}
+	return subjects
+}
 func parseShareholders(_ any) []model.EnterpriseShareholder           { return []model.EnterpriseShareholder{} }

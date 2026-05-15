@@ -525,10 +525,10 @@ INSERT INTO enterprise_finance_snapshot (
 	for _, item := range aggregate.FinanceSubjects {
 		var subjectID int64
 		if err := tx.QueryRowContext(ctx, `
-INSERT INTO enterprise_finance_subject (enterprise_id, subject_name, subject_type)
-VALUES ($1, $2, $3)
+INSERT INTO enterprise_finance_subject (enterprise_id, subject_name, subject_type, level)
+VALUES ($1, $2, $3, $4)
 RETURNING id
-`, aggregate.Enterprise.ID, strings.TrimSpace(item.SubjectName), strings.TrimSpace(item.SubjectType)).Scan(&subjectID); err != nil {
+`, aggregate.Enterprise.ID, strings.TrimSpace(item.SubjectName), strings.TrimSpace(item.SubjectType), item.Level).Scan(&subjectID); err != nil {
 			return err
 		}
 		if item.ID > 0 {
@@ -813,13 +813,13 @@ WHERE enterprise_id = $1
 		aggregate.FinanceSnapshot = &snapshot
 	}
 
-	rows, err = query(`SELECT id, subject_name, subject_type FROM enterprise_finance_subject WHERE enterprise_id = $1 ORDER BY id ASC`, enterpriseID)
+	rows, err = query(`SELECT id, subject_name, subject_type, level FROM enterprise_finance_subject WHERE enterprise_id = $1 ORDER BY id ASC`, enterpriseID)
 	if err != nil {
 		return model.EnterpriseAggregate{}, false
 	}
 	for rows.Next() {
 		var row model.EnterpriseFinanceSubject
-		if err := rows.Scan(&row.ID, &row.SubjectName, &row.SubjectType); err == nil {
+		if err := rows.Scan(&row.ID, &row.SubjectName, &row.SubjectType, &row.Level); err == nil {
 			aggregate.FinanceSubjects = append(aggregate.FinanceSubjects, row)
 		}
 	}

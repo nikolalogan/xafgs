@@ -258,6 +258,7 @@ func normalizeEnterpriseRequest(request model.CreateEnterpriseRequest) model.Cre
 	for i := range request.FinanceSubjects {
 		request.FinanceSubjects[i].SubjectName = strings.TrimSpace(request.FinanceSubjects[i].SubjectName)
 		request.FinanceSubjects[i].SubjectType = strings.TrimSpace(request.FinanceSubjects[i].SubjectType)
+		request.FinanceSubjects[i].Level = normalizeFinanceSubjectLevel(request.FinanceSubjects[i].Level)
 	}
 	for i := range request.Shareholders {
 		request.Shareholders[i].ShareholderID = strings.TrimSpace(request.Shareholders[i].ShareholderID)
@@ -408,4 +409,11 @@ func pointerTimeValue(value *time.Time) time.Time {
 		return time.Time{}
 	}
 	return value.UTC()
+}
+
+func normalizeFinanceSubjectLevel(level int) int {
+	if level < 1 || level > 4 {
+		return 1
+	}
+	return level
 }

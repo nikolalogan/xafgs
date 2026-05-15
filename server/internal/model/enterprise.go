@@ -157,6 +157,7 @@ type EnterpriseFinanceSubject struct {
 	ID          int64  `json:"id"`
 	SubjectName string `json:"subjectName"`
 	SubjectType string `json:"subjectType"`
+	Level       int    `json:"level"`
 }
 
 type EnterpriseShareholder struct {
