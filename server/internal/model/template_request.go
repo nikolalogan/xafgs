@@ -11,6 +11,8 @@ type CreateTemplateRequest struct {
 	Status             string          `json:"status"`
 	Content            string          `json:"content"`
 	DefaultContextJSON json.RawMessage `json:"defaultContextJson"`
+	TemplateType       string          `json:"templateType"`
+	PreprocessJS       string          `json:"preprocessJs"`
 }
 
 type UpdateTemplateRequest struct {
@@ -20,14 +22,19 @@ type UpdateTemplateRequest struct {
 	Status             string          `json:"status"`
 	Content            string          `json:"content"`
 	DefaultContextJSON json.RawMessage `json:"defaultContextJson"`
+	TemplateType       string          `json:"templateType"`
+	PreprocessJS       string          `json:"preprocessJs"`
 }
 
 type PreviewTemplateRequest struct {
-	Content     string          `json:"content"`
-	ContextJSON json.RawMessage `json:"contextJson"`
+	Content      string          `json:"content"`
+	ContextJSON  json.RawMessage `json:"contextJson"`
+	TemplateType string          `json:"templateType"`
 }
 
 type PreviewTemplateResponse struct {
-	Rendered string `json:"rendered"`
+	PreviewType  string          `json:"previewType"`
+	Rendered     string          `json:"rendered"`
+	TablePayload json.RawMessage `json:"tablePayload,omitempty"`
 }
 

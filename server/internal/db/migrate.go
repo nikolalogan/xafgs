@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS template (
   status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
   content TEXT NOT NULL,
   default_context_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  template_type VARCHAR(32) NOT NULL DEFAULT 'gonja' CHECK (template_type IN ('gonja', 'univer_table')),
+  preprocess_js TEXT NOT NULL DEFAULT 'return context',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_by BIGINT NOT NULL DEFAULT 0,
@@ -828,6 +830,11 @@ ADD COLUMN IF NOT EXISTS doc_file_id BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE report_template
 ADD COLUMN IF NOT EXISTS doc_version_no INT NOT NULL DEFAULT 0;
 
+ALTER TABLE template
+ADD COLUMN IF NOT EXISTS template_type VARCHAR(32) NOT NULL DEFAULT 'gonja';
+ALTER TABLE template
+ADD COLUMN IF NOT EXISTS preprocess_js TEXT NOT NULL DEFAULT 'return context';
+
 ALTER TABLE region_economy
 DROP COLUMN IF EXISTS gdp_rank_province;
 ALTER TABLE region_economy
@@ -1287,7 +1294,7 @@ ON CONFLICT (template_key) DO NOTHING
 
 	// demo template
 	_, err = conn.ExecContext(ctx, `
-	INSERT INTO template (template_key, name, description, engine, output_type, status, content, default_context_json, created_at, updated_at, created_by, updated_by)
+	INSERT INTO template (template_key, name, description, engine, output_type, status, content, default_context_json, template_type, preprocess_js, created_at, updated_at, created_by, updated_by)
 	VALUES (
   'demo_template',
   '示例模板',
@@ -1571,6 +1578,8 @@ ON CONFLICT (template_key) DO NOTHING
   "note": "这是演示模板：通过 {% for %} / {% if %} 组合，呈现现代化布局与数据驱动渲染。",
   "footerNote": "生成时间：2026-03-30 · 仅用于演示"
 }$$::jsonb,
+  'gonja',
+  'return context',
   $1,
   $1,
   1,
@@ -1584,7 +1593,7 @@ ON CONFLICT (template_key) DO NOTHING
 
 	// admission template (modern + minimal)
 	_, err = conn.ExecContext(ctx, `
-	INSERT INTO template (template_key, name, description, engine, output_type, status, content, default_context_json, created_at, updated_at, created_by, updated_by)
+	INSERT INTO template (template_key, name, description, engine, output_type, status, content, default_context_json, template_type, preprocess_js, created_at, updated_at, created_by, updated_by)
 	VALUES (
 	  'admission-template-modern',
 	  '准入结果模板（精简）',
@@ -1829,6 +1838,8 @@ ON CONFLICT (template_key) DO NOTHING
 	    { "category": "集团制度", "group": "", "hit": true, "level": "hard", "no": 9, "ok": false, "remark": "底层资产符合要求的资产证券化业务不适用", "rule": "申请人持续经营时间未满1年（若申请人核心子公司持续经营超过1年，可予以豁免）" }
 	  ]
 	}$$::jsonb,
+	  'gonja',
+	  'return context',
 	  $1,
 	  $1,
 	  1,
@@ -1842,6 +1853,8 @@ ON CONFLICT (template_key) DO NOTHING
 	  status = EXCLUDED.status,
 	  content = EXCLUDED.content,
 	  default_context_json = EXCLUDED.default_context_json,
+	  template_type = EXCLUDED.template_type,
+	  preprocess_js = EXCLUDED.preprocess_js,
 	  updated_at = EXCLUDED.updated_at,
 	  updated_by = EXCLUDED.updated_by
 	`, now)

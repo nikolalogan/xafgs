@@ -19,6 +19,11 @@ const (
 	TemplateOutputTypeHTML = "html"
 )
 
+const (
+	TemplateTypeGonja       = "gonja"
+	TemplateTypeUniverTable = "univer_table"
+)
+
 func IsValidTemplateStatus(status string) bool {
 	return status == TemplateStatusActive || status == TemplateStatusDisabled
 }
@@ -31,6 +36,10 @@ func IsValidTemplateOutputType(outputType string) bool {
 	return outputType == TemplateOutputTypeText || outputType == TemplateOutputTypeHTML
 }
 
+func IsValidTemplateType(templateType string) bool {
+	return templateType == TemplateTypeGonja || templateType == TemplateTypeUniverTable
+}
+
 type Template struct {
 	BaseEntity
 	TemplateKey         string          `json:"templateKey"`
@@ -41,6 +50,8 @@ type Template struct {
 	Status              string          `json:"status"`
 	Content             string          `json:"content"`
 	DefaultContextJSON  json.RawMessage `json:"defaultContextJson,omitempty"`
+	TemplateType        string          `json:"templateType"`
+	PreprocessJS        string          `json:"preprocessJs"`
 }
 
 type TemplateDTO struct {
@@ -51,6 +62,7 @@ type TemplateDTO struct {
 	Engine      string    `json:"engine"`
 	OutputType  string    `json:"outputType"`
 	Status      string    `json:"status"`
+	TemplateType string   `json:"templateType"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -59,6 +71,7 @@ type TemplateDetailDTO struct {
 	TemplateDTO
 	Content            string          `json:"content"`
 	DefaultContextJSON json.RawMessage `json:"defaultContextJson"`
+	PreprocessJS       string          `json:"preprocessJs"`
 }
 
 func (template Template) ToDTO() TemplateDTO {
@@ -70,6 +83,7 @@ func (template Template) ToDTO() TemplateDTO {
 		Engine:      template.Engine,
 		OutputType:  template.OutputType,
 		Status:      template.Status,
+		TemplateType: template.TemplateType,
 		CreatedAt:   template.CreatedAt,
 		UpdatedAt:   template.UpdatedAt,
 	}
@@ -80,6 +94,7 @@ func (template Template) ToDetailDTO() TemplateDetailDTO {
 		TemplateDTO:         template.ToDTO(),
 		Content:             template.Content,
 		DefaultContextJSON:  template.DefaultContextJSON,
+		PreprocessJS:        template.PreprocessJS,
 	}
 }
 

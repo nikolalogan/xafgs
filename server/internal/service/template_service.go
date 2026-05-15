@@ -39,6 +39,9 @@ func (service *templateService) GetByID(_ context.Context, templateID int64) (mo
 	if len(template.DefaultContextJSON) == 0 {
 		template.DefaultContextJSON = json.RawMessage(`{}`)
 	}
+	if strings.TrimSpace(template.TemplateType) == "" {
+		template.TemplateType = model.TemplateTypeGonja
+	}
 	return template.ToDetailDTO(), nil
 }
 
@@ -58,6 +61,7 @@ func (service *templateService) Create(
 	request.OutputType = strings.TrimSpace(request.OutputType)
 	request.Status = strings.TrimSpace(request.Status)
 	request.Content = strings.TrimSpace(request.Content)
+	request.TemplateType = strings.TrimSpace(request.TemplateType)
 
 	if request.TemplateKey == "" || request.Name == "" {
 		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateKey、name 不能为空")
@@ -83,6 +87,12 @@ func (service *templateService) Create(
 	if request.Content == "" {
 		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "content 不能为空")
 	}
+	if request.TemplateType == "" {
+		request.TemplateType = model.TemplateTypeGonja
+	}
+	if !model.IsValidTemplateType(request.TemplateType) {
+		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/univer_table")
+	}
 	if _, exists := service.templateRepository.FindByTemplateKey(request.TemplateKey); exists {
 		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateKey 已存在")
 	}
@@ -104,6 +114,8 @@ func (service *templateService) Create(
 		Status:             request.Status,
 		Content:            request.Content,
 		DefaultContextJSON: defaultContext,
+		TemplateType:       request.TemplateType,
+		PreprocessJS:       request.PreprocessJS,
 	}
 	return service.templateRepository.Create(template), nil
 }
@@ -119,6 +131,7 @@ func (service *templateService) Update(
 	request.OutputType = strings.TrimSpace(request.OutputType)
 	request.Status = strings.TrimSpace(request.Status)
 	request.Content = strings.TrimSpace(request.Content)
+	request.TemplateType = strings.TrimSpace(request.TemplateType)
 
 	if request.Name == "" {
 		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "name 不能为空")
@@ -138,6 +151,12 @@ func (service *templateService) Update(
 	if request.Content == "" {
 		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "content 不能为空")
 	}
+	if request.TemplateType == "" {
+		request.TemplateType = model.TemplateTypeGonja
+	}
+	if !model.IsValidTemplateType(request.TemplateType) {
+		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/univer_table")
+	}
 	defaultContext, apiError := normalizeContextJSON(request.DefaultContextJSON)
 	if apiError != nil {
 		return model.TemplateDTO{}, apiError
@@ -150,6 +169,8 @@ func (service *templateService) Update(
 		Status:             request.Status,
 		Content:            request.Content,
 		DefaultContextJSON: defaultContext,
+		TemplateType:       request.TemplateType,
+		PreprocessJS:       request.PreprocessJS,
 		BaseEntity: model.BaseEntity{
 			UpdatedBy: operatorID,
 		},
@@ -175,17 +196,38 @@ func (service *templateService) Preview(
 	if request.Content == "" {
 		return model.PreviewTemplateResponse{}, model.NewAPIError(400, response.CodeBadRequest, "content 不能为空")
 	}
+	request.TemplateType = strings.TrimSpace(request.TemplateType)
+	if request.TemplateType == "" {
+		request.TemplateType = model.TemplateTypeGonja
+	}
+	if !model.IsValidTemplateType(request.TemplateType) {
+		return model.PreviewTemplateResponse{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/univer_table")
+	}
 
 	contextObject, apiError := parseContextObject(request.ContextJSON)
 	if apiError != nil {
 		return model.PreviewTemplateResponse{}, apiError
 	}
 
+	if request.TemplateType == model.TemplateTypeUniverTable {
+		tablePayload, err := json.Marshal(contextObject)
+		if err != nil {
+			return model.PreviewTemplateResponse{}, model.NewAPIError(400, response.CodeBadRequest, "tablePayload 序列化失败")
+		}
+		return model.PreviewTemplateResponse{
+			PreviewType:  model.TemplateTypeUniverTable,
+			TablePayload: tablePayload,
+		}, nil
+	}
+
 	rendered, err := service.templateRenderer.Render(request.Content, contextObject)
 	if err != nil {
 		return model.PreviewTemplateResponse{}, model.NewAPIError(400, response.CodeBadRequest, "模板渲染失败："+err.Error())
 	}
-	return model.PreviewTemplateResponse{Rendered: rendered}, nil
+	return model.PreviewTemplateResponse{
+		PreviewType: model.TemplateTypeGonja,
+		Rendered:    rendered,
+	}, nil
 }
 
 func normalizeContextJSON(raw json.RawMessage) (json.RawMessage, *model.APIError) {

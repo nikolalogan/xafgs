@@ -4,9 +4,11 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
+import UniverTableEditor from '@/components/enterprise-projects/UniverTableEditor'
 
 type TemplateStatus = 'active' | 'disabled'
 type TemplateOutputType = 'text' | 'html'
+type TemplateType = 'gonja' | 'univer_table'
 
 type TemplateDTO = {
   id: number
@@ -16,12 +18,15 @@ type TemplateDTO = {
   engine: string
   outputType: TemplateOutputType
   status: TemplateStatus
+  templateType: TemplateType
   createdAt: string
   updatedAt: string
 }
 
 type PreviewResponse = {
+  previewType?: TemplateType
   rendered: string
+  tablePayload?: unknown
 }
 
 type ApiResponse<T> = {
@@ -43,7 +48,7 @@ export default function TemplateNewPage() {
   const [msgApi, contextHolder] = message.useMessage()
   const [submitting, setSubmitting] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
-  const [preview, setPreview] = useState<{ outputType: TemplateOutputType, rendered: string } | null>(null)
+  const [preview, setPreview] = useState<{ outputType: TemplateOutputType, previewType: TemplateType, rendered: string, tableHtml: string } | null>(null)
   const [form] = Form.useForm()
 
   const { role: currentRole, hydrated } = useConsoleRole()
@@ -88,19 +93,63 @@ export default function TemplateNewPage() {
     return parsed as Record<string, unknown>
   }
 
+  const executePreprocess = (raw: string, context: Record<string, unknown>) => {
+    const source = String(raw || '').trim() || 'return context'
+    const runner = new Function('context', source) as (context: Record<string, unknown>) => unknown
+    const result = runner(context)
+    if (!result || typeof result !== 'object' || Array.isArray(result))
+      throw new Error('preprocessJs 必须返回 JSON object')
+    return result as Record<string, unknown>
+  }
+
+  const toUniverHtml = (payload: unknown) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload))
+      throw new Error('tablePayload 必须为 JSON object')
+    const tablePayload = payload as Record<string, unknown>
+    const html = tablePayload.html
+    if (typeof html === 'string' && html.trim())
+      return html.trim()
+    const rows = tablePayload.rows
+    if (!Array.isArray(rows))
+      throw new Error('tablePayload 需要 html 或 rows 字段')
+    const body = rows.map((row) => {
+      if (!Array.isArray(row))
+        throw new Error('rows 必须为二维数组')
+      const cells = row.map(cell => `<td>${String(cell ?? '')}</td>`).join('')
+      return `<tr>${cells}</tr>`
+    }).join('')
+    return `<table><tbody>${body}</tbody></table>`
+  }
+
   const previewNow = async () => {
     try {
       const values = await form.validateFields()
       setPreviewLoading(true)
       const contextObject = parseContextJson(values.defaultContextJson || '')
+      const mappedContext = executePreprocess(values.preprocessJs || '', contextObject)
       const result = await request<PreviewResponse>('/api/templates/preview', {
         method: 'POST',
         body: JSON.stringify({
           content: values.content || '',
-          contextJson: contextObject,
+          contextJson: mappedContext,
+          templateType: values.templateType,
         }),
       })
-      setPreview({ outputType: values.outputType, rendered: result.rendered || '' })
+      if (values.templateType === 'univer_table') {
+        setPreview({
+          outputType: values.outputType,
+          previewType: 'univer_table',
+          rendered: '',
+          tableHtml: toUniverHtml(result.tablePayload),
+        })
+      } else {
+        setPreview({
+          outputType: values.outputType,
+          previewType: 'gonja',
+          rendered: result.rendered || '',
+          tableHtml: '',
+        })
+      }
     }
     catch (error) {
       if (error instanceof Error && error.message.includes('out of date'))
@@ -128,6 +177,8 @@ export default function TemplateNewPage() {
           status: values.status,
           content: values.content,
           defaultContextJson: contextObject,
+          templateType: values.templateType,
+          preprocessJs: values.preprocessJs || '',
         }),
       })
       msgApi.success('创建模板成功')
@@ -186,6 +237,8 @@ export default function TemplateNewPage() {
                 description: '',
                 outputType: 'html',
                 status: 'active',
+                templateType: 'gonja',
+                preprocessJs: 'return context',
                 content: `<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -264,6 +317,14 @@ export default function TemplateNewPage() {
                 <Input placeholder="可选" />
               </Form.Item>
               <div className="grid grid-cols-2 gap-3">
+                <Form.Item name="templateType" label="模板类型" rules={[{ required: true, message: '请选择模板类型' }]}>
+                  <Select
+                    options={[
+                      { value: 'gonja', label: 'Gonja 模板' },
+                      { value: 'univer_table', label: 'Univer 表格' },
+                    ]}
+                  />
+                </Form.Item>
                 <Form.Item name="outputType" label="输出类型" rules={[{ required: true, message: '请选择输出类型' }]}>
                   <Select
                     options={[
@@ -287,6 +348,9 @@ export default function TemplateNewPage() {
               <Form.Item name="defaultContextJson" label="默认 Context（JSON）">
                 <Input.TextArea autoSize={{ minRows: 8, maxRows: 16 }} placeholder='例如: {"name":"SXFG"}' />
               </Form.Item>
+              <Form.Item name="preprocessJs" label="预处理脚本 preprocessJs(context)">
+                <Input.TextArea autoSize={{ minRows: 4, maxRows: 10 }} placeholder="return context" />
+              </Form.Item>
             </Form>
           </div>
 
@@ -300,7 +364,7 @@ export default function TemplateNewPage() {
                 点击“预览”生成渲染结果
               </div>
             )}
-            {preview?.outputType === 'html' && (
+            {preview?.previewType === 'gonja' && preview?.outputType === 'html' && (
               <iframe
                 title="template-preview"
                 sandbox=""
@@ -308,10 +372,22 @@ export default function TemplateNewPage() {
                 className="h-[560px] w-full rounded-md border border-gray-200 bg-white"
               />
             )}
-            {preview?.outputType === 'text' && (
+            {preview?.previewType === 'gonja' && preview?.outputType === 'text' && (
               <pre className="h-[560px] w-full overflow-auto rounded-md border border-gray-200 bg-white p-3 text-xs text-gray-800">
                 {preview.rendered}
               </pre>
+            )}
+            {preview?.previewType === 'univer_table' && (
+              <UniverTableEditor
+                editorSessionKey="template-preview-new"
+                valueHtml={preview.tableHtml}
+                disabled
+                previewMode
+                showMenu={false}
+                hideExportButton
+                onChange={() => {}}
+                onError={(error) => msgApi.error(error)}
+              />
             )}
           </div>
         </div>

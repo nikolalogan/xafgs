@@ -115,6 +115,8 @@ func NewTemplateRepository() TemplateRepository {
 				Engine:             model.TemplateEngineJinja2,
 				OutputType:         model.TemplateOutputTypeHTML,
 				Status:             model.TemplateStatusActive,
+				TemplateType:       model.TemplateTypeGonja,
+				PreprocessJS:       "return context",
 				Content: `<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -331,6 +333,8 @@ func NewTemplateRepository() TemplateRepository {
 				Engine:             model.TemplateEngineJinja2,
 				OutputType:         model.TemplateOutputTypeHTML,
 				Status:             model.TemplateStatusActive,
+				TemplateType:       model.TemplateTypeGonja,
+				PreprocessJS:       "return context",
 				Content: `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -627,6 +631,8 @@ func (repository *templateRepository) Update(templateID int64, update model.Temp
 	existing.Status = update.Status
 	existing.Content = update.Content
 	existing.DefaultContextJSON = update.DefaultContextJSON
+	existing.TemplateType = update.TemplateType
+	existing.PreprocessJS = update.PreprocessJS
 	existing.UpdatedAt = time.Now().UTC()
 	existing.UpdatedBy = update.UpdatedBy
 	repository.templates[templateID] = existing

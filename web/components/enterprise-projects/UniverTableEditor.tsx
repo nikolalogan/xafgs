@@ -19,6 +19,8 @@ type UniverTableEditorProps = {
   onInteractionDebug?: (phase: 'selection-event' | 'selection-fallback' | 'hover' | 'focus', payload: Record<string, unknown>) => void
   exportFileNamePrefix?: string
   hideExportButton?: boolean
+  showMenu?: boolean
+  previewMode?: boolean
 }
 
 export type SelectionRange = {
@@ -575,6 +577,8 @@ export default function UniverTableEditor({
   onInteractionDebug,
   exportFileNamePrefix = 'univer-export',
   hideExportButton = false,
+  showMenu = true,
+  previewMode = false,
 }: UniverTableEditorProps) {
   const [exporting, setExporting] = useState(false)
   const [univerReady, setUniverReady] = useState(false)
@@ -1174,7 +1178,7 @@ export default function UniverTableEditor({
   }
 
   return (
-    <div className="univer-table-editor-wrapper rounded border border-gray-200 bg-white">
+    <div className={`univer-table-editor-wrapper rounded border border-gray-200 bg-white ${showMenu ? '' : 'univer-hide-menu'} ${previewMode ? 'univer-preview-mode' : ''}`}>
       {!hideExportButton ? (
         <div className="flex justify-end border-b border-gray-100 px-3 py-2">
           <button
@@ -1188,6 +1192,15 @@ export default function UniverTableEditor({
         </div>
       ) : null}
       <div ref={hostRef} tabIndex={0} className="h-[620px] w-full overflow-hidden" />
+      <style jsx global>{`
+        .univer-table-editor-wrapper.univer-hide-menu .univer-toolbar-container,
+        .univer-table-editor-wrapper.univer-hide-menu .univer-topbar {
+          display: none !important;
+        }
+        .univer-table-editor-wrapper.univer-preview-mode .univer-sheet-container {
+          pointer-events: none;
+        }
+      `}</style>
     </div>
   )
 }

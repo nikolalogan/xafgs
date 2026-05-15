@@ -36,7 +36,7 @@ func (repository *PostgresTemplateRepository) FindEntityByID(templateID int64) (
 	err := repository.db.QueryRowContext(ctx, `
 SELECT
   id, template_key, name, description, engine, output_type, status,
-  content, default_context_json,
+  content, default_context_json, template_type, preprocess_js,
   created_at, updated_at, created_by, updated_by
 FROM template
 WHERE id = $1
@@ -50,6 +50,8 @@ WHERE id = $1
 		&template.Status,
 		&template.Content,
 		&defaultContextJSONBytes,
+		&template.TemplateType,
+		&template.PreprocessJS,
 		&template.CreatedAt,
 		&template.UpdatedAt,
 		&template.CreatedBy,
@@ -62,6 +64,9 @@ WHERE id = $1
 		template.DefaultContextJSON = json.RawMessage(`{}`)
 	} else {
 		template.DefaultContextJSON = json.RawMessage(defaultContextJSONBytes)
+	}
+	if strings.TrimSpace(template.TemplateType) == "" {
+		template.TemplateType = model.TemplateTypeGonja
 	}
 	return template, true
 }
@@ -80,7 +85,7 @@ func (repository *PostgresTemplateRepository) FindByTemplateKey(templateKey stri
 	err := repository.db.QueryRowContext(ctx, `
 SELECT
   id, template_key, name, description, engine, output_type, status,
-  content, default_context_json,
+  content, default_context_json, template_type, preprocess_js,
   created_at, updated_at, created_by, updated_by
 FROM template
 WHERE template_key = $1
@@ -94,6 +99,8 @@ WHERE template_key = $1
 		&template.Status,
 		&template.Content,
 		&defaultContextJSONBytes,
+		&template.TemplateType,
+		&template.PreprocessJS,
 		&template.CreatedAt,
 		&template.UpdatedAt,
 		&template.CreatedBy,
@@ -107,6 +114,9 @@ WHERE template_key = $1
 	} else {
 		template.DefaultContextJSON = json.RawMessage(defaultContextJSONBytes)
 	}
+	if strings.TrimSpace(template.TemplateType) == "" {
+		template.TemplateType = model.TemplateTypeGonja
+	}
 	return template, true
 }
 
@@ -115,7 +125,7 @@ func (repository *PostgresTemplateRepository) FindAll() []model.TemplateDTO {
 	defer cancel()
 
 	rows, err := repository.db.QueryContext(ctx, `
-SELECT id, template_key, name, description, engine, output_type, status, created_at, updated_at
+SELECT id, template_key, name, description, engine, output_type, status, template_type, created_at, updated_at
 FROM template
 ORDER BY id ASC
 `)
@@ -135,10 +145,14 @@ ORDER BY id ASC
 			&dto.Engine,
 			&dto.OutputType,
 			&dto.Status,
+			&dto.TemplateType,
 			&dto.CreatedAt,
 			&dto.UpdatedAt,
 		); err != nil {
 			continue
+		}
+		if strings.TrimSpace(dto.TemplateType) == "" {
+			dto.TemplateType = model.TemplateTypeGonja
 		}
 		templates = append(templates, dto)
 	}
@@ -159,19 +173,22 @@ func (repository *PostgresTemplateRepository) Create(template model.Template) mo
 	if len(defaultContext) == 0 {
 		defaultContext = json.RawMessage(`{}`)
 	}
+	if strings.TrimSpace(template.TemplateType) == "" {
+		template.TemplateType = model.TemplateTypeGonja
+	}
 
 	_ = repository.db.QueryRowContext(ctx, `
 INSERT INTO template (
   template_key, name, description, engine, output_type, status,
-  content, default_context_json,
+  content, default_context_json, template_type, preprocess_js,
   created_at, updated_at, created_by, updated_by
 ) VALUES (
   $1, $2, $3, $4, $5, $6,
-  $7, $8::jsonb,
-  $9, $9, $10, $10
+  $7, $8::jsonb, $9, $10,
+  $11, $11, $12, $12
 )
 RETURNING id
-`, template.TemplateKey, template.Name, template.Description, template.Engine, template.OutputType, template.Status, template.Content, string(defaultContext), now, template.CreatedBy).Scan(&template.ID)
+`, template.TemplateKey, template.Name, template.Description, template.Engine, template.OutputType, template.Status, template.Content, string(defaultContext), template.TemplateType, template.PreprocessJS, now, template.CreatedBy).Scan(&template.ID)
 
 	return template.ToDTO()
 }
@@ -185,6 +202,9 @@ func (repository *PostgresTemplateRepository) Update(templateID int64, update mo
 	if len(defaultContext) == 0 {
 		defaultContext = json.RawMessage(`{}`)
 	}
+	if strings.TrimSpace(update.TemplateType) == "" {
+		update.TemplateType = model.TemplateTypeGonja
+	}
 
 	_, err := repository.db.ExecContext(ctx, `
 UPDATE template
@@ -195,10 +215,12 @@ SET
   status = $5,
   content = $6,
   default_context_json = $7::jsonb,
-  updated_at = $8,
-  updated_by = $9
+  template_type = $8,
+  preprocess_js = $9,
+  updated_at = $10,
+  updated_by = $11
 WHERE id = $1
-`, templateID, update.Name, update.Description, update.OutputType, update.Status, update.Content, string(defaultContext), now, update.UpdatedBy)
+`, templateID, update.Name, update.Description, update.OutputType, update.Status, update.Content, string(defaultContext), update.TemplateType, update.PreprocessJS, now, update.UpdatedBy)
 	if err != nil {
 		return model.TemplateDTO{}, false
 	}
