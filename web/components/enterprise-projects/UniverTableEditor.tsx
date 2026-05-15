@@ -21,6 +21,7 @@ type UniverTableEditorProps = {
   hideExportButton?: boolean
   showMenu?: boolean
   previewMode?: boolean
+  renderContext?: Record<string, unknown> | null
 }
 
 export type SelectionRange = {
@@ -84,6 +85,67 @@ const normalizeCellText = (value: string) => String(value || '')
   .replaceAll('\u00A0', ' ')
   .replace(/\s+/g, ' ')
   .trim()
+
+const PLACEHOLDER_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g
+
+const parsePathSegments = (path: string): Array<string | number> => {
+  const segments: Array<string | number> = []
+  const normalized = String(path || '').trim()
+  if (!normalized) {
+    return segments
+  }
+  const tokenPattern = /([^[.\]]+)|\[(\d+)\]/g
+  let match: RegExpExecArray | null
+  while ((match = tokenPattern.exec(normalized)) !== null) {
+    if (match[1]) {
+      segments.push(match[1])
+      continue
+    }
+    if (match[2]) {
+      segments.push(Number.parseInt(match[2], 10))
+    }
+  }
+  return segments
+}
+
+const getValueByPath = (root: Record<string, unknown> | null | undefined, path: string): unknown => {
+  if (!root) {
+    return ''
+  }
+  const segments = parsePathSegments(path)
+  if (segments.length === 0) {
+    return ''
+  }
+  let cursor: unknown = root
+  for (const segment of segments) {
+    if (typeof segment === 'number') {
+      if (!Array.isArray(cursor) || segment < 0 || segment >= cursor.length) {
+        return ''
+      }
+      cursor = cursor[segment]
+      continue
+    }
+    if (!cursor || typeof cursor !== 'object') {
+      return ''
+    }
+    const record = cursor as Record<string, unknown>
+    if (!(segment in record)) {
+      return ''
+    }
+    cursor = record[segment]
+  }
+  return cursor ?? ''
+}
+
+const renderTemplateText = (text: string, renderContext?: Record<string, unknown> | null): string => {
+  if (!text || !renderContext) {
+    return text
+  }
+  return text.replace(PLACEHOLDER_PATTERN, (_match, path: string) => {
+    const value = getValueByPath(renderContext, path)
+    return value === null || value === undefined ? '' : String(value)
+  })
+}
 
 const THOUSANDS_NUMBER_PATTERN = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/
 
@@ -408,7 +470,7 @@ const parseSingleTableElement = (table: HTMLTableElement, tableIndex: number): P
   }
 }
 
-const parseHtmlTablesToWorkbook = (valueHtml: string): ParsedWorkbook => {
+const parseHtmlTablesToWorkbook = (valueHtml: string, renderContext?: Record<string, unknown> | null): ParsedWorkbook => {
   try {
     const normalized = normalizeTableHtmlForParse(valueHtml)
     const parser = new DOMParser()
@@ -428,7 +490,16 @@ const parseHtmlTablesToWorkbook = (valueHtml: string): ParsedWorkbook => {
         },
       }
     }
-    const parsedTables = tables.map((table, index) => parseSingleTableElement(table as HTMLTableElement, index))
+    const parsedTables = tables.map((table, index) => {
+      const parsed = parseSingleTableElement(table as HTMLTableElement, index)
+      if (!renderContext) {
+        return parsed
+      }
+      return {
+        ...parsed,
+        values: parsed.values.map(row => row.map(cell => renderTemplateText(cell, renderContext))),
+      }
+    })
     const hasMeaningfulTable = parsedTables.some(table => table.stats.inputRows > 0 && table.stats.outputRows > 0)
     if (!hasMeaningfulTable) {
       const snippet = normalizeHtml(valueHtml).slice(0, 280)
@@ -579,6 +650,7 @@ export default function UniverTableEditor({
   hideExportButton = false,
   showMenu = true,
   previewMode = false,
+  renderContext = null,
 }: UniverTableEditorProps) {
   const [exporting, setExporting] = useState(false)
   const [univerReady, setUniverReady] = useState(false)
@@ -632,7 +704,7 @@ export default function UniverTableEditor({
           return
         }
         host.innerHTML = ''
-        const parsedWorkbook = parseHtmlTablesToWorkbook(valueHtml)
+        const parsedWorkbook = parseHtmlTablesToWorkbook(valueHtml, renderContext)
         const emitError = (message: string) => {
           const now = Date.now()
           if (lastErrorMessageRef.current === message && now - lastErrorAtRef.current < 2000) {
@@ -1053,7 +1125,7 @@ export default function UniverTableEditor({
         hostRef.current.innerHTML = ''
       }
     }
-  }, [editorSessionKey, disabled])
+  }, [editorSessionKey, disabled, valueHtml, renderContext])
 
   useEffect(() => {
     const api = apiRef.current
