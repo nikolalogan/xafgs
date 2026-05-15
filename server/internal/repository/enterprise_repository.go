@@ -229,7 +229,6 @@ func normalizeAggregate(aggregate model.EnterpriseAggregate) model.EnterpriseAgg
 	copySubjects := make([]model.EnterpriseFinanceSubject, 0, len(aggregate.FinanceSubjects))
 	for i, item := range aggregate.FinanceSubjects {
 		item.ID = int64(i + 1)
-		item.OrderNo = i + 1
 		copySubjects = append(copySubjects, item)
 	}
 
@@ -256,6 +255,14 @@ func normalizeAggregate(aggregate model.EnterpriseAggregate) model.EnterpriseAgg
 	aggregate.Shareholders = copyShareholders
 	aggregate.FinanceSnapshot = finance
 	aggregate.FinancialReports = append([]model.EnterpriseFinancialReport{}, aggregate.FinancialReports...)
-	aggregate.FinancialReportItems = append([]model.EnterpriseFinancialReportItem{}, aggregate.FinancialReportItems...)
+	copyReportItems := make([]model.EnterpriseFinancialReportItem, 0, len(aggregate.FinancialReportItems))
+	for i, item := range aggregate.FinancialReportItems {
+		item.ID = int64(i + 1)
+		if item.OrderNo <= 0 {
+			item.OrderNo = i + 1
+		}
+		copyReportItems = append(copyReportItems, item)
+	}
+	aggregate.FinancialReportItems = copyReportItems
 	return aggregate
 }

@@ -187,7 +187,7 @@ func parseFinancialReports(reportValue, itemValue any, result *model.EnterpriseS
 		})
 	}
 	itemArr, _ := itemValue.([]any)
-	for _, row := range itemArr {
+	for i, row := range itemArr {
 		m, ok := row.(map[string]any)
 		if !ok {
 			continue
@@ -197,7 +197,12 @@ func parseFinancialReports(reportValue, itemValue any, result *model.EnterpriseS
 		if okValue {
 			ptr = &value
 		}
-		items = append(items, model.EnterpriseFinancialReportItem{SubjectID: int64Value(m["subject_id"]), Value: ptr})
+		items = append(items, model.EnterpriseFinancialReportItem{
+			FinancialReportID: int64Value(m["financial_report_id"]),
+			SubjectID:         int64Value(m["subject_id"]),
+			OrderNo:           i + 1,
+			Value:             ptr,
+		})
 	}
 	return reports, items
 }

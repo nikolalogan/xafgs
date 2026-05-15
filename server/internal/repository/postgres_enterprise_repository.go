@@ -522,13 +522,13 @@ INSERT INTO enterprise_finance_snapshot (
 		return err
 	}
 	subjectByID := map[int64]int64{}
-	for i, item := range aggregate.FinanceSubjects {
+	for _, item := range aggregate.FinanceSubjects {
 		var subjectID int64
 		if err := tx.QueryRowContext(ctx, `
-INSERT INTO enterprise_finance_subject (enterprise_id, subject_name, subject_type, order_no)
-VALUES ($1, $2, $3, $4)
+INSERT INTO enterprise_finance_subject (enterprise_id, subject_name, subject_type)
+VALUES ($1, $2, $3)
 RETURNING id
-`, aggregate.Enterprise.ID, strings.TrimSpace(item.SubjectName), strings.TrimSpace(item.SubjectType), i+1).Scan(&subjectID); err != nil {
+`, aggregate.Enterprise.ID, strings.TrimSpace(item.SubjectName), strings.TrimSpace(item.SubjectType)).Scan(&subjectID); err != nil {
 			return err
 		}
 		if item.ID > 0 {
@@ -577,9 +577,9 @@ RETURNING id
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO enterprise_financial_report_item (financial_report_id, subject_id, value, created_at, updated_at, created_by, updated_by)
-VALUES ($1,$2,$3,$4,$4,$5,$5)
-`, reportID, subjectID, item.Value, now, aggregate.Enterprise.UpdatedBy); err != nil {
+INSERT INTO enterprise_financial_report_item (financial_report_id, subject_id, order_no, value, created_at, updated_at, created_by, updated_by)
+VALUES ($1,$2,$3,$4,$5,$5,$6,$6)
+`, reportID, subjectID, item.OrderNo, item.Value, now, aggregate.Enterprise.UpdatedBy); err != nil {
 			return err
 		}
 	}
@@ -813,13 +813,13 @@ WHERE enterprise_id = $1
 		aggregate.FinanceSnapshot = &snapshot
 	}
 
-	rows, err = query(`SELECT id, subject_name, subject_type, order_no FROM enterprise_finance_subject WHERE enterprise_id = $1 ORDER BY order_no ASC, id ASC`, enterpriseID)
+	rows, err = query(`SELECT id, subject_name, subject_type FROM enterprise_finance_subject WHERE enterprise_id = $1 ORDER BY id ASC`, enterpriseID)
 	if err != nil {
 		return model.EnterpriseAggregate{}, false
 	}
 	for rows.Next() {
 		var row model.EnterpriseFinanceSubject
-		if err := rows.Scan(&row.ID, &row.SubjectName, &row.SubjectType, &row.OrderNo); err == nil {
+		if err := rows.Scan(&row.ID, &row.SubjectName, &row.SubjectType); err == nil {
 			aggregate.FinanceSubjects = append(aggregate.FinanceSubjects, row)
 		}
 	}
@@ -853,13 +853,13 @@ WHERE enterprise_id = $1
 	}
 	_ = rows.Close()
 	for _, reportID := range reportIDs {
-		itemRows, queryErr := query(`SELECT id, financial_report_id, subject_id, value FROM enterprise_financial_report_item WHERE financial_report_id = $1 ORDER BY id ASC`, reportID)
+		itemRows, queryErr := query(`SELECT id, financial_report_id, subject_id, order_no, value FROM enterprise_financial_report_item WHERE financial_report_id = $1 ORDER BY order_no ASC, id ASC`, reportID)
 		if queryErr != nil {
 			return model.EnterpriseAggregate{}, false
 		}
 		for itemRows.Next() {
 			var row model.EnterpriseFinancialReportItem
-			if scanErr := itemRows.Scan(&row.ID, &row.FinancialReportID, &row.SubjectID, floatPtrScanner{dst: &row.Value}); scanErr == nil {
+			if scanErr := itemRows.Scan(&row.ID, &row.FinancialReportID, &row.SubjectID, &row.OrderNo, floatPtrScanner{dst: &row.Value}); scanErr == nil {
 				row.FinancialReportID = reportOrderMap[row.FinancialReportID]
 				aggregate.FinancialReportItems = append(aggregate.FinancialReportItems, row)
 			}

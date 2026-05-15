@@ -16,5 +16,6 @@ type EnterpriseFinancialReportItem struct {
 	BaseEntity
 	FinancialReportID int64    `json:"financialReportId"`
 	SubjectID         int64    `json:"subjectId"`
+	OrderNo           int      `json:"orderNo"`
 	Value             *float64 `json:"value,omitempty"`
 }

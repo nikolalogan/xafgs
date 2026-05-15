@@ -691,8 +691,7 @@ CREATE TABLE IF NOT EXISTS enterprise_finance_subject (
   id BIGSERIAL PRIMARY KEY,
   enterprise_id BIGINT NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
   subject_name VARCHAR(256) NOT NULL DEFAULT '',
-  subject_type VARCHAR(128) NOT NULL DEFAULT '',
-  order_no INT NOT NULL DEFAULT 1
+  subject_type VARCHAR(128) NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS enterprise_shareholder (
@@ -723,6 +722,7 @@ CREATE TABLE IF NOT EXISTS enterprise_financial_report_item (
   id BIGSERIAL PRIMARY KEY,
   financial_report_id BIGINT NOT NULL REFERENCES enterprise_financial_report(id) ON DELETE CASCADE,
   subject_id BIGINT NOT NULL REFERENCES enterprise_finance_subject(id) ON DELETE RESTRICT,
+  order_no INT NOT NULL DEFAULT 1,
   value NUMERIC(20, 4),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -751,10 +751,9 @@ CREATE INDEX IF NOT EXISTS idx_enterprise_public_opinion_enterprise_order ON ent
 CREATE INDEX IF NOT EXISTS idx_enterprise_bond_tender_enterprise_order ON enterprise_bond_tender(enterprise_id, order_no);
 CREATE INDEX IF NOT EXISTS idx_enterprise_bond_detail_enterprise_order ON enterprise_bond_detail(enterprise_id, order_no);
 CREATE INDEX IF NOT EXISTS idx_enterprise_bond_registration_enterprise_order ON enterprise_bond_registration(enterprise_id, order_no);
-CREATE INDEX IF NOT EXISTS idx_enterprise_finance_subject_enterprise_order ON enterprise_finance_subject(enterprise_id, order_no);
 CREATE INDEX IF NOT EXISTS idx_enterprise_shareholder_enterprise_order ON enterprise_shareholder(enterprise_id, order_no);
 CREATE INDEX IF NOT EXISTS idx_enterprise_financial_report_enterprise_year_month ON enterprise_financial_report(enterprise_id, year, month);
-CREATE INDEX IF NOT EXISTS idx_enterprise_financial_report_item_report_id ON enterprise_financial_report_item(financial_report_id);
+CREATE INDEX IF NOT EXISTS idx_enterprise_financial_report_item_report_order ON enterprise_financial_report_item(financial_report_id, order_no, id);
 CREATE INDEX IF NOT EXISTS idx_region_admin_code ON region(admin_code);
 CREATE INDEX IF NOT EXISTS idx_region_economy_region_year ON region_economy(region_id, year DESC);
 CREATE INDEX IF NOT EXISTS idx_region_rank_region_year ON region_rank(region_id, year DESC);
@@ -974,6 +973,20 @@ ALTER TABLE enterprise_financial_report
 ADD COLUMN IF NOT EXISTS report_type VARCHAR(128) NOT NULL DEFAULT '';
 ALTER TABLE enterprise_financial_report
 ADD COLUMN IF NOT EXISTS report_date VARCHAR(64) NOT NULL DEFAULT '';
+ALTER TABLE enterprise_finance_subject
+DROP COLUMN IF EXISTS order_no;
+ALTER TABLE enterprise_financial_report_item
+ADD COLUMN IF NOT EXISTS order_no INT NOT NULL DEFAULT 1;
+DROP INDEX IF EXISTS idx_enterprise_finance_subject_enterprise_order;
+DROP INDEX IF EXISTS idx_enterprise_financial_report_item_report_id;
+UPDATE enterprise_financial_report_item item
+SET order_no = seq.rn
+FROM (
+  SELECT id, row_number() OVER (PARTITION BY financial_report_id ORDER BY id ASC) AS rn
+  FROM enterprise_financial_report_item
+) seq
+WHERE item.id = seq.id;
+CREATE INDEX IF NOT EXISTS idx_enterprise_financial_report_item_report_order ON enterprise_financial_report_item(financial_report_id, order_no, id);
 CREATE TABLE IF NOT EXISTS enterprise_snapshot_extension (
   enterprise_id BIGINT PRIMARY KEY REFERENCES enterprise(id) ON DELETE CASCADE,
   source_snapshot_id VARCHAR(128) NOT NULL DEFAULT '',
