@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { LogLevel, Univer } from '@univerjs/core'
+import { LocaleType, LogLevel, Univer } from '@univerjs/core'
 import { FUniver } from '@univerjs/core/facade'
 import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core'
+import zhCN from '@univerjs/preset-sheets-core/lib/locales/zh-CN'
 
 type UniverTableEditorProps = {
   editorSessionKey: string
@@ -114,26 +115,72 @@ export default function UniverTableEditor({
   onError,
 }: UniverTableEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const univerRef = useRef<Univer | null>(null)
+  const univerApiRef = useRef<any>(null)
+  const workbookRef = useRef<any>(null)
+  const disposableRef = useRef<{ dispose?: () => void } | null>(null)
+  const isMountedRef = useRef(false)
+  const isApplyingExternalRef = useRef(false)
   const lastEmittedRef = useRef('')
+  const lastSyncedExternalHtmlRef = useRef('')
   const onChangeRef = useRef(onChange)
+  const onErrorRef = useRef(onError)
 
   onChangeRef.current = onChange
+  onErrorRef.current = onError
 
   useEffect(() => {
-    if (!containerRef.current) {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) {
       return
     }
 
+    const safeDispose = () => {
+      const disposable = disposableRef.current
+      const univerAPI = univerApiRef.current
+      const univer = univerRef.current
+      disposableRef.current = null
+      univerApiRef.current = null
+      workbookRef.current = null
+      univerRef.current = null
+      queueMicrotask(() => {
+        try {
+          disposable?.dispose?.()
+        } catch {}
+        try {
+          univerAPI?.dispose?.()
+        } catch {}
+        try {
+          univer?.dispose?.()
+        } catch {}
+      })
+    }
+
+    safeDispose()
+
     try {
-      const grid = parseHtmlToGrid(valueHtml)
-      const univer = new Univer({ logLevel: LogLevel.WARN })
-      const preset = UniverSheetsCorePreset({ container: containerRef.current })
+      const univer = new Univer({
+        logLevel: LogLevel.WARN,
+        locale: LocaleType.ZH_CN,
+        locales: {
+          [LocaleType.ZH_CN]: zhCN,
+        },
+      })
+      const preset = UniverSheetsCorePreset({ container })
       for (const pluginEntry of preset.plugins) {
         const [plugin, options] = Array.isArray(pluginEntry) ? pluginEntry : [pluginEntry, undefined]
         univer.registerPlugin(plugin as any, options as any)
       }
       const univerAPI = FUniver.newAPI(univer)
-
+      const initialHtml = valueHtml
+      const grid = parseHtmlToGrid(initialHtml)
       const workbook = univerAPI.createWorkbook({
         id: `template-table-${editorSessionKey}`,
         name: 'Sheet1',
@@ -154,25 +201,74 @@ export default function UniverTableEditor({
       }
 
       const disposable = univerAPI.addEvent(univerAPI.Event.CommandExecuted, () => {
+        if (!isMountedRef.current || isApplyingExternalRef.current) {
+          return
+        }
         const snapshot = workbook.getSnapshot()
         const nextHtml = serializeGridToHtml(snapshotToGrid(snapshot))
-        if (nextHtml === lastEmittedRef.current || nextHtml === valueHtml) {
+        if (nextHtml === lastEmittedRef.current || nextHtml === lastSyncedExternalHtmlRef.current) {
           return
         }
         lastEmittedRef.current = nextHtml
         onChangeRef.current(nextHtml)
       })
 
+      univerRef.current = univer
+      univerApiRef.current = univerAPI
+      workbookRef.current = workbook
+      disposableRef.current = disposable
+      lastSyncedExternalHtmlRef.current = initialHtml
+
       return () => {
-        disposable?.dispose?.()
-        univerAPI.dispose()
-        univer.dispose()
+        safeDispose()
       }
     } catch (error) {
-      onError?.(error instanceof Error ? error.message : '初始化 Univer 失败')
+      onErrorRef.current?.(error instanceof Error ? error.message : '初始化 Univer 失败')
       return undefined
     }
-  }, [disabled, editorSessionKey, onError, valueHtml])
+  }, [editorSessionKey, valueHtml])
+
+  useEffect(() => {
+    const workbook = workbookRef.current
+    if (!workbook) {
+      return
+    }
+    if (lastSyncedExternalHtmlRef.current === valueHtml) {
+      return
+    }
+    const currentHtml = serializeGridToHtml(snapshotToGrid(workbook.getSnapshot()))
+    if (currentHtml === valueHtml) {
+      lastSyncedExternalHtmlRef.current = valueHtml
+      return
+    }
+    isApplyingExternalRef.current = true
+    try {
+      const grid = parseHtmlToGrid(valueHtml)
+      const nextSnapshot = workbook.getSnapshot()
+      const sheet = Object.values(nextSnapshot?.sheets || {})?.[0] as any
+      if (sheet) {
+        sheet.cellData = gridToCellData(grid)
+        sheet.rowCount = Math.max(20, grid.length)
+        sheet.columnCount = Math.max(10, grid[0]?.length || 1)
+      }
+      workbook.setSnapshot(nextSnapshot)
+      lastSyncedExternalHtmlRef.current = valueHtml
+    } catch (error) {
+      onErrorRef.current?.(error instanceof Error ? error.message : '同步外部内容失败')
+    } finally {
+      queueMicrotask(() => {
+        isApplyingExternalRef.current = false
+      })
+    }
+  }, [valueHtml])
+
+  useEffect(() => {
+    const workbook = workbookRef.current
+    if (!workbook || typeof workbook?.setEditable !== 'function') {
+      return
+    }
+    workbook.setEditable(!disabled ? true : false)
+  }, [disabled])
 
   return (
     <div className="rounded border border-gray-200 bg-white">
