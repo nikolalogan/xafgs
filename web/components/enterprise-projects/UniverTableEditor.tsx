@@ -107,6 +107,20 @@ const gridToCellData = (grid: Grid) => {
   return cellData
 }
 
+const applyGridToWorkbook = (workbook: any, grid: Grid) => {
+  const worksheet = workbook?.getActiveSheet?.()
+  if (!worksheet) {
+    throw new Error('未找到活动工作表')
+  }
+  worksheet.clear({ contentsOnly: true })
+  const rows = Math.max(1, grid.length)
+  const cols = Math.max(1, grid[0]?.length || 1)
+  const normalizedValues = Array.from({ length: rows }, (_, rowIdx) =>
+    Array.from({ length: cols }, (_, colIdx) => grid[rowIdx]?.[colIdx] ?? ''),
+  )
+  worksheet.getRange(0, 0, rows, cols).setValues(normalizedValues)
+}
+
 export default function UniverTableEditor({
   editorSessionKey,
   valueHtml,
@@ -251,14 +265,7 @@ export default function UniverTableEditor({
     isApplyingExternalRef.current = true
     try {
       const grid = parseHtmlToGrid(valueHtml)
-      const nextSnapshot = workbook.getSnapshot()
-      const sheet = Object.values(nextSnapshot?.sheets || {})?.[0] as any
-      if (sheet) {
-        sheet.cellData = gridToCellData(grid)
-        sheet.rowCount = Math.max(20, grid.length)
-        sheet.columnCount = Math.max(10, grid[0]?.length || 1)
-      }
-      workbook.setSnapshot(nextSnapshot)
+      applyGridToWorkbook(workbook, grid)
       lastSyncedExternalHtmlRef.current = valueHtml
       setInitError(null)
     } catch (error) {
