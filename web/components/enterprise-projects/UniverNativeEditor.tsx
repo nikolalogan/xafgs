@@ -169,7 +169,6 @@ export default function UniverNativeEditor({
           localeCore,
           localeUI,
           docs,
-          localeDocs,
           docsUi,
           localeDocsUi,
           drawing,
@@ -186,7 +185,6 @@ export default function UniverNativeEditor({
           import('@univerjs/design/locale/zh-CN'),
           import('@univerjs/ui/locale/zh-CN'),
           import('@univerjs/docs'),
-          import('@univerjs/docs/locale/zh-CN'),
           import('@univerjs/docs-ui'),
           import('@univerjs/docs-ui/locale/zh-CN'),
           import('@univerjs/drawing'),
@@ -206,7 +204,6 @@ export default function UniverNativeEditor({
             [core.LocaleType.ZH_CN]: {
               ...localeCore.default,
               ...localeUI.default,
-              ...localeDocs.default,
               ...localeDocsUi.default,
               ...localeSheets.default,
               ...localeSheetsUi.default,
