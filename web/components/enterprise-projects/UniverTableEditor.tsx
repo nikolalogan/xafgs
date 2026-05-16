@@ -15,6 +15,10 @@ type UniverTableEditorProps = {
 }
 
 type Grid = string[][]
+type DebugEvent = {
+  at: string
+  summary: string
+}
 
 const escapeHtml = (value: string) => value
   .replaceAll('&', '&amp;')
@@ -121,6 +125,20 @@ const applyGridToWorkbook = (workbook: any, grid: Grid) => {
   worksheet.getRange(0, 0, rows, cols).setValues(normalizedValues)
 }
 
+const forceWorkbookRender = (workbook: any) => {
+  requestAnimationFrame(() => {
+    try {
+      const worksheet = workbook?.getActiveSheet?.()
+      if (!worksheet) {
+        return
+      }
+      const range = worksheet.getRange(0, 0, 1, 1)
+      const values = typeof range?.getValues === 'function' ? range.getValues() : [['']]
+      range.setValues(values)
+    } catch {}
+  })
+}
+
 export default function UniverTableEditor({
   editorSessionKey,
   valueHtml,
@@ -130,6 +148,14 @@ export default function UniverTableEditor({
 }: UniverTableEditorProps) {
   const [initError, setInitError] = useState<string | null>(null)
   const [isInitializing, setIsInitializing] = useState(true)
+  const [isRenderRetrying, setIsRenderRetrying] = useState(false)
+  const [rebuildNonce, setRebuildNonce] = useState(0)
+  const [debugState, setDebugState] = useState<Record<'init-attempt' | 'init-success' | 'sync-applied' | 'sync-fallback', DebugEvent | null>>({
+    'init-attempt': null,
+    'init-success': null,
+    'sync-applied': null,
+    'sync-fallback': null,
+  })
   const containerRef = useRef<HTMLDivElement | null>(null)
   const univerRef = useRef<Univer | null>(null)
   const univerApiRef = useRef<any>(null)
@@ -139,6 +165,7 @@ export default function UniverTableEditor({
   const isApplyingExternalRef = useRef(false)
   const lastEmittedRef = useRef('')
   const lastSyncedExternalHtmlRef = useRef('')
+  const pendingInitialHtmlRef = useRef<string | null>(null)
   const onChangeRef = useRef(onChange)
   const onErrorRef = useRef(onError)
 
@@ -153,11 +180,6 @@ export default function UniverTableEditor({
   }, [])
 
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) {
-      return
-    }
-
     const safeDispose = () => {
       const disposable = disposableRef.current
       const univerAPI = univerApiRef.current
@@ -178,76 +200,105 @@ export default function UniverTableEditor({
         } catch {}
       })
     }
+    let canceled = false
+    let rafId = 0
     setIsInitializing(true)
     setInitError(null)
+    setIsRenderRetrying(false)
 
-    try {
-      const univer = new Univer({
-        logLevel: LogLevel.WARN,
-        locale: LocaleType.ZH_CN,
-        locales: {
-          [LocaleType.ZH_CN]: zhCN,
-        },
-      })
-      const preset = UniverSheetsCorePreset({ container })
-      for (const pluginEntry of preset.plugins) {
-        const [plugin, options] = Array.isArray(pluginEntry) ? pluginEntry : [pluginEntry, undefined]
-        univer.registerPlugin(plugin as any, options as any)
-      }
-      const univerAPI = FUniver.newAPI(univer)
-      const initialHtml = valueHtml
-      const grid = parseHtmlToGrid(initialHtml)
-      const workbook = univerAPI.createWorkbook({
-        id: `template-table-${editorSessionKey}`,
-        name: 'Sheet1',
-        sheetOrder: ['sheet-1'],
-        sheets: {
-          'sheet-1': {
-            id: 'sheet-1',
-            name: 'Sheet1',
-            cellData: gridToCellData(grid),
-            rowCount: Math.max(20, grid.length),
-            columnCount: Math.max(10, grid[0]?.length || 1),
-          },
-        },
-      }) as any
-
-      if (disabled && typeof workbook?.setEditable === 'function') {
-        workbook.setEditable(false)
-      }
-
-      const disposable = univerAPI.addEvent(univerAPI.Event.CommandExecuted, () => {
-        if (!isMountedRef.current || isApplyingExternalRef.current) {
-          return
-        }
-        const snapshot = workbook.getSnapshot()
-        const nextHtml = serializeGridToHtml(snapshotToGrid(snapshot))
-        if (nextHtml === lastEmittedRef.current || nextHtml === lastSyncedExternalHtmlRef.current) {
-          return
-        }
-        lastEmittedRef.current = nextHtml
-        onChangeRef.current(nextHtml)
-      })
-
-      univerRef.current = univer
-      univerApiRef.current = univerAPI
-      workbookRef.current = workbook
-      disposableRef.current = disposable
-      lastSyncedExternalHtmlRef.current = initialHtml
-      setIsInitializing(false)
-      setInitError(null)
-
-      return () => {
-        safeDispose()
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '初始化 Univer 失败'
-      setInitError(message)
-      setIsInitializing(false)
-      onErrorRef.current?.(message)
-      return undefined
+    const pushDebug = (name: 'init-attempt' | 'init-success' | 'sync-applied' | 'sync-fallback', summary: string) => {
+      const nextEvent: DebugEvent = { at: new Date().toLocaleTimeString(), summary }
+      setDebugState(previous => ({ ...previous, [name]: nextEvent }))
     }
-  }, [editorSessionKey])
+
+    const init = (attempt: number) => {
+      if (canceled) {
+        return
+      }
+      pushDebug('init-attempt', `attempt=${attempt}`)
+      const container = containerRef.current
+      if (!container || !container.isConnected || container.clientHeight <= 0) {
+        setIsRenderRetrying(true)
+        rafId = window.requestAnimationFrame(() => init(attempt + 1))
+        return
+      }
+      setIsRenderRetrying(false)
+      try {
+        const univer = new Univer({
+          logLevel: LogLevel.WARN,
+          locale: LocaleType.ZH_CN,
+          locales: {
+            [LocaleType.ZH_CN]: zhCN,
+          },
+        })
+        const preset = UniverSheetsCorePreset({ container })
+        for (const pluginEntry of preset.plugins) {
+          const [plugin, options] = Array.isArray(pluginEntry) ? pluginEntry : [pluginEntry, undefined]
+          univer.registerPlugin(plugin as any, options as any)
+        }
+        const univerAPI = FUniver.newAPI(univer)
+        const initialHtml = pendingInitialHtmlRef.current ?? valueHtml
+        pendingInitialHtmlRef.current = null
+        const grid = parseHtmlToGrid(initialHtml)
+        const workbook = univerAPI.createWorkbook({
+          id: `template-table-${editorSessionKey}`,
+          name: 'Sheet1',
+          sheetOrder: ['sheet-1'],
+          sheets: {
+            'sheet-1': {
+              id: 'sheet-1',
+              name: 'Sheet1',
+              cellData: gridToCellData(grid),
+              rowCount: Math.max(20, grid.length),
+              columnCount: Math.max(10, grid[0]?.length || 1),
+            },
+          },
+        }) as any
+
+        if (disabled && typeof workbook?.setEditable === 'function') {
+          workbook.setEditable(false)
+        }
+
+        forceWorkbookRender(workbook)
+
+        const disposable = univerAPI.addEvent(univerAPI.Event.CommandExecuted, () => {
+          if (!isMountedRef.current || isApplyingExternalRef.current) {
+            return
+          }
+          const snapshot = workbook.getSnapshot()
+          const nextHtml = serializeGridToHtml(snapshotToGrid(snapshot))
+          if (nextHtml === lastEmittedRef.current || nextHtml === lastSyncedExternalHtmlRef.current) {
+            return
+          }
+          lastEmittedRef.current = nextHtml
+          onChangeRef.current(nextHtml)
+        })
+
+        univerRef.current = univer
+        univerApiRef.current = univerAPI
+        workbookRef.current = workbook
+        disposableRef.current = disposable
+        lastSyncedExternalHtmlRef.current = initialHtml
+        setIsInitializing(false)
+        setInitError(null)
+        pushDebug('init-success', `attempt=${attempt}`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '初始化 Univer 失败'
+        setInitError(message)
+        setIsInitializing(false)
+        onErrorRef.current?.(message)
+      }
+    }
+
+    init(1)
+    return () => {
+      canceled = true
+      if (rafId) {
+        window.cancelAnimationFrame(rafId)
+      }
+      safeDispose()
+    }
+  }, [editorSessionKey, rebuildNonce, valueHtml, disabled])
 
   useEffect(() => {
     const workbook = workbookRef.current
@@ -266,8 +317,23 @@ export default function UniverTableEditor({
     try {
       const grid = parseHtmlToGrid(valueHtml)
       applyGridToWorkbook(workbook, grid)
+      forceWorkbookRender(workbook)
       lastSyncedExternalHtmlRef.current = valueHtml
       setInitError(null)
+      const snapshot = workbook.getSnapshot()
+      const nextHtml = serializeGridToHtml(snapshotToGrid(snapshot))
+      setDebugState(previous => ({
+        ...previous,
+        'sync-applied': { at: new Date().toLocaleTimeString(), summary: `len=${valueHtml.length}` },
+      }))
+      if (!/<td[\s>]/i.test(nextHtml)) {
+        pendingInitialHtmlRef.current = valueHtml
+        setDebugState(previous => ({
+          ...previous,
+          'sync-fallback': { at: new Date().toLocaleTimeString(), summary: 'snapshot-empty, rebuild-session' },
+        }))
+        setRebuildNonce(previous => previous + 1)
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : '同步外部内容失败'
       setInitError(message)
@@ -306,7 +372,20 @@ export default function UniverTableEditor({
               正在加载表格编辑器...
             </div>
           ) : null}
+          {!isInitializing && isRenderRetrying ? (
+            <div className="pointer-events-none absolute inset-0 z-10 flex h-[560px] items-center justify-center bg-white/75 text-sm text-gray-500">
+              编辑器已初始化，正在重试渲染...
+            </div>
+          ) : null}
           <div ref={containerRef} style={{ height: 560 }} />
+          {process.env.NODE_ENV === 'development' ? (
+            <div className="border-t border-gray-100 bg-gray-50 px-3 py-2 text-[11px] leading-5 text-gray-500">
+              <div>init-attempt: {debugState['init-attempt'] ? `${debugState['init-attempt'].at} ${debugState['init-attempt'].summary}` : '-'}</div>
+              <div>init-success: {debugState['init-success'] ? `${debugState['init-success'].at} ${debugState['init-success'].summary}` : '-'}</div>
+              <div>sync-applied: {debugState['sync-applied'] ? `${debugState['sync-applied'].at} ${debugState['sync-applied'].summary}` : '-'}</div>
+              <div>sync-fallback: {debugState['sync-fallback'] ? `${debugState['sync-fallback'].at} ${debugState['sync-fallback'].summary}` : '-'}</div>
+            </div>
+          ) : null}
         </div>
       )}
     </div>

@@ -399,6 +399,7 @@ export default function TemplateEditPage() {
                   </div>
                 )}
                 <UniverTableEditor
+                  key={`table-template-content-edit-${templateIDValue}-${templateType || 'gonja'}`}
                   editorSessionKey={`template-content-edit-${templateIDValue}`}
                   valueHtml={hasParseableTable(contentValue) ? getTableTemplateHtml(contentValue) : EMPTY_TABLE_HTML}
                   onChange={nextHtml => form.setFieldValue('content', nextHtml)}
