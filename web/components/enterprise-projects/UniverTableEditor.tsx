@@ -685,6 +685,7 @@ export default function UniverTableEditor({
   const applyingDisplaySyncRef = useRef(false)
   const lastValueHtmlRef = useRef(normalizeHtml(valueHtml))
   const renderThrottleRef = useRef<number>(0)
+  const isSheetEditingRef = useRef(false)
 
   const renderContextSignature = useMemo(() => JSON.stringify(renderContext || null), [renderContext])
 
@@ -762,6 +763,7 @@ export default function UniverTableEditor({
       }
       valueChangedListenerRef.current = null
       selectionListenerRef.current = null
+      isSheetEditingRef.current = false
       if (univerRef.current?.dispose) {
         try {
           univerRef.current.dispose()
@@ -1104,12 +1106,23 @@ export default function UniverTableEditor({
           tryEmitHover(-1, null)
         }
         const SHEET_FOCUS_SELECTOR = '.univer-sheet-container, .univer-sheet-canvas, .univer-scrollbar__viewport'
-        const isTargetInsideSheetArea = (target: EventTarget | null) => {
-          const element = target as HTMLElement | null
-          if (!element || !hostElement) {
+        const blurToolbarEditableIfFocused = () => {
+          const active = document.activeElement as HTMLElement | null
+          if (!active || !hostElement || !hostElement.contains(active)) {
             return false
           }
-          return Boolean(element.closest(SHEET_FOCUS_SELECTOR) && hostElement.contains(element))
+          if (!active.closest('.univer-toolbar-container, .univer-toolbar')) {
+            return false
+          }
+          if (!active.matches('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]')) {
+            return false
+          }
+          if (typeof active.blur === 'function') {
+            active.blur()
+            onInteractionDebugRef.current?.('focus', { focused: false, target: 'toolbar-editable-blur' })
+            return true
+          }
+          return false
         }
         const isFocusInsideHost = () => {
           const active = document.activeElement
@@ -1135,27 +1148,59 @@ export default function UniverTableEditor({
           hostElement.focus()
           onInteractionDebugRef.current?.('focus', { focused: true, target: 'host' })
         }
-        const handlePointerUp = (event: PointerEvent) => {
-          if (!isTargetInsideSheetArea(event.target)) {
+        const cellPointerDownEventName = (api.Event as any)?.CellPointerDown
+        const cellPointerUpEventName = (api.Event as any)?.CellPointerUp
+        const cellClickedEventName = (api.Event as any)?.CellClicked
+        const sheetEditStartedEventName = (api.Event as any)?.SheetEditStarted
+        const sheetEditEndedEventName = (api.Event as any)?.SheetEditEnded
+        const sheetPointerDisposables: any[] = []
+        const bindSheetFocusEvent = (eventName: any, source: string) => {
+          if (!eventName) {
             return
           }
-          focusEditableInHost()
-          syncSelectionFromCurrent('selection-fallback', 'pointerup')
+          const disposable = api.addEvent(eventName, () => {
+            blurToolbarEditableIfFocused()
+            focusEditableInHost()
+            window.requestAnimationFrame(() => {
+              syncSelectionFromCurrent('selection-fallback', source)
+            })
+          })
+          sheetPointerDisposables.push(disposable)
+        }
+        bindSheetFocusEvent(cellPointerDownEventName, 'cell-pointerdown')
+        bindSheetFocusEvent(cellPointerUpEventName, 'cell-pointerup')
+        if (!cellPointerDownEventName && !cellPointerUpEventName) {
+          bindSheetFocusEvent(cellClickedEventName, 'cell-clicked')
+        }
+        if (sheetEditStartedEventName) {
+          const disposable = api.addEvent(sheetEditStartedEventName, () => {
+            isSheetEditingRef.current = true
+          })
+          sheetPointerDisposables.push(disposable)
+        }
+        if (sheetEditEndedEventName) {
+          const disposable = api.addEvent(sheetEditEndedEventName, () => {
+            isSheetEditingRef.current = false
+          })
+          sheetPointerDisposables.push(disposable)
         }
         const handleMouseUp = () => {
           syncSelectionFromCurrent('selection-fallback', 'mouseup')
-        }
-        const handlePointerDown = (event: PointerEvent) => {
-          if (!isTargetInsideSheetArea(event.target)) {
-            return
-          }
-          focusEditableInHost()
         }
         const handleKeySelection = (event: KeyboardEvent) => {
           const isArrowKey = event.key === 'ArrowUp'
             || event.key === 'ArrowDown'
             || event.key === 'ArrowLeft'
             || event.key === 'ArrowRight'
+          const isPrintableKey = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey
+          if (isPrintableKey && isFocusInsideSheetArea() && !isSheetEditingRef.current) {
+            blurToolbarEditableIfFocused()
+            try {
+              const activeWorkbook = api?.getActiveWorkbook?.() as any
+              activeWorkbook?.startEditing?.()
+              isSheetEditingRef.current = true
+            } catch {}
+          }
           if (!isArrowKey || !isFocusInsideHost() || !isFocusInsideSheetArea()) {
             return
           }
@@ -1166,8 +1211,6 @@ export default function UniverTableEditor({
         }
         hostElement?.addEventListener('pointermove', handlePointerMove, { passive: true })
         hostElement?.addEventListener('pointerleave', handlePointerLeave)
-        hostElement?.addEventListener('pointerdown', handlePointerDown)
-        hostElement?.addEventListener('pointerup', handlePointerUp)
         hostElement?.addEventListener('mouseup', handleMouseUp)
         hostElement?.addEventListener('keydown', handleKeySelection)
         hostElement?.addEventListener('keyup', handleKeySelection)
@@ -1185,13 +1228,16 @@ export default function UniverTableEditor({
         ;(hostElement as any).__univerHoverCleanup = () => {
           hostElement?.removeEventListener('pointermove', handlePointerMove as EventListener)
           hostElement?.removeEventListener('pointerleave', handlePointerLeave as EventListener)
-          hostElement?.removeEventListener('pointerdown', handlePointerDown as EventListener)
-          hostElement?.removeEventListener('pointerup', handlePointerUp as EventListener)
           hostElement?.removeEventListener('mouseup', handleMouseUp as EventListener)
           hostElement?.removeEventListener('keydown', handleKeySelection as EventListener)
           hostElement?.removeEventListener('keyup', handleKeySelection as EventListener)
           window.removeEventListener('keydown', handleKeySelection as EventListener, true)
           window.removeEventListener('keyup', handleKeySelection as EventListener, true)
+          for (const disposable of sheetPointerDisposables) {
+            try {
+              disposable?.dispose?.()
+            } catch {}
+          }
         }
         univerRef.current = univer
         apiRef.current = api
