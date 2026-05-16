@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
@@ -78,7 +78,6 @@ export default function TemplateEditPage() {
   const contentValue = Form.useWatch('content', form)
   const defaultContextJsonValue = Form.useWatch('defaultContextJson', form)
   const preprocessJsValue = Form.useWatch('preprocessJs', form)
-  const previousTemplateTypeRef = useRef<TemplateType | null>(null)
 
   const { role: currentRole, hydrated } = useConsoleRole()
 
@@ -180,11 +179,8 @@ export default function TemplateEditPage() {
   }, [])
 
   useEffect(() => {
-    if (!templateType)
-      return
-    if (previousTemplateTypeRef.current === 'gonja' && templateType === 'univer_table' && !hasParseableTable(contentValue))
+    if (templateType === 'univer_table' && !hasParseableTable(contentValue))
       form.setFieldValue('content', EMPTY_UNIVER_TABLE_HTML)
-    previousTemplateTypeRef.current = templateType
   }, [contentValue, form, templateType])
 
   useEffect(() => {
@@ -385,7 +381,7 @@ export default function TemplateEditPage() {
                 )}
                 <UniverTableEditor
                   editorSessionKey={`template-content-edit-${templateIDValue}`}
-                  valueHtml={getUniverTemplateHtml(contentValue)}
+                  valueHtml={hasParseableTable(contentValue) ? getUniverTemplateHtml(contentValue) : EMPTY_UNIVER_TABLE_HTML}
                   renderContext={processedContext || lastValidProcessedContext}
                   showMenu
                   hideExportButton={false}
