@@ -13,6 +13,8 @@ type UniverRuntime = {
   univer: any
   api: any
   valueListener?: { dispose?: () => void } | null
+  lifecycleListener?: { dispose?: () => void } | null
+  removeDebugListeners?: (() => void) | null
 }
 
 const EMPTY_HTML = '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
@@ -222,6 +224,56 @@ export default function UniverNativeEditor({
 
         const api = facade.FUniver.newAPI(univer) as any
         runtimeRef.current = { univer, api }
+        const isDev = process.env.NODE_ENV !== 'production'
+        const debug = (...args: unknown[]) => {
+          if (!isDev) {
+            return
+          }
+          console.debug('[univer-native-debug]', ...args)
+        }
+
+        const ensureEditableAndFocus = (reason: string) => {
+          const workbook = api?.getActiveWorkbook?.()
+          const sheet = workbook?.getActiveSheet?.()
+          workbook?.setEditable?.(true)
+          sheet?.setEditable?.(true)
+
+          try {
+            api?.focus?.()
+          } catch {
+          }
+          try {
+            sheet?.getActiveRange?.()?.activate?.()
+          } catch {
+          }
+          try {
+            sheet?.getRange?.(0, 0, 1, 1)?.activate?.()
+          } catch {
+          }
+          try {
+            api?.startEditing?.()
+          } catch {
+          }
+          try {
+            api?.showEditor?.()
+          } catch {
+          }
+          try {
+            api?.setCellEditVisible?.(true)
+          } catch {
+          }
+          try {
+            host?.focus?.()
+          } catch {
+          }
+          debug('ensureEditableAndFocus', {
+            reason,
+            hasWorkbook: Boolean(workbook),
+            hasSheet: Boolean(sheet),
+            workbookEditable: workbook?.getEditable?.(),
+            sheetEditable: sheet?.getEditable?.(),
+          })
+        }
 
         const emitChange = () => {
           if (syncGuardRef.current) {
@@ -242,16 +294,46 @@ export default function UniverNativeEditor({
             emitChange()
           })
         }
+        const lifecycleEventName = (api.Event as any)?.LifeCycleChanged
+        if (lifecycleEventName) {
+          runtimeRef.current.lifecycleListener = api.addEvent(lifecycleEventName, (params: any) => {
+            const stage = params?.stage
+            debug('lifecycle', stage)
+            if (stage === api?.Enum?.LifecycleStages?.Rendered || stage === api?.Enum?.LifecycleStages?.Steady) {
+              ensureEditableAndFocus(`lifecycle-${String(stage)}`)
+            }
+          })
+        }
 
         syncGuardRef.current = true
         const initialMatrix = parseHtmlToMatrix(normalizedInput)
         setSheetValues(api, initialMatrix)
         lastInputRef.current = normalizedInput
         lastOutputRef.current = normalizeHtml(matrixToHtml(initialMatrix))
-        const workbook = api?.getActiveWorkbook?.()
-        const sheet = workbook?.getActiveSheet?.()
-        workbook?.setEditable?.(true)
-        sheet?.setEditable?.(true)
+        ensureEditableAndFocus('init')
+
+        let compensated = false
+        const onFocusIn = (event: FocusEvent) => {
+          debug('focusin', (event.target as HTMLElement | null)?.tagName || 'unknown')
+        }
+        const onKeyDown = (event: KeyboardEvent) => {
+          debug('keydown', { key: event.key, code: event.code })
+        }
+        const onPointerDown = () => {
+          if (compensated) {
+            return
+          }
+          compensated = true
+          ensureEditableAndFocus('first-pointerdown')
+        }
+        host.addEventListener('focusin', onFocusIn, true)
+        host.addEventListener('keydown', onKeyDown, true)
+        host.addEventListener('pointerdown', onPointerDown, true)
+        runtimeRef.current.removeDebugListeners = () => {
+          host.removeEventListener('focusin', onFocusIn, true)
+          host.removeEventListener('keydown', onKeyDown, true)
+          host.removeEventListener('pointerdown', onPointerDown, true)
+        }
       } catch (error) {
         const detail = error instanceof Error ? error.message : 'Univer 初始化失败'
         onError?.(`[univer-native-init] ${detail}`)
@@ -266,6 +348,14 @@ export default function UniverNativeEditor({
       cancelled = true
       try {
         runtimeRef.current?.valueListener?.dispose?.()
+      } catch {
+      }
+      try {
+        runtimeRef.current?.lifecycleListener?.dispose?.()
+      } catch {
+      }
+      try {
+        runtimeRef.current?.removeDebugListeners?.()
       } catch {
       }
       try {
@@ -300,7 +390,7 @@ export default function UniverNativeEditor({
 
   return (
     <div className="rounded border border-gray-200 bg-white">
-      <div ref={hostRef} className="h-[620px] w-full overflow-hidden" />
+      <div ref={hostRef} tabIndex={-1} className="h-[620px] w-full overflow-hidden" />
     </div>
   )
 }
