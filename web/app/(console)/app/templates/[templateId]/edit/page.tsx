@@ -51,6 +51,24 @@ type ApiResponse<T> = {
 }
 
 const EMPTY_TABLE_HTML = '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+const buildTableHtmlFromContext = (context: Record<string, unknown>) => {
+  const entries = Object.entries(context || {})
+  if (!entries.length)
+    return EMPTY_TABLE_HTML
+  const escapeHtml = (value: string) => value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+  const rows = entries.map(([key, value]) => {
+    const display = typeof value === 'string'
+      ? value
+      : JSON.stringify(value, null, 2) || ''
+    return `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(display)}</td></tr>`
+  }).join('')
+  return `<div class="table-wrapper"><table><tbody>${rows}</tbody></table></div>`
+}
 
 const getToken = () => {
   if (typeof window === 'undefined')
@@ -191,11 +209,13 @@ export default function TemplateEditPage() {
         setContextError('')
         setProcessedContext(mappedContext)
         setLastValidProcessedContext(mappedContext)
+        const previewTableHtml = buildTableHtmlFromContext(mappedContext)
+        form.setFieldValue('content', previewTableHtml)
         setPreview({
           outputType: values.outputType,
           previewType: 'table',
           rendered: '',
-          tableHtml: getTableTemplateHtml(values.content),
+          tableHtml: previewTableHtml,
         })
       } else {
         const result = await request<PreviewResponse>('/api/templates/preview', {
