@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
-import AntdTableEditor from '@/components/enterprise-projects/AntdTableEditor'
+import UniverTableEditor from '@/components/enterprise-projects/UniverTableEditor'
 
 type TemplateStatus = 'active' | 'disabled'
 type TemplateOutputType = 'text' | 'html'
@@ -395,7 +395,7 @@ export default function TemplateNewPage() {
                     {contextError}，已保留上一次有效渲染结果
                   </div>
                 )}
-                <AntdTableEditor
+                <UniverTableEditor
                   editorSessionKey="template-content-new"
                   valueHtml={hasParseableTable(contentValue) ? getTableTemplateHtml(contentValue) : EMPTY_TABLE_HTML}
                   onChange={nextHtml => form.setFieldValue('content', nextHtml)}
