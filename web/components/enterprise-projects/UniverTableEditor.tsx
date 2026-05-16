@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { createUniver, FUniver } from '@univerjs/presets'
+import { LogLevel, Univer } from '@univerjs/core'
+import { FUniver } from '@univerjs/core/facade'
 import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core'
 
 type UniverTableEditorProps = {
@@ -125,9 +126,13 @@ export default function UniverTableEditor({
 
     try {
       const grid = parseHtmlToGrid(valueHtml)
-      const { univer, univerAPI } = createUniver({
-        presets: [UniverSheetsCorePreset({ container: containerRef.current })],
-      })
+      const univer = new Univer({ logLevel: LogLevel.WARN })
+      const preset = UniverSheetsCorePreset({ container: containerRef.current })
+      for (const pluginEntry of preset.plugins) {
+        const [plugin, options] = Array.isArray(pluginEntry) ? pluginEntry : [pluginEntry, undefined]
+        univer.registerPlugin(plugin as any, options as any)
+      }
+      const univerAPI = FUniver.newAPI(univer)
 
       const workbook = univerAPI.createWorkbook({
         id: `template-table-${editorSessionKey}`,
