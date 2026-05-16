@@ -1,9 +1,6 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { LogLevel, Univer } from '@univerjs/core'
-import { FUniver } from '@univerjs/core/facade'
-import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core'
 
 type UniverTableEditorProps = {
   editorSessionKey: string
@@ -14,6 +11,38 @@ type UniverTableEditorProps = {
 }
 
 type Grid = string[][]
+
+type UniverRuntimeModules = {
+  LogLevel: { WARN: unknown }
+  Univer: new (config: Record<string, unknown>) => {
+    registerPlugin: (plugin: unknown, options?: unknown) => void
+    dispose: () => void
+  }
+  FUniver: {
+    newAPI: (univer: unknown) => {
+      createWorkbook: (snapshot: Record<string, unknown>) => any
+      addEvent: (eventName: unknown, handler: () => void) => { dispose?: () => void }
+      Event: { CommandExecuted: unknown }
+      dispose: () => void
+    }
+  }
+  UniverSheetsCorePreset: (config: Record<string, unknown>) => {
+    plugins: Array<unknown | [unknown, unknown]>
+  }
+}
+
+const loadUniverRuntimeModules = (): UniverRuntimeModules => {
+  const runtimeRequire = (0, eval)('require') as (id: string) => any
+  const core = runtimeRequire('@univerjs/core')
+  const facade = runtimeRequire('@univerjs/core/facade')
+  const sheetsCorePreset = runtimeRequire('@univerjs/preset-sheets-core')
+  return {
+    LogLevel: core.LogLevel,
+    Univer: core.Univer,
+    FUniver: facade.FUniver,
+    UniverSheetsCorePreset: sheetsCorePreset.UniverSheetsCorePreset,
+  }
+}
 
 const escapeHtml = (value: string) => value
   .replaceAll('&', '&amp;')
@@ -125,6 +154,7 @@ export default function UniverTableEditor({
     }
 
     try {
+      const { LogLevel, Univer, FUniver, UniverSheetsCorePreset } = loadUniverRuntimeModules()
       const grid = parseHtmlToGrid(valueHtml)
       const univer = new Univer({ logLevel: LogLevel.WARN })
       const preset = UniverSheetsCorePreset({ container: containerRef.current })
@@ -153,7 +183,7 @@ export default function UniverTableEditor({
         workbook.setEditable(false)
       }
 
-      const disposable = (univerAPI as FUniver).addEvent((univerAPI as any).Event.CommandExecuted, () => {
+      const disposable = univerAPI.addEvent(univerAPI.Event.CommandExecuted, () => {
         const snapshot = workbook.getSnapshot()
         const nextHtml = serializeGridToHtml(snapshotToGrid(snapshot))
         if (nextHtml === lastEmittedRef.current || nextHtml === valueHtml) {
