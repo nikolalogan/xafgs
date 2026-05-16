@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { LocaleType, LogLevel, Univer } from '@univerjs/core'
 import { FUniver } from '@univerjs/core/facade'
 import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core'
@@ -114,6 +114,8 @@ export default function UniverTableEditor({
   onChange,
   onError,
 }: UniverTableEditorProps) {
+  const [initError, setInitError] = useState<string | null>(null)
+  const [isInitializing, setIsInitializing] = useState(true)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const univerRef = useRef<Univer | null>(null)
   const univerApiRef = useRef<any>(null)
@@ -162,8 +164,8 @@ export default function UniverTableEditor({
         } catch {}
       })
     }
-
-    safeDispose()
+    setIsInitializing(true)
+    setInitError(null)
 
     try {
       const univer = new Univer({
@@ -218,15 +220,20 @@ export default function UniverTableEditor({
       workbookRef.current = workbook
       disposableRef.current = disposable
       lastSyncedExternalHtmlRef.current = initialHtml
+      setIsInitializing(false)
+      setInitError(null)
 
       return () => {
         safeDispose()
       }
     } catch (error) {
-      onErrorRef.current?.(error instanceof Error ? error.message : '初始化 Univer 失败')
+      const message = error instanceof Error ? error.message : '初始化 Univer 失败'
+      setInitError(message)
+      setIsInitializing(false)
+      onErrorRef.current?.(message)
       return undefined
     }
-  }, [editorSessionKey, valueHtml])
+  }, [editorSessionKey])
 
   useEffect(() => {
     const workbook = workbookRef.current
@@ -253,8 +260,11 @@ export default function UniverTableEditor({
       }
       workbook.setSnapshot(nextSnapshot)
       lastSyncedExternalHtmlRef.current = valueHtml
+      setInitError(null)
     } catch (error) {
-      onErrorRef.current?.(error instanceof Error ? error.message : '同步外部内容失败')
+      const message = error instanceof Error ? error.message : '同步外部内容失败'
+      setInitError(message)
+      onErrorRef.current?.(message)
     } finally {
       queueMicrotask(() => {
         isApplyingExternalRef.current = false
@@ -272,7 +282,26 @@ export default function UniverTableEditor({
 
   return (
     <div className="rounded border border-gray-200 bg-white">
-      <div ref={containerRef} style={{ height: 560 }} />
+      {initError ? (
+        <div
+          className="flex h-[560px] items-center justify-center rounded border border-red-300 bg-red-50 px-6 text-sm text-red-700"
+          role="alert"
+        >
+          <div className="max-w-[640px] text-center">
+            <p className="font-medium">表格编辑器初始化失败</p>
+            <p className="mt-2 break-all">{initError}</p>
+          </div>
+        </div>
+      ) : (
+        <div className="relative">
+          {isInitializing ? (
+            <div className="pointer-events-none absolute inset-0 z-10 flex h-[560px] items-center justify-center bg-white/85 text-sm text-gray-500">
+              正在加载表格编辑器...
+            </div>
+          ) : null}
+          <div ref={containerRef} style={{ height: 560 }} />
+        </div>
+      )}
     </div>
   )
 }
