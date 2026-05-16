@@ -137,6 +137,17 @@ const forceWorkbookRender = (workbook: any) => {
       range.setValues(values)
     } catch {}
   })
+  window.setTimeout(() => {
+    try {
+      const worksheet = workbook?.getActiveSheet?.()
+      if (!worksheet) {
+        return
+      }
+      const range = worksheet.getRange(0, 0, 1, 1)
+      const values = typeof range?.getValues === 'function' ? range.getValues() : [['']]
+      range.setValues(values)
+    } catch {}
+  }, 80)
 }
 
 export default function UniverTableEditor({
@@ -217,11 +228,12 @@ export default function UniverTableEditor({
       }
       pushDebug('init-attempt', `attempt=${attempt}`)
       const container = containerRef.current
-      if (!container || !container.isConnected || container.clientHeight <= 0) {
+      if (!container || !container.isConnected || container.clientHeight <= 0 || container.clientWidth <= 0) {
         setIsRenderRetrying(true)
         rafId = window.requestAnimationFrame(() => init(attempt + 1))
         return
       }
+      pushDebug('init-attempt', `attempt=${attempt}, size=${container.clientWidth}x${container.clientHeight}`)
       setIsRenderRetrying(false)
       try {
         const univer = new Univer({
@@ -352,6 +364,30 @@ export default function UniverTableEditor({
     }
     workbook.setEditable(!disabled ? true : false)
   }, [disabled])
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || typeof ResizeObserver === 'undefined') {
+      return
+    }
+    const observer = new ResizeObserver((entries) => {
+      const first = entries[0]
+      if (!first) {
+        return
+      }
+      const width = Math.round(first.contentRect.width)
+      const height = Math.round(first.contentRect.height)
+      if (width <= 0 || height <= 0) {
+        return
+      }
+      const workbook = workbookRef.current
+      if (workbook) {
+        forceWorkbookRender(workbook)
+      }
+    })
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [])
 
   return (
     <div className="rounded border border-gray-200 bg-white">
