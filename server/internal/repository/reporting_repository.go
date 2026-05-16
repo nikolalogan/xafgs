@@ -125,6 +125,7 @@ func NewReportingRepository() ReportingRepository {
 			1: {
 				BaseEntity:           model.BaseEntity{ID: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: 1, UpdatedBy: 1},
 				TemplateKey:          "default_report_pack",
+				TemplateType:         model.TemplateTypeGonja,
 				Name:                 "默认报告组装模板",
 				Description:          "包含主体、区域、财务、项目、反担保五大类的最小模板",
 				Status:               model.ReportTemplateStatusActive,
@@ -200,6 +201,9 @@ func (repository *reportingRepository) CreateReportTemplate(template model.Repor
 	repository.nextTemplateID++
 	template.CreatedAt = now
 	template.UpdatedAt = now
+	if strings.TrimSpace(template.TemplateType) == "" {
+		template.TemplateType = model.TemplateTypeGonja
+	}
 	repository.reportTemplates[template.ID] = template
 	return template.ToDTO()
 }
@@ -210,6 +214,7 @@ func (repository *reportingRepository) UpdateReportTemplate(templateID int64, up
 		return model.ReportTemplateDTO{}, false
 	}
 	entity.Name = update.Name
+	entity.TemplateType = update.TemplateType
 	entity.Description = update.Description
 	entity.Status = update.Status
 	entity.DocFileID = update.DocFileID

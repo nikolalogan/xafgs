@@ -8,6 +8,7 @@ import { marked } from 'marked'
 import TurndownService from 'turndown'
 import { useConsoleRole } from '@/lib/useConsoleRole'
 import { SimpleEditor, type SimpleEditorHandle } from '@/components/tiptap-templates/simple/simple-editor'
+import UniverNativeEditor from '@/components/enterprise-projects/UniverNativeEditor'
 
 type ApiResponse<T> = {
   message?: string
@@ -24,12 +25,14 @@ type CategoryItem = {
 type ReportTemplateDetailDTO = {
   id: number
   templateKey: string
+  templateType?: 'gonja' | 'univer_table'
   name: string
   description: string
   status: 'active' | 'disabled'
   categories?: unknown
   processingConfig?: unknown
   contentMarkdown?: string
+  tablePayload?: unknown
   outline?: unknown
   editorConfig?: unknown
   annotations?: unknown
@@ -78,11 +81,13 @@ export default function ReportTemplateEditorPage() {
   const [editorHTML, setEditorHTML] = useState('')
   const [selectedText, setSelectedText] = useState('')
   const [activeOutlineId, setActiveOutlineId] = useState('')
+  const [tableHtml, setTableHtml] = useState('<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>')
   const editorRef = useRef<SimpleEditorHandle | null>(null)
   const editorHostRef = useRef<HTMLDivElement | null>(null)
   const headingHighlightTimerRef = useRef<number | null>(null)
   const templateId = Number(params?.templateId || 0)
   const isAdmin = role === 'admin'
+  const isUniverTable = detail?.templateType === 'univer_table'
 
   const editorInitialHTML = useMemo(
     () => String(marked.parse(detail?.contentMarkdown || '')),
@@ -194,6 +199,7 @@ export default function ReportTemplateEditorPage() {
       const row = await request<ReportTemplateDetailDTO>(`/api/report-templates/${templateId}`, { method: 'GET' })
       setDetail(row)
       setCategories(parseCategories(row.categories))
+      setTableHtml(toTableHtml(row.tablePayload))
     }
     catch (error) {
       msgApi.error(error instanceof Error ? error.message : '加载模板详情失败')
@@ -357,6 +363,7 @@ export default function ReportTemplateEditorPage() {
     }
     const sourceHTML = editorRef.current?.getHTML() || editorHTML
     const markdown = sourceHTML ? turndown.turndown(sourceHTML) : (detail.contentMarkdown || '')
+    const tablePayload = { html: tableHtml }
     setSavingContent(true)
     try {
       const updated = await request<ReportTemplateDetailDTO>(`/api/report-templates/${templateId}`, {
@@ -365,9 +372,11 @@ export default function ReportTemplateEditorPage() {
           name: detail.name,
           description: detail.description || '',
           status: detail.status || 'active',
+          templateType: detail.templateType || 'gonja',
           categoriesJson: categories,
           processingConfigJson: detail.processingConfig || {},
-          contentMarkdown: markdown,
+          contentMarkdown: isUniverTable ? '[univer_table]' : markdown,
+          tablePayload: isUniverTable ? tablePayload : undefined,
           editorConfigJson: detail.editorConfig || {},
           annotationsJson: detail.annotations || [],
         }),
@@ -455,7 +464,7 @@ export default function ReportTemplateEditorPage() {
           <Input style={{ width: 260 }} value={detail?.name || ''} readOnly />
           <Input style={{ width: 260 }} value={detail?.templateKey || ''} readOnly />
           <Input style={{ width: 320 }} value={detail?.description || ''} readOnly />
-          <Typography.Text type="secondary">TipTap 官方 Simple Editor（Markdown 持久化）</Typography.Text>
+          <Typography.Text type="secondary">{isUniverTable ? 'Univer 表格编辑器（JSON 持久化）' : 'TipTap 官方 Simple Editor（Markdown 持久化）'}</Typography.Text>
         </Space>
 
         {isAdmin && (
@@ -531,7 +540,8 @@ export default function ReportTemplateEditorPage() {
           </div>
         </div>
 
-        <div className="rounded-md border border-gray-200 p-2">
+        {!isUniverTable && (
+          <div className="rounded-md border border-gray-200 p-2">
           <div className="mb-2 text-sm font-medium text-gray-700">AI 工具栏</div>
           <Space wrap className="mb-3">
             <Button loading={aiLoading} onClick={() => runAiAssist('rewrite', '请保持原意进行专业化改写，输出中文。')}>改写</Button>
@@ -568,7 +578,20 @@ export default function ReportTemplateEditorPage() {
             </aside>
           </div>
           <div className="mt-2 text-xs text-gray-500">当前内容约 {currentMarkdown.length} 字符（Markdown）</div>
-        </div>
+          </div>
+        )}
+        {isUniverTable && (
+          <div className="rounded-md border border-gray-200 p-2">
+            <div className="mb-2 text-sm font-medium text-gray-700">表格模板编辑区（Univer）</div>
+            <UniverNativeEditor
+              editorSessionKey={`report-template-${templateId}-univer`}
+              valueHtml={tableHtml}
+              disabled={!isAdmin}
+              onChange={setTableHtml}
+              onError={message => msgApi.error(message)}
+            />
+          </div>
+        )}
       </Card>
       <style jsx global>{`
         .report-template-editor-host {
@@ -744,4 +767,24 @@ function parseCategories(raw: unknown): CategoryItem[] {
   }
 
   return out
+}
+
+function toTableHtml(payload: unknown): string {
+  if (!payload) {
+    return '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+  }
+  if (typeof payload === 'object' && payload !== null && 'html' in (payload as Record<string, unknown>)) {
+    const html = String((payload as Record<string, unknown>).html || '').trim()
+    if (html)
+      return html
+  }
+  if (Array.isArray(payload)) {
+    const rows = payload.map(row => Array.isArray(row) ? row : [row])
+    const tbody = rows.map((row) => {
+      const cells = row.map(cell => `<td>${String(cell ?? '')}</td>`).join('')
+      return `<tr>${cells}</tr>`
+    }).join('')
+    return `<div class="table-wrapper"><table><tbody>${tbody || '<tr><td></td></tr>'}</tbody></table></div>`
+  }
+  return '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
 }

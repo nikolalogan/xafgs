@@ -4,23 +4,27 @@ import "encoding/json"
 
 type CreateReportTemplateRequest struct {
 	TemplateKey          string          `json:"templateKey"`
+	TemplateType         string          `json:"templateType"`
 	Name                 string          `json:"name"`
 	Description          string          `json:"description"`
 	Status               string          `json:"status"`
 	CategoriesJSON       json.RawMessage `json:"categoriesJson"`
 	ProcessingConfigJSON json.RawMessage `json:"processingConfigJson"`
 	ContentMarkdown      string          `json:"contentMarkdown"`
+	TablePayload         json.RawMessage `json:"tablePayload"`
 	EditorConfigJSON     json.RawMessage `json:"editorConfigJson"`
 	AnnotationsJSON      json.RawMessage `json:"annotationsJson"`
 }
 
 type UpdateReportTemplateRequest struct {
+	TemplateType         string          `json:"templateType"`
 	Name                 string          `json:"name"`
 	Description          string          `json:"description"`
 	Status               string          `json:"status"`
 	CategoriesJSON       json.RawMessage `json:"categoriesJson"`
 	ProcessingConfigJSON json.RawMessage `json:"processingConfigJson"`
 	ContentMarkdown      string          `json:"contentMarkdown"`
+	TablePayload         json.RawMessage `json:"tablePayload"`
 	EditorConfigJSON     json.RawMessage `json:"editorConfigJson"`
 	AnnotationsJSON      json.RawMessage `json:"annotationsJson"`
 }

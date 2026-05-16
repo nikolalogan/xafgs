@@ -79,24 +79,28 @@ type listEnterpriseProjectsRequest struct {
 
 type createReportTemplateRequest struct {
 	TemplateKey          string          `json:"templateKey" validate:"required"`
+	TemplateType         string          `json:"templateType" validate:"omitempty,oneof=gonja univer_table"`
 	Name                 string          `json:"name" validate:"required"`
 	Description          string          `json:"description"`
 	Status               string          `json:"status"`
 	CategoriesJSON       json.RawMessage `json:"categoriesJson"`
 	ProcessingConfigJSON json.RawMessage `json:"processingConfigJson"`
 	ContentMarkdown      string          `json:"contentMarkdown"`
+	TablePayload         json.RawMessage `json:"tablePayload"`
 	EditorConfigJSON     json.RawMessage `json:"editorConfigJson"`
 	AnnotationsJSON      json.RawMessage `json:"annotationsJson"`
 }
 
 type updateReportTemplateRequest struct {
 	TemplateID           int64           `path:"templateId" validate:"required,min=1"`
+	TemplateType         string          `json:"templateType" validate:"omitempty,oneof=gonja univer_table"`
 	Name                 string          `json:"name" validate:"required"`
 	Description          string          `json:"description"`
 	Status               string          `json:"status"`
 	CategoriesJSON       json.RawMessage `json:"categoriesJson"`
 	ProcessingConfigJSON json.RawMessage `json:"processingConfigJson"`
 	ContentMarkdown      string          `json:"contentMarkdown"`
+	TablePayload         json.RawMessage `json:"tablePayload"`
 	EditorConfigJSON     json.RawMessage `json:"editorConfigJson"`
 	AnnotationsJSON      json.RawMessage `json:"annotationsJson"`
 }
@@ -438,12 +442,14 @@ func (handler *ReportingHandler) CreateReportTemplate(c *fiber.Ctx, request *cre
 	request.Status = strings.TrimSpace(request.Status)
 	result, apiError := handler.reportingService.CreateReportTemplate(c.UserContext(), model.CreateReportTemplateRequest{
 		TemplateKey:          request.TemplateKey,
+		TemplateType:         request.TemplateType,
 		Name:                 request.Name,
 		Description:          request.Description,
 		Status:               request.Status,
 		CategoriesJSON:       request.CategoriesJSON,
 		ProcessingConfigJSON: request.ProcessingConfigJSON,
 		ContentMarkdown:      request.ContentMarkdown,
+		TablePayload:         request.TablePayload,
 		EditorConfigJSON:     request.EditorConfigJSON,
 		AnnotationsJSON:      request.AnnotationsJSON,
 	}, operatorID)
@@ -460,11 +466,13 @@ func (handler *ReportingHandler) UpdateReportTemplate(c *fiber.Ctx, request *upd
 	}
 	result, apiError := handler.reportingService.UpdateReportTemplate(c.UserContext(), request.TemplateID, model.UpdateReportTemplateRequest{
 		Name:                 strings.TrimSpace(request.Name),
+		TemplateType:         strings.TrimSpace(request.TemplateType),
 		Description:          strings.TrimSpace(request.Description),
 		Status:               strings.TrimSpace(request.Status),
 		CategoriesJSON:       request.CategoriesJSON,
 		ProcessingConfigJSON: request.ProcessingConfigJSON,
 		ContentMarkdown:      request.ContentMarkdown,
+		TablePayload:         request.TablePayload,
 		EditorConfigJSON:     request.EditorConfigJSON,
 		AnnotationsJSON:      request.AnnotationsJSON,
 	}, operatorID)

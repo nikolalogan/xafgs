@@ -94,6 +94,7 @@ func IsValidReviewStatus(status string) bool {
 type ReportTemplate struct {
 	BaseEntity
 	TemplateKey          string          `json:"templateKey"`
+	TemplateType         string          `json:"templateType"`
 	Name                 string          `json:"name"`
 	Description          string          `json:"description"`
 	Status               string          `json:"status"`
@@ -110,6 +111,7 @@ type ReportTemplate struct {
 type ReportTemplateDTO struct {
 	ID          int64           `json:"id"`
 	TemplateKey string          `json:"templateKey"`
+	TemplateType string         `json:"templateType"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Status      string          `json:"status"`
@@ -124,6 +126,7 @@ type ReportTemplateDetailDTO struct {
 	ReportTemplateDTO
 	ProcessingConfig json.RawMessage `json:"processingConfig"`
 	ContentMarkdown  string          `json:"contentMarkdown"`
+	TablePayload     json.RawMessage `json:"tablePayload"`
 	Outline          json.RawMessage `json:"outline"`
 	EditorConfig     json.RawMessage `json:"editorConfig"`
 	Annotations      json.RawMessage `json:"annotations"`
@@ -540,6 +543,7 @@ func (entity ReportTemplate) ToDTO() ReportTemplateDTO {
 	return ReportTemplateDTO{
 		ID:          entity.ID,
 		TemplateKey: entity.TemplateKey,
+		TemplateType: entity.TemplateType,
 		Name:        entity.Name,
 		Description: entity.Description,
 		Status:      entity.Status,
@@ -556,10 +560,30 @@ func (entity ReportTemplate) ToDetailDTO() ReportTemplateDetailDTO {
 		ReportTemplateDTO: entity.ToDTO(),
 		ProcessingConfig:  entity.ProcessingConfigJSON,
 		ContentMarkdown:   entity.ContentMarkdown,
+		TablePayload:      extractTablePayloadFromEditorConfig(entity.EditorConfigJSON),
 		Outline:           entity.OutlineJSON,
 		EditorConfig:      entity.EditorConfigJSON,
 		Annotations:       entity.AnnotationsJSON,
 	}
+}
+
+func extractTablePayloadFromEditorConfig(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil
+	}
+	payload, ok := root["tablePayload"]
+	if !ok {
+		return nil
+	}
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return nil
+	}
+	return normalized
 }
 
 func (entity ReportCase) ToDTO() ReportCaseDTO {

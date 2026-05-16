@@ -153,11 +153,18 @@ func (service *reportingService) GetReportTemplate(_ context.Context, templateID
 
 func (service *reportingService) CreateReportTemplate(_ context.Context, request model.CreateReportTemplateRequest, operatorID int64) (model.ReportTemplateDTO, *model.APIError) {
 	request.TemplateKey = strings.TrimSpace(request.TemplateKey)
+	request.TemplateType = strings.TrimSpace(request.TemplateType)
 	request.Name = strings.TrimSpace(request.Name)
 	request.Description = strings.TrimSpace(request.Description)
 	request.Status = strings.TrimSpace(request.Status)
 	if request.TemplateKey == "" || request.Name == "" {
 		return model.ReportTemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateKey、name 不能为空")
+	}
+	if request.TemplateType == "" {
+		request.TemplateType = model.TemplateTypeGonja
+	}
+	if !model.IsValidTemplateType(request.TemplateType) {
+		return model.ReportTemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/univer_table")
 	}
 	if request.Status == "" {
 		request.Status = model.ReportTemplateStatusActive
@@ -181,11 +188,15 @@ func (service *reportingService) CreateReportTemplate(_ context.Context, request
 	if apiError != nil {
 		return model.ReportTemplateDTO{}, apiError
 	}
+	editorConfig, apiError = mergeTablePayloadForTemplateType(editorConfig, request.TemplateType, request.TablePayload)
+	if apiError != nil {
+		return model.ReportTemplateDTO{}, apiError
+	}
 	annotations, apiError := normalizeJSONArray(request.AnnotationsJSON, "annotationsJson")
 	if apiError != nil {
 		return model.ReportTemplateDTO{}, apiError
 	}
-	if request.ContentMarkdown == "" {
+	if request.ContentMarkdown == "" && request.TemplateType != model.TemplateTypeUniverTable {
 		request.ContentMarkdown = "## 新章节\n\n请编辑内容。"
 	}
 	outline := buildOutlineJSON(request.ContentMarkdown)
@@ -197,6 +208,7 @@ func (service *reportingService) CreateReportTemplate(_ context.Context, request
 	return service.reportingRepository.CreateReportTemplate(model.ReportTemplate{
 		BaseEntity:           model.BaseEntity{CreatedBy: operatorID, UpdatedBy: operatorID},
 		TemplateKey:          request.TemplateKey,
+		TemplateType:         request.TemplateType,
 		Name:                 request.Name,
 		Description:          request.Description,
 		Status:               request.Status,
@@ -212,6 +224,7 @@ func (service *reportingService) CreateReportTemplate(_ context.Context, request
 }
 
 func (service *reportingService) UpdateReportTemplate(_ context.Context, templateID int64, request model.UpdateReportTemplateRequest, operatorID int64) (model.ReportTemplateDTO, *model.APIError) {
+	request.TemplateType = strings.TrimSpace(request.TemplateType)
 	request.Name = strings.TrimSpace(request.Name)
 	request.Description = strings.TrimSpace(request.Description)
 	request.Status = strings.TrimSpace(request.Status)
@@ -224,6 +237,20 @@ func (service *reportingService) UpdateReportTemplate(_ context.Context, templat
 	if !model.IsValidReportTemplateStatus(request.Status) {
 		return model.ReportTemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "status 仅支持 active/disabled")
 	}
+	existingTemplate, ok := service.reportingRepository.FindReportTemplateByID(templateID)
+	if !ok {
+		return model.ReportTemplateDTO{}, model.NewAPIError(404, response.CodeNotFound, "报告模板不存在")
+	}
+	if request.TemplateType == "" {
+		request.TemplateType = existingTemplate.TemplateType
+	}
+	if request.TemplateType == "" {
+		request.TemplateType = model.TemplateTypeGonja
+	}
+	if !model.IsValidTemplateType(request.TemplateType) {
+		return model.ReportTemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/univer_table")
+	}
+
 	categories, apiError := normalizeJSONArray(request.CategoriesJSON, "categoriesJson")
 	if apiError != nil {
 		return model.ReportTemplateDTO{}, apiError
@@ -237,15 +264,15 @@ func (service *reportingService) UpdateReportTemplate(_ context.Context, templat
 	if apiError != nil {
 		return model.ReportTemplateDTO{}, apiError
 	}
+	editorConfig, apiError = mergeTablePayloadForTemplateType(editorConfig, request.TemplateType, request.TablePayload)
+	if apiError != nil {
+		return model.ReportTemplateDTO{}, apiError
+	}
 	annotations, apiError := normalizeJSONArray(request.AnnotationsJSON, "annotationsJson")
 	if apiError != nil {
 		return model.ReportTemplateDTO{}, apiError
 	}
 	outline := buildOutlineJSON(request.ContentMarkdown)
-	existingTemplate, ok := service.reportingRepository.FindReportTemplateByID(templateID)
-	if !ok {
-		return model.ReportTemplateDTO{}, model.NewAPIError(404, response.CodeNotFound, "报告模板不存在")
-	}
 	docFileID := existingTemplate.DocFileID
 	docVersionNo := existingTemplate.DocVersionNo
 	if docFileID <= 0 {
@@ -259,6 +286,7 @@ func (service *reportingService) UpdateReportTemplate(_ context.Context, templat
 	}
 	updated, ok := service.reportingRepository.UpdateReportTemplate(templateID, model.ReportTemplate{
 		Name:                 request.Name,
+		TemplateType:         request.TemplateType,
 		Description:          request.Description,
 		Status:               request.Status,
 		DocFileID:            docFileID,
@@ -2873,6 +2901,49 @@ func normalizeJSONObject(raw json.RawMessage, fieldName string) (json.RawMessage
 	}
 	normalized, _ := json.Marshal(root)
 	return normalized, nil
+}
+
+func normalizeJSONAny(raw json.RawMessage, fieldName string) (json.RawMessage, *model.APIError) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var root any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil, model.NewAPIError(400, response.CodeBadRequest, fieldName+" 不是合法 JSON")
+	}
+	switch root.(type) {
+	case map[string]any, []any:
+	default:
+		return nil, model.NewAPIError(400, response.CodeBadRequest, fieldName+" 必须为 JSON object 或 array")
+	}
+	normalized, _ := json.Marshal(root)
+	return normalized, nil
+}
+
+func mergeTablePayloadForTemplateType(editorConfig json.RawMessage, templateType string, tablePayload json.RawMessage) (json.RawMessage, *model.APIError) {
+	root := map[string]any{}
+	if len(editorConfig) > 0 {
+		if err := json.Unmarshal(editorConfig, &root); err != nil {
+			return nil, model.NewAPIError(400, response.CodeBadRequest, "editorConfigJson 不是合法 JSON object")
+		}
+	}
+	if templateType != model.TemplateTypeUniverTable {
+		delete(root, "tablePayload")
+		out, _ := json.Marshal(root)
+		return out, nil
+	}
+	normalized, apiError := normalizeJSONAny(tablePayload, "tablePayload")
+	if apiError != nil {
+		return nil, apiError
+	}
+	if len(normalized) == 0 {
+		return nil, model.NewAPIError(400, response.CodeBadRequest, "univer_table 模板必须提供 tablePayload")
+	}
+	var payload any
+	_ = json.Unmarshal(normalized, &payload)
+	root["tablePayload"] = payload
+	out, _ := json.Marshal(root)
+	return out, nil
 }
 
 func parseTemplateGuidanceFromAnnotations(raw json.RawMessage) []model.TemplateCommentGuidanceItem {

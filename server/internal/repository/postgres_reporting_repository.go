@@ -27,7 +27,7 @@ func (repository *PostgresReportingRepository) FindReportTemplateByID(templateID
 
 	row := repository.db.QueryRowContext(ctx, `
 SELECT
-  id, template_key, name, description, status,
+  id, template_key, template_type, name, description, status,
   doc_file_id, doc_version_no,
   categories_json, processing_config_json,
   content_markdown, outline_json, editor_config_json, annotations_json,
@@ -48,7 +48,7 @@ func (repository *PostgresReportingRepository) FindReportTemplateByKey(templateK
 
 	row := repository.db.QueryRowContext(ctx, `
 SELECT
-  id, template_key, name, description, status,
+  id, template_key, template_type, name, description, status,
   doc_file_id, doc_version_no,
   categories_json, processing_config_json,
   content_markdown, outline_json, editor_config_json, annotations_json,
@@ -69,7 +69,7 @@ func (repository *PostgresReportingRepository) FindAllReportTemplates() []model.
 
 	rows, err := repository.db.QueryContext(ctx, `
 SELECT
-  id, template_key, name, description, status,
+  id, template_key, template_type, name, description, status,
   doc_file_id, doc_version_no,
   categories_json,
   created_at, updated_at
@@ -88,6 +88,7 @@ ORDER BY id ASC
 		if err := rows.Scan(
 			&dto.ID,
 			&dto.TemplateKey,
+			&dto.TemplateType,
 			&dto.Name,
 			&dto.Description,
 			&dto.Status,
@@ -120,20 +121,20 @@ func (repository *PostgresReportingRepository) CreateReportTemplate(template mod
 
 	_ = repository.db.QueryRowContext(ctx, `
 INSERT INTO report_template (
-  template_key, name, description, status,
+  template_key, template_type, name, description, status,
   doc_file_id, doc_version_no,
   categories_json, processing_config_json,
   content_markdown, outline_json, editor_config_json, annotations_json,
   created_at, updated_at, created_by, updated_by
 ) VALUES (
-  $1, $2, $3, $4,
-  $5, $6,
-  $7::jsonb, $8::jsonb,
-  $9, $10::jsonb, $11::jsonb, $12::jsonb,
-  $13, $13, $14, $14
+  $1, $2, $3, $4, $5,
+  $6, $7,
+  $8::jsonb, $9::jsonb,
+  $10, $11::jsonb, $12::jsonb, $13::jsonb,
+  $14, $14, $15, $15
 )
 RETURNING id
-`, template.TemplateKey, template.Name, template.Description, template.Status,
+`, template.TemplateKey, template.TemplateType, template.Name, template.Description, template.Status,
 		template.DocFileID, template.DocVersionNo,
 		string(template.CategoriesJSON), string(template.ProcessingConfigJSON),
 		template.ContentMarkdown, string(template.OutlineJSON), string(template.EditorConfigJSON), string(template.AnnotationsJSON),
@@ -151,20 +152,21 @@ func (repository *PostgresReportingRepository) UpdateReportTemplate(templateID i
 UPDATE report_template
 SET
   name = $2,
-  description = $3,
-  status = $4,
-  doc_file_id = $5,
-  doc_version_no = $6,
-  categories_json = $7::jsonb,
-  processing_config_json = $8::jsonb,
-  content_markdown = $9,
-  outline_json = $10::jsonb,
-  editor_config_json = $11::jsonb,
-  annotations_json = $12::jsonb,
-  updated_at = $13,
-  updated_by = $14
+  template_type = $3,
+  description = $4,
+  status = $5,
+  doc_file_id = $6,
+  doc_version_no = $7,
+  categories_json = $8::jsonb,
+  processing_config_json = $9::jsonb,
+  content_markdown = $10,
+  outline_json = $11::jsonb,
+  editor_config_json = $12::jsonb,
+  annotations_json = $13::jsonb,
+  updated_at = $14,
+  updated_by = $15
 WHERE id = $1
-`, templateID, update.Name, update.Description, update.Status,
+`, templateID, update.Name, update.TemplateType, update.Description, update.Status,
 		update.DocFileID,
 		update.DocVersionNo,
 		string(fallbackJSONArray(update.CategoriesJSON)),
@@ -948,6 +950,7 @@ func scanReportTemplate(row *sql.Row) (model.ReportTemplate, bool) {
 	err := row.Scan(
 		&entity.ID,
 		&entity.TemplateKey,
+		&entity.TemplateType,
 		&entity.Name,
 		&entity.Description,
 		&entity.Status,

@@ -843,6 +843,19 @@ ALTER TABLE report_template
 ADD COLUMN IF NOT EXISTS doc_file_id BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE report_template
 ADD COLUMN IF NOT EXISTS doc_version_no INT NOT NULL DEFAULT 0;
+ALTER TABLE report_template
+ADD COLUMN IF NOT EXISTS template_type VARCHAR(32) NOT NULL DEFAULT 'gonja';
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'report_template_template_type_check'
+  ) THEN
+    ALTER TABLE report_template
+    ADD CONSTRAINT report_template_template_type_check
+    CHECK (template_type IN ('gonja', 'univer_table'));
+  END IF;
+END$$;
 
 ALTER TABLE template
 ADD COLUMN IF NOT EXISTS template_type VARCHAR(32) NOT NULL DEFAULT 'gonja';
