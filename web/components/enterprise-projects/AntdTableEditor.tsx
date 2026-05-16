@@ -189,17 +189,36 @@ export default function AntdTableEditor({
     const primary = { row: 0, col: 0 }
     return { anchor: primary, active: primary, ranges: [normalizeRange(primary, primary)] as SelectionRange[] }
   })
-  const [editing, setEditing] = useState<{ row: number; col: number; value: string } | null>(null)
   const [exporting, setExporting] = useState(false)
   const draggingRef = useRef(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const inputRef = useRef<HTMLInputElement | null>(null)
+  const lastEmittedHtmlRef = useRef<string>('')
+  const lastSyncedExternalHtmlRef = useRef<string>('')
+  const serializeHtml = useCallback((cells: CellModel[][]) => {
+    const htmlRows = cells.map((row) => {
+      const tds = row.map((cell) => `<td>${escapeHtml(cell.raw ?? '')}</td>`).join('')
+      return `<tr>${tds}</tr>`
+    }).join('')
+    return `<div class="table-wrapper"><table><tbody>${htmlRows}</tbody></table></div>`
+  }, [])
 
   useEffect(() => {
     setGrid(parseHtmlToGrid(valueHtml))
     setSelection({ anchor: { row: 0, col: 0 }, active: { row: 0, col: 0 }, ranges: [normalizeRange({ row: 0, col: 0 }, { row: 0, col: 0 })] })
-    setEditing(null)
-  }, [editorSessionKey, valueHtml])
+  }, [editorSessionKey])
+
+  useEffect(() => {
+    const currentHtml = serializeHtml(grid.cells)
+    if (valueHtml === lastSyncedExternalHtmlRef.current) {
+      return
+    }
+    if (valueHtml === lastEmittedHtmlRef.current || valueHtml === currentHtml) {
+      lastSyncedExternalHtmlRef.current = valueHtml
+      return
+    }
+    lastSyncedExternalHtmlRef.current = valueHtml
+    setGrid(parseHtmlToGrid(valueHtml))
+  }, [grid.cells, serializeHtml, valueHtml])
 
   const evaluated = useMemo(() => {
     const cache = new Map<string, string>()
@@ -284,14 +303,6 @@ export default function AntdTableEditor({
     return grid.cells.map((row, rowIndex) => row.map((_, colIndex) => evalCell(rowIndex, colIndex)))
   }, [grid])
 
-  const serializeHtml = useCallback((cells: CellModel[][]) => {
-    const htmlRows = cells.map((row, rowIndex) => {
-      const tds = row.map((cell, colIndex) => `<td>${escapeHtml(evaluated[rowIndex]?.[colIndex] ?? cell.raw ?? '')}</td>`).join('')
-      return `<tr>${tds}</tr>`
-    }).join('')
-    return `<div class="table-wrapper"><table><tbody>${htmlRows}</tbody></table></div>`
-  }, [evaluated])
-
   const emitSelection = useCallback((next: { row: number; col: number; ranges: SelectionRange[]; source: string; fromKeyboard?: boolean }) => {
     onSelectionChange?.(next.row, next.col, { ranges: next.ranges, source: next.source, fromKeyboard: next.fromKeyboard })
     onInteractionDebug?.('selection-event', next)
@@ -316,28 +327,20 @@ export default function AntdTableEditor({
     setSelection({ anchor: { row, col }, active: { row, col }, ranges: [normalizeRange({ row, col }, { row, col })] })
   }, [activeCell, grid.cols, grid.rows])
 
-  useEffect(() => {
-    if (!editing) {
-      return
-    }
-    inputRef.current?.focus()
-    inputRef.current?.select()
-  }, [editing])
+  const emitGridChange = useCallback((nextCells: CellModel[][]) => {
+    const nextHtml = serializeHtml(nextCells)
+    lastEmittedHtmlRef.current = nextHtml
+    onChange(nextHtml)
+  }, [onChange, serializeHtml])
 
-  const commitEditing = useCallback((nextValue?: string) => {
-    if (!editing) {
-      return
-    }
-    const value = nextValue ?? editing.value
+  const updateCell = useCallback((row: number, col: number, value: string) => {
     setGrid(prev => {
       const nextCells = prev.cells.map(row => row.map(cell => ({ ...cell })))
-      nextCells[editing.row][editing.col].raw = value
-      const nextHtml = serializeHtml(nextCells)
-      onChange(nextHtml)
+      nextCells[row][col].raw = value
+      emitGridChange(nextCells)
       return { ...prev, cells: nextCells }
     })
-    setEditing(null)
-  }, [editing, onChange, serializeHtml])
+  }, [emitGridChange])
 
   const clearSelection = useCallback(() => {
     setGrid(prev => {
@@ -349,11 +352,10 @@ export default function AntdTableEditor({
           }
         }
       }
-      const nextHtml = serializeHtml(nextCells)
-      onChange(nextHtml)
+      emitGridChange(nextCells)
       return { ...prev, cells: nextCells }
     })
-  }, [onChange, selection.ranges, serializeHtml])
+  }, [emitGridChange, selection.ranges])
 
   const applyPaste = useCallback((text: string) => {
     const rows = text.split(/\r?\n/).filter(item => item.length > 0).map(row => row.split('\t'))
@@ -373,11 +375,10 @@ export default function AntdTableEditor({
           nextCells[rr][cc].raw = rows[r][c]
         }
       }
-      const nextHtml = serializeHtml(nextCells)
-      onChange(nextHtml)
+      emitGridChange(nextCells)
       return { ...prev, cells: nextCells }
     })
-  }, [onChange, selection.active, selection.ranges, serializeHtml])
+  }, [emitGridChange, selection.active, selection.ranges])
 
   const moveBy = useCallback((rowDelta: number, colDelta: number, keepAnchor: boolean) => {
     const row = clamp(selection.active.row + rowDelta, 0, grid.rows - 1)
@@ -389,15 +390,7 @@ export default function AntdTableEditor({
     if (disabled) {
       return
     }
-    if (editing) {
-      if (event.key === 'Enter') {
-        event.preventDefault()
-        commitEditing()
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setEditing(null)
-      }
+    if ((event.target as HTMLElement | null)?.tagName === 'INPUT') {
       return
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v') {
@@ -434,11 +427,6 @@ export default function AntdTableEditor({
       event.preventDefault()
       clearSelection()
       return
-    }
-    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault()
-      const { row, col } = selection.active
-      setEditing({ row, col, value: event.key })
     }
   }
 
@@ -511,7 +499,6 @@ export default function AntdTableEditor({
                 {row.map((cell, colIndex) => {
                   const isActive = rowIndex === selection.active.row && colIndex === selection.active.col
                   const inRange = selection.ranges.some(range => rowIndex >= range.startRow && rowIndex <= range.endRow && colIndex >= range.startCol && colIndex <= range.endCol)
-                  const isEditing = editing?.row === rowIndex && editing?.col === colIndex
                   const cellConfidence = cellConfidenceByCoord?.[`${rowIndex}:${colIndex}`]
                   const isLowConfidence = typeof cellConfidence === 'number' && cellConfidence < lowConfidenceThreshold
                   return (
@@ -532,34 +519,19 @@ export default function AntdTableEditor({
                           updateSelection({ row: rowIndex, col: colIndex }, { source: 'mouse', keepAnchor: true })
                         }
                       }}
-                      onDoubleClick={() => {
-                        if (disabled) {
-                          return
-                        }
-                        setEditing({ row: rowIndex, col: colIndex, value: cell.raw })
-                      }}
                     >
-                      {isEditing ? (
-                        <input
-                          ref={inputRef}
-                          className="w-full border-0 p-0 outline-none"
-                          value={editing.value}
-                          onChange={(event) => setEditing(prev => (prev ? { ...prev, value: event.target.value } : prev))}
-                          onBlur={() => commitEditing()}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.preventDefault()
-                              commitEditing()
-                            }
-                            if (event.key === 'Escape') {
-                              event.preventDefault()
-                              setEditing(null)
-                            }
-                          }}
-                        />
-                      ) : (
-                        <span className={isLowConfidence ? 'text-red-500' : ''}>{evaluated[rowIndex]?.[colIndex] || ''}</span>
-                      )}
+                      <input
+                        className={`w-full border-0 bg-transparent p-0 outline-none ${isLowConfidence ? 'text-red-500' : ''}`}
+                        value={cell.raw}
+                        disabled={disabled}
+                        onFocus={() => {
+                          if (disabled) {
+                            return
+                          }
+                          updateSelection({ row: rowIndex, col: colIndex }, { source: 'focus' })
+                        }}
+                        onChange={(event) => updateCell(rowIndex, colIndex, event.target.value)}
+                      />
                     </td>
                   )
                 })}
