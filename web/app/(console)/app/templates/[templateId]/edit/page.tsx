@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
@@ -50,6 +50,8 @@ type ApiResponse<T> = {
   data?: T
 }
 
+const EMPTY_UNIVER_TABLE_HTML = '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+
 const getToken = () => {
   if (typeof window === 'undefined')
     return ''
@@ -69,9 +71,14 @@ export default function TemplateEditPage() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [preview, setPreview] = useState<{ outputType: TemplateOutputType, previewType: TemplateType, rendered: string, tableHtml: string } | null>(null)
   const [processedContext, setProcessedContext] = useState<Record<string, unknown> | null>(null)
+  const [lastValidProcessedContext, setLastValidProcessedContext] = useState<Record<string, unknown>>({})
+  const [contextError, setContextError] = useState('')
   const [form] = Form.useForm()
   const templateType = Form.useWatch('templateType', form)
   const contentValue = Form.useWatch('content', form)
+  const defaultContextJsonValue = Form.useWatch('defaultContextJson', form)
+  const preprocessJsValue = Form.useWatch('preprocessJs', form)
+  const previousTemplateTypeRef = useRef<TemplateType | null>(null)
 
   const { role: currentRole, hydrated } = useConsoleRole()
 
@@ -128,8 +135,10 @@ export default function TemplateEditPage() {
     const html = String(raw || '').trim()
     if (html)
       return html
-    return '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+    return EMPTY_UNIVER_TABLE_HTML
   }
+
+  const hasParseableTable = (raw: unknown) => /<table[\s>]/i.test(String(raw || ''))
 
   const fetchDetail = async () => {
     if (!Number.isFinite(templateIDValue) || templateIDValue <= 0) {
@@ -155,6 +164,8 @@ export default function TemplateEditPage() {
       })
       setPreview(null)
       setProcessedContext(null)
+      setLastValidProcessedContext({})
+      setContextError('')
     }
     catch (error) {
       msgApi.error(error instanceof Error ? error.message : '加载模板失败')
@@ -167,6 +178,33 @@ export default function TemplateEditPage() {
   useEffect(() => {
     fetchDetail()
   }, [])
+
+  useEffect(() => {
+    if (!templateType)
+      return
+    if (previousTemplateTypeRef.current === 'gonja' && templateType === 'univer_table' && !hasParseableTable(contentValue))
+      form.setFieldValue('content', EMPTY_UNIVER_TABLE_HTML)
+    previousTemplateTypeRef.current = templateType
+  }, [contentValue, form, templateType])
+
+  useEffect(() => {
+    if (templateType !== 'univer_table')
+      return
+    const timer = window.setTimeout(() => {
+      try {
+        const contextObject = parseContextJson(defaultContextJsonValue || '')
+        const mappedContext = executePreprocess(preprocessJsValue || '', contextObject)
+        setProcessedContext(mappedContext)
+        setLastValidProcessedContext(mappedContext)
+        setContextError('')
+      }
+      catch (error) {
+        setProcessedContext(lastValidProcessedContext)
+        setContextError(error instanceof Error ? error.message : '上下文处理失败')
+      }
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [defaultContextJsonValue, lastValidProcessedContext, preprocessJsValue, templateType])
 
   const previewNow = async () => {
     try {
@@ -270,14 +308,14 @@ export default function TemplateEditPage() {
     <div className="space-y-3">
       {contextHolder}
       <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm font-semibold text-gray-900">编辑模板</div>
+          <div className="mb-3 flex items-center justify-between">
+            <div className="text-sm font-semibold text-gray-900">编辑模板</div>
           <Space>
             <Button onClick={() => router.push('/app/templates')}>返回列表</Button>
-            <Button onClick={previewNow} loading={previewLoading}>预览</Button>
+              {templateType !== 'univer_table' && <Button onClick={previewNow} loading={previewLoading}>预览</Button>}
             <Button type="primary" onClick={submit} loading={submitting} disabled={loading}>保存</Button>
           </Space>
-        </div>
+          </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-lg border border-gray-200 p-4">
@@ -317,23 +355,13 @@ export default function TemplateEditPage() {
                   />
                 </Form.Item>
               </div>
-              <Form.Item name="content" label="模板内容" rules={[{ required: true, message: '请输入模板内容' }]}>
-                {templateType === 'univer_table'
-                  ? (
-                      <div className="space-y-2">
-                        <div className="text-xs text-gray-500">Univer 模板内容来自下方表格（可包含 <code>{'{{path}}'}</code> 占位符）</div>
-                        <UniverTableEditor
-                          editorSessionKey={`template-content-edit-${templateIDValue}`}
-                          valueHtml={getUniverTemplateHtml(contentValue)}
-                          showMenu
-                          hideExportButton={false}
-                          onChange={nextHtml => form.setFieldValue('content', nextHtml)}
-                          onError={(error) => msgApi.error(error)}
-                        />
-                      </div>
-                    )
-                  : <Input.TextArea autoSize={{ minRows: 10, maxRows: 24 }} placeholder="Jinja2 模板内容" />}
-              </Form.Item>
+              {templateType === 'univer_table'
+                ? <Form.Item name="content" hidden rules={[{ required: true, message: '请输入模板内容' }]}><Input /></Form.Item>
+                : (
+                    <Form.Item name="content" label="模板内容" rules={[{ required: true, message: '请输入模板内容' }]}>
+                      <Input.TextArea autoSize={{ minRows: 10, maxRows: 24 }} placeholder="Jinja2 模板内容" />
+                    </Form.Item>
+                  )}
               <Form.Item name="defaultContextJson" label="默认 Context（JSON）">
                 <Input.TextArea autoSize={{ minRows: 8, maxRows: 16 }} placeholder='例如: {"name":"SXFG"}' />
               </Form.Item>
@@ -344,16 +372,42 @@ export default function TemplateEditPage() {
           </div>
 
           <div className="rounded-lg border border-gray-200 p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-gray-900">预览</div>
-              <div className="text-xs text-gray-500">{preview?.previewType === 'univer_table' ? '本地渲染（univer_table）' : '后端渲染（gonja）'}</div>
-            </div>
-            {!preview && (
-              <div className="rounded-md border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
-                点击“预览”生成渲染结果
+            {templateType === 'univer_table' && (
+              <div className="space-y-2">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-sm font-semibold text-gray-900">表格模板编辑区</div>
+                  <div className="text-xs text-gray-500">实时渲染（univer_table）</div>
+                </div>
+                {contextError && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
+                    {contextError}，已保留上一次有效渲染结果
+                  </div>
+                )}
+                <UniverTableEditor
+                  editorSessionKey={`template-content-edit-${templateIDValue}`}
+                  valueHtml={getUniverTemplateHtml(contentValue)}
+                  renderContext={processedContext || lastValidProcessedContext}
+                  showMenu
+                  hideExportButton={false}
+                  onChange={nextHtml => form.setFieldValue('content', nextHtml)}
+                  onError={(error) => msgApi.error(error)}
+                />
               </div>
             )}
-            {preview?.previewType === 'gonja' && preview?.outputType === 'html' && (
+            {templateType !== 'univer_table' && (
+              <>
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-sm font-semibold text-gray-900">预览</div>
+                  <div className="text-xs text-gray-500">后端渲染（gonja）</div>
+                </div>
+                {!preview && (
+                  <div className="rounded-md border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
+                    点击“预览”生成渲染结果
+                  </div>
+                )}
+              </>
+            )}
+            {templateType !== 'univer_table' && preview?.previewType === 'gonja' && preview?.outputType === 'html' && (
               <iframe
                 title="template-preview"
                 sandbox=""
@@ -361,31 +415,10 @@ export default function TemplateEditPage() {
                 className="h-[560px] w-full rounded-md border border-gray-200 bg-white"
               />
             )}
-            {preview?.previewType === 'gonja' && preview?.outputType === 'text' && (
+            {templateType !== 'univer_table' && preview?.previewType === 'gonja' && preview?.outputType === 'text' && (
               <pre className="h-[560px] w-full overflow-auto rounded-md border border-gray-200 bg-white p-3 text-xs text-gray-800">
                 {preview.rendered}
               </pre>
-            )}
-            {preview?.previewType === 'univer_table' && (
-              <div className="space-y-3">
-                <div>
-                  <div className="mb-1 text-xs font-medium text-gray-700">处理后参数 JSON</div>
-                  <pre className="max-h-56 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">
-                    {JSON.stringify(processedContext || {}, null, 2)}
-                  </pre>
-                </div>
-                <UniverTableEditor
-                  editorSessionKey={`template-preview-edit-${templateIDValue}`}
-                  valueHtml={preview.tableHtml}
-                  renderContext={processedContext}
-                  disabled
-                  previewMode
-                  showMenu={false}
-                  hideExportButton
-                  onChange={() => {}}
-                  onError={(error) => msgApi.error(error)}
-                />
-              </div>
             )}
           </div>
         </div>
