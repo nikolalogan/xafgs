@@ -172,6 +172,7 @@ export default function UniverNativeEditor({
           localeDocs,
           docsUi,
           localeDocsUi,
+          drawing,
           sheets,
           localeSheets,
           sheetsUi,
@@ -188,6 +189,7 @@ export default function UniverNativeEditor({
           import('@univerjs/docs/locale/zh-CN'),
           import('@univerjs/docs-ui'),
           import('@univerjs/docs-ui/locale/zh-CN'),
+          import('@univerjs/drawing'),
           import('@univerjs/sheets'),
           import('@univerjs/sheets/locale/zh-CN'),
           import('@univerjs/sheets-ui'),
@@ -215,6 +217,7 @@ export default function UniverNativeEditor({
         univer.registerPlugin(engineRender.UniverRenderEnginePlugin)
         univer.registerPlugin(engineFormula.UniverFormulaEnginePlugin)
         univer.registerPlugin(ui.UniverUIPlugin, { container: host })
+        univer.registerPlugin(drawing.UniverDrawingPlugin)
         univer.registerPlugin(docs.UniverDocsPlugin)
         univer.registerPlugin(docsUi.UniverDocsUIPlugin)
         univer.registerPlugin(sheets.UniverSheetsPlugin)
