@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
-import UniverTableEditor from '@/components/enterprise-projects/UniverTableEditor'
+import UniverNativeEditor from '@/components/enterprise-projects/UniverNativeEditor'
 
 type TemplateStatus = 'active' | 'disabled'
 type TemplateOutputType = 'text' | 'html'
@@ -395,12 +395,9 @@ export default function TemplateNewPage() {
                     {contextError}，已保留上一次有效渲染结果
                   </div>
                 )}
-                <UniverTableEditor
+                <UniverNativeEditor
                   editorSessionKey="template-content-new"
                   valueHtml={hasParseableTable(contentValue) ? getUniverTemplateHtml(contentValue) : EMPTY_UNIVER_TABLE_HTML}
-                  renderContext={processedContext || lastValidProcessedContext}
-                  showMenu
-                  hideExportButton={false}
                   onChange={nextHtml => form.setFieldValue('content', nextHtml)}
                   onError={(error) => msgApi.error(error)}
                 />
