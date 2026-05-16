@@ -695,15 +695,51 @@ export default function UniverTableEditor({
   }, [onInteractionDebug])
 
   useEffect(() => {
+    const safeDisposeCurrentInstance = () => {
+      const hostElement = hostRef.current as (HTMLDivElement & { __univerHoverCleanup?: () => void }) | null
+      try {
+        hostElement?.__univerHoverCleanup?.()
+      } catch {}
+      if (valueChangedListenerRef.current?.dispose) {
+        try {
+          valueChangedListenerRef.current.dispose()
+        } catch {}
+      }
+      if (selectionListenerRef.current?.dispose) {
+        try {
+          selectionListenerRef.current.dispose()
+        } catch {}
+      }
+      valueChangedListenerRef.current = null
+      selectionListenerRef.current = null
+      if (univerRef.current?.dispose) {
+        try {
+          univerRef.current.dispose()
+        } catch (error) {
+          // Rapid remount/dispose may race with Univer's internal DOM cleanup.
+          if (!(error instanceof DOMException && error.name === 'NotFoundError')) {
+            throw error
+          }
+        }
+      }
+      univerRef.current = null
+      apiRef.current = null
+      setUniverReady(false)
+      try {
+        if (hostRef.current) {
+          hostRef.current.innerHTML = ''
+        }
+      } catch {}
+    }
+
     let cancelled = false
     const initialize = async () => {
       try {
-        setUniverReady(false)
         const host = hostRef.current
         if (!host) {
           return
         }
-        host.innerHTML = ''
+        safeDisposeCurrentInstance()
         const parsedWorkbook = parseHtmlTablesToWorkbook(valueHtml, renderContext)
         const emitError = (message: string) => {
           const now = Date.now()
@@ -1105,25 +1141,7 @@ export default function UniverTableEditor({
         window.clearTimeout(hoverTimerRef.current)
         hoverTimerRef.current = 0
       }
-      const hostElement = hostRef.current as (HTMLDivElement & { __univerHoverCleanup?: () => void }) | null
-      hostElement?.__univerHoverCleanup?.()
-      if (valueChangedListenerRef.current?.dispose) {
-        valueChangedListenerRef.current.dispose()
-      }
-      if (selectionListenerRef.current?.dispose) {
-        selectionListenerRef.current.dispose()
-      }
-      valueChangedListenerRef.current = null
-      selectionListenerRef.current = null
-      if (univerRef.current?.dispose) {
-        univerRef.current.dispose()
-      }
-      univerRef.current = null
-      apiRef.current = null
-      setUniverReady(false)
-      if (hostRef.current) {
-        hostRef.current.innerHTML = ''
-      }
+      safeDisposeCurrentInstance()
     }
   }, [editorSessionKey, disabled, valueHtml, renderContext])
 
