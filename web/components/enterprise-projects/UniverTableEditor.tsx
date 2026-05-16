@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 
 type UniverTableEditorProps = {
@@ -470,7 +470,7 @@ const parseSingleTableElement = (table: HTMLTableElement, tableIndex: number): P
   }
 }
 
-const parseHtmlTablesToWorkbook = (valueHtml: string, renderContext?: Record<string, unknown> | null): ParsedWorkbook => {
+const parseHtmlTablesToWorkbook = (valueHtml: string): ParsedWorkbook => {
   try {
     const normalized = normalizeTableHtmlForParse(valueHtml)
     const parser = new DOMParser()
@@ -492,13 +492,7 @@ const parseHtmlTablesToWorkbook = (valueHtml: string, renderContext?: Record<str
     }
     const parsedTables = tables.map((table, index) => {
       const parsed = parseSingleTableElement(table as HTMLTableElement, index)
-      if (!renderContext) {
-        return parsed
-      }
-      return {
-        ...parsed,
-        values: parsed.values.map(row => row.map(cell => renderTemplateText(cell, renderContext))),
-      }
+      return parsed
     })
     const hasMeaningfulTable = parsedTables.some(table => table.stats.inputRows > 0 && table.stats.outputRows > 0)
     if (!hasMeaningfulTable) {
@@ -542,59 +536,72 @@ const parseHtmlTablesToWorkbook = (valueHtml: string, renderContext?: Record<str
   }
 }
 
-const serializeSheetToHtml = (sheet: any): string => {
-  const dataRange = sheet?.getDataRange?.()
-  const matrix = (dataRange?.getDisplayValues?.() || dataRange?.getValues?.() || []) as unknown[][]
-  const rows = Array.isArray(matrix) ? matrix : []
-  if (rows.length === 0) {
-    return '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+const cloneParsedTable = (table: ParsedTable): ParsedTable => ({
+  values: table.values.map(row => row.slice()),
+  merges: table.merges.map(merge => ({ ...merge })),
+  warnings: table.warnings.map(warning => ({ ...warning })),
+  stats: { ...table.stats },
+})
+
+const cloneParsedWorkbook = (workbook: ParsedWorkbook): ParsedWorkbook => ({
+  tables: workbook.tables.map(cloneParsedTable),
+  diagnostics: { ...workbook.diagnostics },
+})
+
+const applyRenderContextToWorkbook = (
+  sourceWorkbook: ParsedWorkbook,
+  renderContext?: Record<string, unknown> | null,
+): ParsedWorkbook => {
+  if (!renderContext) {
+    return cloneParsedWorkbook(sourceWorkbook)
   }
-  const colCount = rows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 1)
-  const mergedRanges = Array.isArray(sheet?.getMergedRanges?.()) ? sheet.getMergedRanges() : []
-  const mergeByStart = new Map<string, { rowSpan: number, colSpan: number }>()
-  const coveredCells = new Set<string>()
-  for (const range of mergedRanges) {
-    const startRow = Number(range?.getRow?.() ?? 0)
-    const startCol = Number(range?.getColumn?.() ?? 0)
-    const rowSpan = Math.max(1, Number(range?.getHeight?.() ?? 1))
-    const colSpan = Math.max(1, Number(range?.getWidth?.() ?? 1))
-    mergeByStart.set(`${startRow}:${startCol}`, { rowSpan, colSpan })
-    for (let rowOffset = 0; rowOffset < rowSpan; rowOffset++) {
-      for (let colOffset = 0; colOffset < colSpan; colOffset++) {
-        if (rowOffset === 0 && colOffset === 0) {
-          continue
-        }
-        coveredCells.add(`${startRow + rowOffset}:${startCol + colOffset}`)
-      }
-    }
+  return {
+    ...cloneParsedWorkbook(sourceWorkbook),
+    tables: sourceWorkbook.tables.map((table) => ({
+      ...cloneParsedTable(table),
+      values: table.values.map(row => row.map(cell => renderTemplateText(cell, renderContext))),
+    })),
   }
-  const htmlRows = rows.map((row, rowIndex) => {
-    const cells = Array.isArray(row) ? row : []
-    const tds = Array.from({ length: colCount }, (_, colIndex) => {
-      if (coveredCells.has(`${rowIndex}:${colIndex}`)) {
-        return ''
-      }
-      const value = cells[colIndex]
-      const text = value === null || value === undefined ? '' : String(value)
-      const merge = mergeByStart.get(`${rowIndex}:${colIndex}`)
-      const attrs = [
-        merge && merge.rowSpan > 1 ? ` rowspan="${merge.rowSpan}"` : '',
-        merge && merge.colSpan > 1 ? ` colspan="${merge.colSpan}"` : '',
-      ].join('')
-      return `<td${attrs}>${escapeHtml(text)}</td>`
-    }).join('')
-    return `<tr>${tds}</tr>`
-  }).join('')
-  return `<div class="table-wrapper"><table><tbody>${htmlRows}</tbody></table></div>`
 }
 
-const serializeWorkbookToHtml = (api: any): string => {
-  const workbook = api?.getActiveWorkbook?.()
-  const sheets = Array.isArray(workbook?.getSheets?.()) ? workbook.getSheets() : []
-  if (sheets.length === 0) {
-    return '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+const parsedWorkbookToHtml = (workbook: ParsedWorkbook): string => {
+  const fallback = '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+  if (!workbook.tables.length) {
+    return fallback
   }
-  return sheets.map((sheet: any) => serializeSheetToHtml(sheet)).join('')
+  return workbook.tables.map((table) => {
+    const rowCount = Math.max(table.values.length, 1)
+    const colCount = Math.max(table.values.reduce((max, row) => Math.max(max, row.length), 0), 1)
+    const mergeByStart = new Map<string, { rowSpan: number; colSpan: number }>()
+    const covered = new Set<string>()
+    for (const merge of table.merges) {
+      mergeByStart.set(`${merge.row}:${merge.col}`, { rowSpan: merge.rowSpan, colSpan: merge.colSpan })
+      for (let rowOffset = 0; rowOffset < merge.rowSpan; rowOffset++) {
+        for (let colOffset = 0; colOffset < merge.colSpan; colOffset++) {
+          if (rowOffset === 0 && colOffset === 0) {
+            continue
+          }
+          covered.add(`${merge.row + rowOffset}:${merge.col + colOffset}`)
+        }
+      }
+    }
+    const rows = Array.from({ length: rowCount }, (_row, rowIndex) => {
+      const cells = Array.from({ length: colCount }, (_col, colIndex) => {
+        if (covered.has(`${rowIndex}:${colIndex}`)) {
+          return ''
+        }
+        const text = table.values[rowIndex]?.[colIndex] ?? ''
+        const merge = mergeByStart.get(`${rowIndex}:${colIndex}`)
+        const attrs = [
+          merge && merge.rowSpan > 1 ? ` rowspan="${merge.rowSpan}"` : '',
+          merge && merge.colSpan > 1 ? ` colspan="${merge.colSpan}"` : '',
+        ].join('')
+        return `<td${attrs}>${escapeHtml(String(text))}</td>`
+      }).join('')
+      return `<tr>${cells}</tr>`
+    }).join('')
+    return `<div class="table-wrapper"><table><tbody>${rows}</tbody></table></div>`
+  }).join('')
 }
 
 const normalizeSelectionRange = (rawRange: any): SelectionRange | null => {
@@ -673,10 +680,53 @@ export default function UniverTableEditor({
   const onInteractionDebugRef = useRef(onInteractionDebug)
   const lastErrorMessageRef = useRef('')
   const lastErrorAtRef = useRef(0)
+  const rawWorkbookRef = useRef<ParsedWorkbook | null>(null)
+  const displayWorkbookRef = useRef<ParsedWorkbook | null>(null)
+  const applyingDisplaySyncRef = useRef(false)
+  const lastValueHtmlRef = useRef(normalizeHtml(valueHtml))
+  const renderThrottleRef = useRef<number>(0)
+
+  const renderContextSignature = useMemo(() => JSON.stringify(renderContext || null), [renderContext])
 
   useEffect(() => {
     onChangeRef.current = onChange
   }, [onChange])
+
+  const applyWorkbookToSheets = (api: any, workbookModel: ParsedWorkbook) => {
+    const workbook = api?.getActiveWorkbook?.()
+    const firstSheet = workbook?.getActiveSheet?.()
+    if (!workbook || !firstSheet) {
+      return
+    }
+    for (let index = 0; index < workbookModel.tables.length; index++) {
+      const parsed = workbookModel.tables[index]
+      let sheet = index === 0 ? firstSheet : null
+      if (!sheet) {
+        sheet = workbook.insertSheet(`Table ${index + 1}`)
+      }
+      sheet.clear()
+      const rowCount = Math.max(parsed.values.length, 1)
+      const colCount = Math.max(parsed.values[0]?.length || 1, 1)
+      const normalizedValues = parsed.values.map(row => row.map(cell => normalizeCellValueForSheet(cell)))
+      sheet.getRange(0, 0, rowCount, colCount).setValues(normalizedValues)
+      for (const merge of parsed.merges) {
+        if (merge.rowSpan <= 1 && merge.colSpan <= 1) {
+          continue
+        }
+        const maxRowSpan = rowCount - merge.row
+        const maxColSpan = colCount - merge.col
+        if (maxRowSpan <= 0 || maxColSpan <= 0) {
+          continue
+        }
+        const safeRowSpan = Math.max(1, Math.min(merge.rowSpan, maxRowSpan))
+        const safeColSpan = Math.max(1, Math.min(merge.colSpan, maxColSpan))
+        try {
+          sheet.getRange(merge.row, merge.col, safeRowSpan, safeColSpan).merge(true)
+        } catch {}
+      }
+    }
+    workbook.setActiveSheet(firstSheet)
+  }
 
   useEffect(() => {
     onErrorRef.current = onError
@@ -740,7 +790,10 @@ export default function UniverTableEditor({
           return
         }
         safeDisposeCurrentInstance()
-        const parsedWorkbook = parseHtmlTablesToWorkbook(valueHtml, renderContext)
+        const parsedWorkbook = parseHtmlTablesToWorkbook(valueHtml)
+        rawWorkbookRef.current = cloneParsedWorkbook(parsedWorkbook)
+        displayWorkbookRef.current = applyRenderContextToWorkbook(parsedWorkbook, renderContext)
+        lastValueHtmlRef.current = normalizeHtml(valueHtml)
         const emitError = (message: string) => {
           const now = Date.now()
           if (lastErrorMessageRef.current === message && now - lastErrorAtRef.current < 2000) {
@@ -826,46 +879,13 @@ export default function UniverTableEditor({
         if (!firstSheet) {
           throw new Error('Univer 工作表初始化失败')
         }
-        for (let index = 0; index < parsedWorkbook.tables.length; index++) {
-          const parsed = parsedWorkbook.tables[index]
-          let sheet = index === 0 ? firstSheet : null
-          if (!sheet) {
-            sheet = workbook.insertSheet(`Table ${index + 1}`)
-          }
-          sheet.clear()
-          const rowCount = Math.max(parsed.values.length, 1)
-          const colCount = Math.max(parsed.values[0]?.length || 1, 1)
-          const normalizedValues = parsed.values.map(row => row.map(cell => normalizeCellValueForSheet(cell)))
-          sheet.getRange(0, 0, rowCount, colCount).setValues(normalizedValues)
-          for (const merge of parsed.merges) {
-            if (merge.rowSpan <= 1 && merge.colSpan <= 1) {
-              continue
-            }
-            const maxRowSpan = rowCount - merge.row
-            const maxColSpan = colCount - merge.col
-            if (maxRowSpan <= 0 || maxColSpan <= 0) {
-              continue
-            }
-            const safeRowSpan = Math.max(1, Math.min(merge.rowSpan, maxRowSpan))
-            const safeColSpan = Math.max(1, Math.min(merge.colSpan, maxColSpan))
-            try {
-              sheet.getRange(merge.row, merge.col, safeRowSpan, safeColSpan).merge(true)
-            } catch (error) {
-              if (process.env.NODE_ENV !== 'production') {
-                console.warn('[UniverTableEditor] skip invalid merge range', {
-                  merge,
-                  safeRowSpan,
-                  safeColSpan,
-                  error: error instanceof Error ? error.message : String(error),
-                })
-              }
-            }
-          }
-        }
-        workbook.setActiveSheet(firstSheet)
-        lastEmittedHTMLRef.current = normalizeHtml(serializeWorkbookToHtml(api))
+        applyWorkbookToSheets(api, displayWorkbookRef.current || parsedWorkbook)
+        lastEmittedHTMLRef.current = normalizeHtml(parsedWorkbookToHtml(rawWorkbookRef.current || parsedWorkbook))
         const scheduleEmit = () => {
           if (disabled) {
+            return
+          }
+          if (applyingDisplaySyncRef.current) {
             return
           }
           if (debounceRef.current) {
@@ -876,7 +896,39 @@ export default function UniverTableEditor({
             if (!currentApi) {
               return
             }
-            const normalized = normalizeHtml(serializeWorkbookToHtml(currentApi))
+            const rawWorkbook = rawWorkbookRef.current
+            const displayWorkbook = displayWorkbookRef.current
+            const workbook = currentApi.getActiveWorkbook?.()
+            const sheets = Array.isArray(workbook?.getSheets?.()) ? workbook.getSheets() : []
+            if (rawWorkbook && sheets.length > 0) {
+              for (let tableIndex = 0; tableIndex < rawWorkbook.tables.length && tableIndex < sheets.length; tableIndex++) {
+                const table = rawWorkbook.tables[tableIndex]
+                const displayTable = displayWorkbook?.tables[tableIndex]
+                const matrix = sheets[tableIndex]?.getDataRange?.()?.getValues?.() || []
+                const maxCols = table.values.reduce((max, row) => Math.max(max, row.length), 0)
+                const nextValues = table.values.map((row, rowIndex) => {
+                  return row.map((cell, colIndex) => {
+                    const nextValue = matrix?.[rowIndex]?.[colIndex]
+                    const currentText = nextValue === null || nextValue === undefined ? '' : String(nextValue)
+                    const renderedCell = displayTable?.values?.[rowIndex]?.[colIndex] ?? cell
+                    if (PLACEHOLDER_PATTERN.test(cell) && currentText === renderedCell) {
+                      PLACEHOLDER_PATTERN.lastIndex = 0
+                      return cell
+                    }
+                    PLACEHOLDER_PATTERN.lastIndex = 0
+                    return currentText
+                  })
+                })
+                const normalizedRows = nextValues.map(row => {
+                  if (row.length >= maxCols) {
+                    return row
+                  }
+                  return row.concat(Array.from({ length: maxCols - row.length }, () => ''))
+                })
+                table.values = normalizedRows
+              }
+            }
+            const normalized = normalizeHtml(parsedWorkbookToHtml(rawWorkbookRef.current || parseHtmlTablesToWorkbook(valueHtml)))
             if (normalized === lastEmittedHTMLRef.current) {
               return
             }
@@ -1143,7 +1195,53 @@ export default function UniverTableEditor({
       }
       safeDisposeCurrentInstance()
     }
-  }, [editorSessionKey, disabled, valueHtml, renderContext])
+  }, [editorSessionKey, disabled])
+
+  useEffect(() => {
+    const normalizedInput = normalizeHtml(valueHtml)
+    if (normalizedInput === lastValueHtmlRef.current) {
+      return
+    }
+    const api = apiRef.current
+    if (!api) {
+      lastValueHtmlRef.current = normalizedInput
+      return
+    }
+    const parsedWorkbook = parseHtmlTablesToWorkbook(valueHtml)
+    rawWorkbookRef.current = cloneParsedWorkbook(parsedWorkbook)
+    displayWorkbookRef.current = applyRenderContextToWorkbook(parsedWorkbook, renderContext)
+    applyingDisplaySyncRef.current = true
+    applyWorkbookToSheets(api, displayWorkbookRef.current)
+    window.setTimeout(() => {
+      applyingDisplaySyncRef.current = false
+    }, 0)
+    lastValueHtmlRef.current = normalizedInput
+    lastEmittedHTMLRef.current = normalizeHtml(parsedWorkbookToHtml(rawWorkbookRef.current))
+  }, [valueHtml, renderContextSignature])
+
+  useEffect(() => {
+    const api = apiRef.current
+    if (!api || !rawWorkbookRef.current) {
+      return
+    }
+    if (renderThrottleRef.current) {
+      window.clearTimeout(renderThrottleRef.current)
+    }
+    renderThrottleRef.current = window.setTimeout(() => {
+      displayWorkbookRef.current = applyRenderContextToWorkbook(rawWorkbookRef.current!, renderContext)
+      applyingDisplaySyncRef.current = true
+      applyWorkbookToSheets(api, displayWorkbookRef.current)
+      window.setTimeout(() => {
+        applyingDisplaySyncRef.current = false
+      }, 0)
+    }, 160)
+    return () => {
+      if (renderThrottleRef.current) {
+        window.clearTimeout(renderThrottleRef.current)
+        renderThrottleRef.current = 0
+      }
+    }
+  }, [renderContextSignature])
 
   useEffect(() => {
     const api = apiRef.current
