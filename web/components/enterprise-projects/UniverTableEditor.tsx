@@ -13,7 +13,6 @@ export type SelectionRange = {
 type UniverTableEditorProps = {
   editorSessionKey: string
   valueHtml: string
-  disabled?: boolean
   onChange: (nextHtml: string) => void
   onError?: (message: string) => void
   activeCell?: { row: number; col: number } | null
@@ -69,7 +68,6 @@ export default function UniverTableEditor(props: UniverTableEditorProps) {
     <UniverNativeEditor
       editorSessionKey={props.editorSessionKey}
       valueHtml={props.valueHtml}
-      disabled={props.disabled}
       onChange={props.onChange}
       onError={props.onError}
     />

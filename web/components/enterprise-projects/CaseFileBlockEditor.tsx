@@ -367,15 +367,14 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, fileName, e
                 : null}
               {isTableBlock(block)
                 ? (
-                    <UniverTableEditor
-                      key={`table-${block.blockId}-${block.lastSavedAt || ''}-${editing ? 'edit' : 'read'}`}
-                      editorSessionKey={String(block.blockId)}
-                      exportFileNamePrefix={`block-${block.blockId}`}
-                      valueHtml={normalizeHTML(pendingHTMLByBlockIDRef.current[block.blockId] || block.currentHtml || block.initialHtml || '')}
-                      disabled={!enabled || !editing}
-                      onChange={(nextHtml) => {
-                        if (tableRenderErrorByBlockID[block.blockId])
-                          return
+                      <UniverTableEditor
+                        key={`table-${block.blockId}-${block.lastSavedAt || ''}-${editing ? 'edit' : 'read'}`}
+                        editorSessionKey={String(block.blockId)}
+                        exportFileNamePrefix={`block-${block.blockId}`}
+                        valueHtml={normalizeHTML(pendingHTMLByBlockIDRef.current[block.blockId] || block.currentHtml || block.initialHtml || '')}
+                        onChange={(nextHtml) => {
+                          if (tableRenderErrorByBlockID[block.blockId])
+                            return
                         scheduleSave(block.blockId, nextHtml)
                       }}
                       onError={(messageText) => {

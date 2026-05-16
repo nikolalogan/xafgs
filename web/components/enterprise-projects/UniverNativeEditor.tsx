@@ -5,7 +5,6 @@ import { useEffect, useMemo, useRef } from 'react'
 type UniverNativeEditorProps = {
   editorSessionKey: string
   valueHtml: string
-  disabled?: boolean
   onChange: (nextHtml: string) => void
   onError?: (message: string) => void
 }
@@ -139,10 +138,10 @@ const readSheetValues = (api: any): string[][] => {
 export default function UniverNativeEditor({
   editorSessionKey,
   valueHtml,
-  disabled = false,
   onChange,
   onError,
 }: UniverNativeEditorProps) {
+  // 编辑器默认始终可编辑；只读控制由上层业务保护机制实现。
   const hostRef = useRef<HTMLDivElement | null>(null)
   const runtimeRef = useRef<UniverRuntime | null>(null)
   const lastInputRef = useRef<string>('')
@@ -224,14 +223,6 @@ export default function UniverNativeEditor({
         const api = facade.FUniver.newAPI(univer) as any
         runtimeRef.current = { univer, api }
 
-        const applyEditable = () => {
-          const workbook = api?.getActiveWorkbook?.()
-          const sheet = workbook?.getActiveSheet?.()
-          const editable = !disabled
-          workbook?.setEditable?.(editable)
-          sheet?.setEditable?.(editable)
-        }
-
         const emitChange = () => {
           if (syncGuardRef.current) {
             return
@@ -257,7 +248,10 @@ export default function UniverNativeEditor({
         setSheetValues(api, initialMatrix)
         lastInputRef.current = normalizedInput
         lastOutputRef.current = normalizeHtml(matrixToHtml(initialMatrix))
-        applyEditable()
+        const workbook = api?.getActiveWorkbook?.()
+        const sheet = workbook?.getActiveSheet?.()
+        workbook?.setEditable?.(true)
+        sheet?.setEditable?.(true)
       } catch (error) {
         const detail = error instanceof Error ? error.message : 'Univer 初始化失败'
         onError?.(`[univer-native-init] ${detail}`)
@@ -281,18 +275,6 @@ export default function UniverNativeEditor({
       runtimeRef.current = null
     }
   }, [editorSessionKey])
-
-  useEffect(() => {
-    const runtime = runtimeRef.current
-    if (!runtime) {
-      return
-    }
-    const workbook = runtime.api?.getActiveWorkbook?.()
-    const sheet = workbook?.getActiveSheet?.()
-    const editable = !disabled
-    workbook?.setEditable?.(editable)
-    sheet?.setEditable?.(editable)
-  }, [disabled])
 
   useEffect(() => {
     const runtime = runtimeRef.current

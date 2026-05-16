@@ -586,7 +586,6 @@ export default function ReportTemplateEditorPage() {
             <UniverNativeEditor
               editorSessionKey={`report-template-${templateId}-univer`}
               valueHtml={tableHtml}
-              disabled={!isAdmin}
               onChange={setTableHtml}
               onError={message => msgApi.error(message)}
             />
