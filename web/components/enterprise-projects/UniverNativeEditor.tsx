@@ -168,6 +168,10 @@ export default function UniverNativeEditor({
           ui,
           localeCore,
           localeUI,
+          docs,
+          localeDocs,
+          docsUi,
+          localeDocsUi,
           sheets,
           localeSheets,
           sheetsUi,
@@ -180,6 +184,10 @@ export default function UniverNativeEditor({
           import('@univerjs/ui'),
           import('@univerjs/design/locale/zh-CN'),
           import('@univerjs/ui/locale/zh-CN'),
+          import('@univerjs/docs'),
+          import('@univerjs/docs/locale/zh-CN'),
+          import('@univerjs/docs-ui'),
+          import('@univerjs/docs-ui/locale/zh-CN'),
           import('@univerjs/sheets'),
           import('@univerjs/sheets/locale/zh-CN'),
           import('@univerjs/sheets-ui'),
@@ -196,6 +204,8 @@ export default function UniverNativeEditor({
             [core.LocaleType.ZH_CN]: {
               ...localeCore.default,
               ...localeUI.default,
+              ...localeDocs.default,
+              ...localeDocsUi.default,
               ...localeSheets.default,
               ...localeSheetsUi.default,
             },
@@ -205,6 +215,8 @@ export default function UniverNativeEditor({
         univer.registerPlugin(engineRender.UniverRenderEnginePlugin)
         univer.registerPlugin(engineFormula.UniverFormulaEnginePlugin)
         univer.registerPlugin(ui.UniverUIPlugin, { container: host })
+        univer.registerPlugin(docs.UniverDocsPlugin)
+        univer.registerPlugin(docsUi.UniverDocsUIPlugin)
         univer.registerPlugin(sheets.UniverSheetsPlugin)
         univer.registerPlugin(sheetsUi.UniverSheetsUIPlugin)
         univer.createUnit(core.UniverInstanceType.UNIVER_SHEET, {})
