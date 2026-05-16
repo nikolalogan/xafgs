@@ -1103,17 +1103,30 @@ export default function UniverTableEditor({
         const handlePointerLeave = () => {
           tryEmitHover(-1, null)
         }
+        const SHEET_FOCUS_SELECTOR = '.univer-sheet-container, .univer-sheet-canvas, .univer-scrollbar__viewport'
+        const isTargetInsideSheetArea = (target: EventTarget | null) => {
+          const element = target as HTMLElement | null
+          if (!element || !hostElement) {
+            return false
+          }
+          return Boolean(element.closest(SHEET_FOCUS_SELECTOR) && hostElement.contains(element))
+        }
         const isFocusInsideHost = () => {
           const active = document.activeElement
           return Boolean(active && hostElement && hostElement.contains(active))
+        }
+        const isFocusInsideSheetArea = () => {
+          const active = document.activeElement as HTMLElement | null
+          if (!active || !hostElement || !hostElement.contains(active)) {
+            return false
+          }
+          return Boolean(active.closest(SHEET_FOCUS_SELECTOR))
         }
         const focusEditableInHost = () => {
           if (!hostElement) {
             return
           }
-          const target = hostElement.querySelector(
-            '[contenteditable="true"], textarea, input, canvas, .univer-sheet-container, .univer-sheet-canvas, .univer-scrollbar__viewport',
-          ) as HTMLElement | null
+          const target = hostElement.querySelector(SHEET_FOCUS_SELECTOR) as HTMLElement | null
           if (target && typeof target.focus === 'function') {
             target.focus()
             onInteractionDebugRef.current?.('focus', { focused: true, target: target.tagName.toLowerCase() })
@@ -1122,14 +1135,20 @@ export default function UniverTableEditor({
           hostElement.focus()
           onInteractionDebugRef.current?.('focus', { focused: true, target: 'host' })
         }
-        const handlePointerUp = () => {
+        const handlePointerUp = (event: PointerEvent) => {
+          if (!isTargetInsideSheetArea(event.target)) {
+            return
+          }
           focusEditableInHost()
           syncSelectionFromCurrent('selection-fallback', 'pointerup')
         }
         const handleMouseUp = () => {
           syncSelectionFromCurrent('selection-fallback', 'mouseup')
         }
-        const handlePointerDown = () => {
+        const handlePointerDown = (event: PointerEvent) => {
+          if (!isTargetInsideSheetArea(event.target)) {
+            return
+          }
           focusEditableInHost()
         }
         const handleKeySelection = (event: KeyboardEvent) => {
@@ -1137,7 +1156,7 @@ export default function UniverTableEditor({
             || event.key === 'ArrowDown'
             || event.key === 'ArrowLeft'
             || event.key === 'ArrowRight'
-          if (!isArrowKey || !isFocusInsideHost()) {
+          if (!isArrowKey || !isFocusInsideHost() || !isFocusInsideSheetArea()) {
             return
           }
           event.preventDefault()
