@@ -57,8 +57,6 @@ export default function TemplateNewPage() {
   const [form] = Form.useForm()
   const templateType = Form.useWatch('templateType', form)
   const contentValue = Form.useWatch('content', form)
-  const defaultContextJsonValue = Form.useWatch('defaultContextJson', form)
-  const preprocessJsValue = Form.useWatch('preprocessJs', form)
 
   const { role: currentRole, hydrated } = useConsoleRole()
 
@@ -125,25 +123,6 @@ export default function TemplateNewPage() {
       form.setFieldValue('content', EMPTY_TABLE_HTML)
   }, [contentValue, form, templateType])
 
-  useEffect(() => {
-    if (templateType !== 'table')
-      return
-    const timer = window.setTimeout(() => {
-      try {
-        const contextObject = parseContextJson(defaultContextJsonValue || '')
-        const mappedContext = executePreprocess(preprocessJsValue || '', contextObject)
-        setProcessedContext(mappedContext)
-        setLastValidProcessedContext(mappedContext)
-        setContextError('')
-      }
-      catch (error) {
-        setProcessedContext(lastValidProcessedContext)
-        setContextError(error instanceof Error ? error.message : '上下文处理失败')
-      }
-    }, 300)
-    return () => window.clearTimeout(timer)
-  }, [defaultContextJsonValue, lastValidProcessedContext, preprocessJsValue, templateType])
-
   const previewNow = async () => {
     try {
       const values = await form.validateFields()
@@ -151,7 +130,9 @@ export default function TemplateNewPage() {
       const contextObject = parseContextJson(values.defaultContextJson || '')
       const mappedContext = executePreprocess(values.preprocessJs || '', contextObject)
       if (values.templateType === 'table') {
+        setContextError('')
         setProcessedContext(mappedContext)
+        setLastValidProcessedContext(mappedContext)
         setPreview({
           outputType: values.outputType,
           previewType: 'table',
@@ -179,6 +160,10 @@ export default function TemplateNewPage() {
     catch (error) {
       if (error instanceof Error && error.message.includes('out of date'))
         return
+      if (templateType === 'table') {
+        setProcessedContext(lastValidProcessedContext)
+        setContextError(error instanceof Error ? error.message : '上下文处理失败')
+      }
       msgApi.error(error instanceof Error ? error.message : '预览失败')
     }
     finally {
@@ -246,8 +231,8 @@ export default function TemplateNewPage() {
             <div className="text-sm font-semibold text-gray-900">新增模板</div>
             <Space>
               <Button onClick={() => router.push('/app/templates')}>返回列表</Button>
-              {templateType !== 'table' && <Button onClick={previewNow} loading={previewLoading}>预览</Button>}
-            <Button type="primary" onClick={submit} loading={submitting}>保存</Button>
+              <Button onClick={previewNow} loading={previewLoading}>预览</Button>
+              <Button type="primary" onClick={submit} loading={submitting}>保存</Button>
             </Space>
           </div>
 
@@ -388,11 +373,25 @@ export default function TemplateNewPage() {
               <div className="space-y-2">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-sm font-semibold text-gray-900">表格模板编辑区</div>
-                  <div className="text-xs text-gray-500">实时渲染（table）</div>
+                  <div className="text-xs text-gray-500">预览后更新（table）</div>
+                </div>
+                <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+                  <div className="mb-2 text-xs font-medium text-gray-700">预处理后数据（Preview Context）</div>
+                  {!previewLoading && preview?.previewType !== 'table' && !processedContext && (
+                    <div className="text-xs text-gray-500">点击“预览”生成数据</div>
+                  )}
+                  {previewLoading && (
+                    <div className="text-xs text-gray-500">预处理中...</div>
+                  )}
+                  {!previewLoading && processedContext && (
+                    <pre className="max-h-56 overflow-auto rounded border border-gray-200 bg-white p-2 text-xs text-gray-800">
+                      {JSON.stringify(processedContext, null, 2)}
+                    </pre>
+                  )}
                 </div>
                 {contextError && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
-                    {contextError}，已保留上一次有效渲染结果
+                    {contextError}，预览失败，已保留上一次有效结果
                   </div>
                 )}
                 <UniverTableEditor
