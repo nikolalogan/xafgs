@@ -341,7 +341,7 @@ export default function TemplateNewPage() {
               <Form.Item name="description" label="描述">
                 <Input placeholder="可选" />
               </Form.Item>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <Form.Item name="templateType" label="模板类型" rules={[{ required: true, message: '请选择模板类型' }]}>
                   <Select
                     options={[
