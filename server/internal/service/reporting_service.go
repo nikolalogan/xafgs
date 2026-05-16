@@ -164,7 +164,7 @@ func (service *reportingService) CreateReportTemplate(_ context.Context, request
 		request.TemplateType = model.TemplateTypeGonja
 	}
 	if !model.IsValidTemplateType(request.TemplateType) {
-		return model.ReportTemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/univer_table")
+		return model.ReportTemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/table")
 	}
 	if request.Status == "" {
 		request.Status = model.ReportTemplateStatusActive
@@ -196,7 +196,7 @@ func (service *reportingService) CreateReportTemplate(_ context.Context, request
 	if apiError != nil {
 		return model.ReportTemplateDTO{}, apiError
 	}
-	if request.ContentMarkdown == "" && request.TemplateType != model.TemplateTypeUniverTable {
+	if request.ContentMarkdown == "" && request.TemplateType != model.TemplateTypeTable {
 		request.ContentMarkdown = "## 新章节\n\n请编辑内容。"
 	}
 	outline := buildOutlineJSON(request.ContentMarkdown)
@@ -248,7 +248,7 @@ func (service *reportingService) UpdateReportTemplate(_ context.Context, templat
 		request.TemplateType = model.TemplateTypeGonja
 	}
 	if !model.IsValidTemplateType(request.TemplateType) {
-		return model.ReportTemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/univer_table")
+		return model.ReportTemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/table")
 	}
 
 	categories, apiError := normalizeJSONArray(request.CategoriesJSON, "categoriesJson")
@@ -2927,7 +2927,7 @@ func mergeTablePayloadForTemplateType(editorConfig json.RawMessage, templateType
 			return nil, model.NewAPIError(400, response.CodeBadRequest, "editorConfigJson 不是合法 JSON object")
 		}
 	}
-	if templateType != model.TemplateTypeUniverTable {
+	if templateType != model.TemplateTypeTable {
 		delete(root, "tablePayload")
 		out, _ := json.Marshal(root)
 		return out, nil
@@ -2937,7 +2937,7 @@ func mergeTablePayloadForTemplateType(editorConfig json.RawMessage, templateType
 		return nil, apiError
 	}
 	if len(normalized) == 0 {
-		return nil, model.NewAPIError(400, response.CodeBadRequest, "univer_table 模板必须提供 tablePayload")
+		return nil, model.NewAPIError(400, response.CodeBadRequest, "table 模板必须提供 tablePayload")
 	}
 	var payload any
 	_ = json.Unmarshal(normalized, &payload)
@@ -3046,3 +3046,4 @@ func firstCellForTable(cells []model.DocumentTableCellDTO, tableID int64) model.
 	}
 	return model.DocumentTableCellDTO{}
 }
+

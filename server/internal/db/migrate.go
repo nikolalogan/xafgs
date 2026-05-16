@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS template (
   status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
   content TEXT NOT NULL,
   default_context_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-  template_type VARCHAR(32) NOT NULL DEFAULT 'gonja' CHECK (template_type IN ('gonja', 'univer_table')),
+  template_type VARCHAR(32) NOT NULL DEFAULT 'gonja' CHECK (template_type IN ('gonja', 'table')),
   preprocess_js TEXT NOT NULL DEFAULT 'return context',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -853,14 +853,16 @@ BEGIN
   ) THEN
     ALTER TABLE report_template
     ADD CONSTRAINT report_template_template_type_check
-    CHECK (template_type IN ('gonja', 'univer_table'));
+    CHECK (template_type IN ('gonja', 'table'));
   END IF;
 END$$;
 
 ALTER TABLE template
 ADD COLUMN IF NOT EXISTS template_type VARCHAR(32) NOT NULL DEFAULT 'gonja';
+UPDATE template SET template_type = 'table' WHERE template_type = 'univer_table';
 ALTER TABLE template
 ADD COLUMN IF NOT EXISTS preprocess_js TEXT NOT NULL DEFAULT 'return context';
+UPDATE report_template SET template_type = 'table' WHERE template_type = 'univer_table';
 
 ALTER TABLE region_economy
 DROP COLUMN IF EXISTS gdp_rank_province;
@@ -1969,3 +1971,4 @@ ON CONFLICT (code) DO NOTHING
 	}
 	return nil
 }
+

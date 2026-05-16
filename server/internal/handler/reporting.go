@@ -79,7 +79,7 @@ type listEnterpriseProjectsRequest struct {
 
 type createReportTemplateRequest struct {
 	TemplateKey          string          `json:"templateKey" validate:"required"`
-	TemplateType         string          `json:"templateType" validate:"omitempty,oneof=gonja univer_table"`
+	TemplateType         string          `json:"templateType" validate:"omitempty,oneof=gonja table"`
 	Name                 string          `json:"name" validate:"required"`
 	Description          string          `json:"description"`
 	Status               string          `json:"status"`
@@ -93,7 +93,7 @@ type createReportTemplateRequest struct {
 
 type updateReportTemplateRequest struct {
 	TemplateID           int64           `path:"templateId" validate:"required,min=1"`
-	TemplateType         string          `json:"templateType" validate:"omitempty,oneof=gonja univer_table"`
+	TemplateType         string          `json:"templateType" validate:"omitempty,oneof=gonja table"`
 	Name                 string          `json:"name" validate:"required"`
 	Description          string          `json:"description"`
 	Status               string          `json:"status"`
@@ -922,3 +922,4 @@ func (handler *ReportingHandler) ListSubjectAssets(c *fiber.Ctx, request *subjec
 	}
 	return response.Success(c, fiber.StatusOK, result, "获取主体资产成功")
 }
+

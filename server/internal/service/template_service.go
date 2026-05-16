@@ -91,7 +91,7 @@ func (service *templateService) Create(
 		request.TemplateType = model.TemplateTypeGonja
 	}
 	if !model.IsValidTemplateType(request.TemplateType) {
-		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/univer_table")
+		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/table")
 	}
 	if _, exists := service.templateRepository.FindByTemplateKey(request.TemplateKey); exists {
 		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateKey 已存在")
@@ -155,7 +155,7 @@ func (service *templateService) Update(
 		request.TemplateType = model.TemplateTypeGonja
 	}
 	if !model.IsValidTemplateType(request.TemplateType) {
-		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/univer_table")
+		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/table")
 	}
 	defaultContext, apiError := normalizeContextJSON(request.DefaultContextJSON)
 	if apiError != nil {
@@ -201,7 +201,7 @@ func (service *templateService) Preview(
 		request.TemplateType = model.TemplateTypeGonja
 	}
 	if !model.IsValidTemplateType(request.TemplateType) {
-		return model.PreviewTemplateResponse{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/univer_table")
+		return model.PreviewTemplateResponse{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/table")
 	}
 
 	contextObject, apiError := parseContextObject(request.ContextJSON)
@@ -209,13 +209,13 @@ func (service *templateService) Preview(
 		return model.PreviewTemplateResponse{}, apiError
 	}
 
-	if request.TemplateType == model.TemplateTypeUniverTable {
+	if request.TemplateType == model.TemplateTypeTable {
 		tablePayload, err := json.Marshal(contextObject)
 		if err != nil {
 			return model.PreviewTemplateResponse{}, model.NewAPIError(400, response.CodeBadRequest, "tablePayload 序列化失败")
 		}
 		return model.PreviewTemplateResponse{
-			PreviewType:  model.TemplateTypeUniverTable,
+			PreviewType:  model.TemplateTypeTable,
 			TablePayload: tablePayload,
 		}, nil
 	}
@@ -266,3 +266,4 @@ func parseContextObject(raw json.RawMessage) (map[string]any, *model.APIError) {
 
 	return rootObject, nil
 }
+

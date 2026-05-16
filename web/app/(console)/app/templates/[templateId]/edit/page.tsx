@@ -4,11 +4,11 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
-import UniverNativeEditor from '@/components/enterprise-projects/UniverNativeEditor'
+import AntdTableEditor from '@/components/enterprise-projects/AntdTableEditor'
 
 type TemplateStatus = 'active' | 'disabled'
 type TemplateOutputType = 'text' | 'html'
-type TemplateType = 'gonja' | 'univer_table'
+type TemplateType = 'gonja' | 'table'
 
 type TemplateDetailDTO = {
   id: number
@@ -50,7 +50,7 @@ type ApiResponse<T> = {
   data?: T
 }
 
-const EMPTY_UNIVER_TABLE_HTML = '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+const EMPTY_TABLE_HTML = '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
 
 const getToken = () => {
   if (typeof window === 'undefined')
@@ -130,11 +130,11 @@ export default function TemplateEditPage() {
     return result as Record<string, unknown>
   }
 
-  const getUniverTemplateHtml = (raw: unknown) => {
+  const getTableTemplateHtml = (raw: unknown) => {
     const html = String(raw || '').trim()
     if (html)
       return html
-    return EMPTY_UNIVER_TABLE_HTML
+    return EMPTY_TABLE_HTML
   }
 
   const hasParseableTable = (raw: unknown) => /<table[\s>]/i.test(String(raw || ''))
@@ -179,12 +179,12 @@ export default function TemplateEditPage() {
   }, [])
 
   useEffect(() => {
-    if (templateType === 'univer_table' && !hasParseableTable(contentValue))
-      form.setFieldValue('content', EMPTY_UNIVER_TABLE_HTML)
+    if (templateType === 'table' && !hasParseableTable(contentValue))
+      form.setFieldValue('content', EMPTY_TABLE_HTML)
   }, [contentValue, form, templateType])
 
   useEffect(() => {
-    if (templateType !== 'univer_table')
+    if (templateType !== 'table')
       return
     const timer = window.setTimeout(() => {
       try {
@@ -208,13 +208,13 @@ export default function TemplateEditPage() {
       setPreviewLoading(true)
       const contextObject = parseContextJson(values.defaultContextJson || '')
       const mappedContext = executePreprocess(values.preprocessJs || '', contextObject)
-      if (values.templateType === 'univer_table') {
+      if (values.templateType === 'table') {
         setProcessedContext(mappedContext)
         setPreview({
           outputType: values.outputType,
-          previewType: 'univer_table',
+          previewType: 'table',
           rendered: '',
-          tableHtml: getUniverTemplateHtml(values.content),
+          tableHtml: getTableTemplateHtml(values.content),
         })
       } else {
         const result = await request<PreviewResponse>('/api/templates/preview', {
@@ -308,7 +308,7 @@ export default function TemplateEditPage() {
             <div className="text-sm font-semibold text-gray-900">编辑模板</div>
           <Space>
             <Button onClick={() => router.push('/app/templates')}>返回列表</Button>
-              {templateType !== 'univer_table' && <Button onClick={previewNow} loading={previewLoading}>预览</Button>}
+              {templateType !== 'table' && <Button onClick={previewNow} loading={previewLoading}>预览</Button>}
             <Button type="primary" onClick={submit} loading={submitting} disabled={loading}>保存</Button>
           </Space>
           </div>
@@ -330,7 +330,7 @@ export default function TemplateEditPage() {
                   <Select
                     options={[
                       { value: 'gonja', label: 'Gonja 模板' },
-                      { value: 'univer_table', label: 'Univer 表格' },
+                      { value: 'table', label: '表格' },
                     ]}
                   />
                 </Form.Item>
@@ -351,7 +351,7 @@ export default function TemplateEditPage() {
                   />
                 </Form.Item>
               </div>
-              {templateType === 'univer_table'
+              {templateType === 'table'
                 ? <Form.Item name="content" hidden rules={[{ required: true, message: '请输入模板内容' }]}><Input /></Form.Item>
                 : (
                     <Form.Item name="content" label="模板内容" rules={[{ required: true, message: '请输入模板内容' }]}>
@@ -368,26 +368,26 @@ export default function TemplateEditPage() {
           </div>
 
           <div className="rounded-lg border border-gray-200 p-4">
-            {templateType === 'univer_table' && (
+            {templateType === 'table' && (
               <div className="space-y-2">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-sm font-semibold text-gray-900">表格模板编辑区</div>
-                  <div className="text-xs text-gray-500">实时渲染（univer_table）</div>
+                  <div className="text-xs text-gray-500">实时渲染（table）</div>
                 </div>
                 {contextError && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
                     {contextError}，已保留上一次有效渲染结果
                   </div>
                 )}
-                <UniverNativeEditor
+                <AntdTableEditor
                   editorSessionKey={`template-content-edit-${templateIDValue}`}
-                  valueHtml={hasParseableTable(contentValue) ? getUniverTemplateHtml(contentValue) : EMPTY_UNIVER_TABLE_HTML}
+                  valueHtml={hasParseableTable(contentValue) ? getTableTemplateHtml(contentValue) : EMPTY_TABLE_HTML}
                   onChange={nextHtml => form.setFieldValue('content', nextHtml)}
                   onError={(error) => msgApi.error(error)}
                 />
               </div>
             )}
-            {templateType !== 'univer_table' && (
+            {templateType !== 'table' && (
               <>
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-sm font-semibold text-gray-900">预览</div>
@@ -400,7 +400,7 @@ export default function TemplateEditPage() {
                 )}
               </>
             )}
-            {templateType !== 'univer_table' && preview?.previewType === 'gonja' && preview?.outputType === 'html' && (
+            {templateType !== 'table' && preview?.previewType === 'gonja' && preview?.outputType === 'html' && (
               <iframe
                 title="template-preview"
                 sandbox=""
@@ -408,7 +408,7 @@ export default function TemplateEditPage() {
                 className="h-[560px] w-full rounded-md border border-gray-200 bg-white"
               />
             )}
-            {templateType !== 'univer_table' && preview?.previewType === 'gonja' && preview?.outputType === 'text' && (
+            {templateType !== 'table' && preview?.previewType === 'gonja' && preview?.outputType === 'text' && (
               <pre className="h-[560px] w-full overflow-auto rounded-md border border-gray-200 bg-white p-3 text-xs text-gray-800">
                 {preview.rendered}
               </pre>
@@ -419,3 +419,4 @@ export default function TemplateEditPage() {
     </div>
   )
 }
+

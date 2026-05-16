@@ -828,7 +828,7 @@ function TableResultViewer({
         }}
         onInteractionDebug={(phase, payload) => {
           if (process.env.NODE_ENV !== 'production') {
-            console.debug('[table-extract-demo][univer-interaction]', phase, payload)
+            console.debug('[table-extract-demo][table-interaction]', phase, payload)
           }
         }}
       />
@@ -1174,7 +1174,7 @@ export default function TableExtractDemoPage() {
   const [selectedPageNo, setSelectedPageNo] = useState<number | null>(null)
   const [selectedTableId, setSelectedTableId] = useState<string>('')
   const [activeSelection, setActiveSelection] = useState<ActiveSelection>({ primary: null, ranges: [] })
-  const [selectionSourceFlag, setSelectionSourceFlag] = useState<'external' | 'from-univer'>('external')
+  const [selectionSourceFlag, setSelectionSourceFlag] = useState<'external' | 'from-table'>('external')
   const [hoverCellCoord, setHoverCellCoord] = useState<CellCoord | null>(null)
   const [manualReview, setManualReview] = useState<ManualReviewState | null>(null)
   const [tableDraftById, setTableDraftById] = useState<Record<string, string>>({})
@@ -1643,9 +1643,9 @@ export default function TableExtractDemoPage() {
                     table={inspectedTable}
                     tableId={currentTableId}
                     valueHtml={currentTableHtml}
-                    activeCell={selectionSourceFlag === 'from-univer' ? null : activeSelection.primary}
+                    activeCell={selectionSourceFlag === 'from-table' ? null : activeSelection.primary}
                     onSelectionChange={(coord, meta) => {
-                      setSelectionSourceFlag('from-univer')
+                      setSelectionSourceFlag('from-table')
                       setActiveSelection({
                         primary: coord,
                         ranges: meta?.ranges?.length

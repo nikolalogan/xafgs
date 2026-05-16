@@ -8,7 +8,7 @@ import { Table } from '@tiptap/extension-table'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
-import UniverTableEditor from '@/components/enterprise-projects/UniverTableEditor'
+import AntdTableEditor from '@/components/enterprise-projects/AntdTableEditor'
 
 type ApiResponse<T> = {
   message?: string
@@ -367,7 +367,7 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, fileName, e
                 : null}
               {isTableBlock(block)
                 ? (
-                      <UniverTableEditor
+                      <AntdTableEditor
                         key={`table-${block.blockId}-${block.lastSavedAt || ''}-${editing ? 'edit' : 'read'}`}
                         editorSessionKey={String(block.blockId)}
                         exportFileNamePrefix={`block-${block.blockId}`}
@@ -375,14 +375,14 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, fileName, e
                         onChange={(nextHtml) => {
                           if (tableRenderErrorByBlockID[block.blockId])
                             return
-                        scheduleSave(block.blockId, nextHtml)
-                      }}
-                      onError={(messageText) => {
-                        setTableRenderErrorByBlockID(prev => ({ ...prev, [block.blockId]: messageText || 'Univer 表格渲染失败' }))
-                        setSaveStateByBlockID(prev => ({ ...prev, [block.blockId]: 'error' }))
-                        msgApi.error(`表格分块渲染失败（#${block.blockId}）：${messageText || 'Univer 表格渲染失败'}`)
-                      }}
-                    />
+                          scheduleSave(block.blockId, nextHtml)
+                        }}
+                        onError={(messageText) => {
+                          setTableRenderErrorByBlockID(prev => ({ ...prev, [block.blockId]: messageText || '表格渲染失败' }))
+                          setSaveStateByBlockID(prev => ({ ...prev, [block.blockId]: 'error' }))
+                          msgApi.error(`表格分块渲染失败（#${block.blockId}）：${messageText || '表格渲染失败'}`)
+                        }}
+                      />
                   )
                 : (
                     <TextBlockEditor
@@ -428,3 +428,4 @@ export default function CaseFileBlockEditor({ projectId, caseFileId, fileName, e
     </Card>
   )
 }
+

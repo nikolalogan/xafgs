@@ -8,7 +8,7 @@ import { marked } from 'marked'
 import TurndownService from 'turndown'
 import { useConsoleRole } from '@/lib/useConsoleRole'
 import { SimpleEditor, type SimpleEditorHandle } from '@/components/tiptap-templates/simple/simple-editor'
-import UniverNativeEditor from '@/components/enterprise-projects/UniverNativeEditor'
+import AntdTableEditor from '@/components/enterprise-projects/AntdTableEditor'
 
 type ApiResponse<T> = {
   message?: string
@@ -25,7 +25,7 @@ type CategoryItem = {
 type ReportTemplateDetailDTO = {
   id: number
   templateKey: string
-  templateType?: 'gonja' | 'univer_table'
+  templateType?: 'gonja' | 'table'
   name: string
   description: string
   status: 'active' | 'disabled'
@@ -87,7 +87,7 @@ export default function ReportTemplateEditorPage() {
   const headingHighlightTimerRef = useRef<number | null>(null)
   const templateId = Number(params?.templateId || 0)
   const isAdmin = role === 'admin'
-  const isUniverTable = detail?.templateType === 'univer_table'
+  const isTableTemplate = detail?.templateType === 'table'
 
   const editorInitialHTML = useMemo(
     () => String(marked.parse(detail?.contentMarkdown || '')),
@@ -375,8 +375,8 @@ export default function ReportTemplateEditorPage() {
           templateType: detail.templateType || 'gonja',
           categoriesJson: categories,
           processingConfigJson: detail.processingConfig || {},
-          contentMarkdown: isUniverTable ? '[univer_table]' : markdown,
-          tablePayload: isUniverTable ? tablePayload : undefined,
+          contentMarkdown: isTableTemplate ? '[table]' : markdown,
+          tablePayload: isTableTemplate ? tablePayload : undefined,
           editorConfigJson: detail.editorConfig || {},
           annotationsJson: detail.annotations || [],
         }),
@@ -464,7 +464,7 @@ export default function ReportTemplateEditorPage() {
           <Input style={{ width: 260 }} value={detail?.name || ''} readOnly />
           <Input style={{ width: 260 }} value={detail?.templateKey || ''} readOnly />
           <Input style={{ width: 320 }} value={detail?.description || ''} readOnly />
-          <Typography.Text type="secondary">{isUniverTable ? 'Univer 表格编辑器（JSON 持久化）' : 'TipTap 官方 Simple Editor（Markdown 持久化）'}</Typography.Text>
+          <Typography.Text type="secondary">{isTableTemplate ? '表格编辑器（JSON 持久化）' : 'TipTap 官方 Simple Editor（Markdown 持久化）'}</Typography.Text>
         </Space>
 
         {isAdmin && (
@@ -540,7 +540,7 @@ export default function ReportTemplateEditorPage() {
           </div>
         </div>
 
-        {!isUniverTable && (
+        {!isTableTemplate && (
           <div className="rounded-md border border-gray-200 p-2">
           <div className="mb-2 text-sm font-medium text-gray-700">AI 工具栏</div>
           <Space wrap className="mb-3">
@@ -580,11 +580,11 @@ export default function ReportTemplateEditorPage() {
           <div className="mt-2 text-xs text-gray-500">当前内容约 {currentMarkdown.length} 字符（Markdown）</div>
           </div>
         )}
-        {isUniverTable && (
+        {isTableTemplate && (
           <div className="rounded-md border border-gray-200 p-2">
-            <div className="mb-2 text-sm font-medium text-gray-700">表格模板编辑区（Univer）</div>
-            <UniverNativeEditor
-              editorSessionKey={`report-template-${templateId}-univer`}
+            <div className="mb-2 text-sm font-medium text-gray-700">表格模板编辑区</div>
+            <AntdTableEditor
+              editorSessionKey={`report-template-${templateId}-table`}
               valueHtml={tableHtml}
               onChange={setTableHtml}
               onError={message => msgApi.error(message)}
@@ -787,3 +787,4 @@ function toTableHtml(payload: unknown): string {
   }
   return '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
 }
+

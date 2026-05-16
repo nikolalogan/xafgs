@@ -26,7 +26,7 @@ type createTemplateRequest struct {
 	Status             string          `json:"status" validate:"required,oneof=active disabled"`
 	Content            string          `json:"content" validate:"required"`
 	DefaultContextJSON json.RawMessage `json:"defaultContextJson"`
-	TemplateType       string          `json:"templateType" validate:"omitempty,oneof=gonja univer_table"`
+	TemplateType       string          `json:"templateType" validate:"omitempty,oneof=gonja table"`
 	PreprocessJS       string          `json:"preprocessJs"`
 }
 
@@ -38,14 +38,14 @@ type updateTemplateRequest struct {
 	Status             string          `json:"status" validate:"required,oneof=active disabled"`
 	Content            string          `json:"content" validate:"required"`
 	DefaultContextJSON json.RawMessage `json:"defaultContextJson"`
-	TemplateType       string          `json:"templateType" validate:"omitempty,oneof=gonja univer_table"`
+	TemplateType       string          `json:"templateType" validate:"omitempty,oneof=gonja table"`
 	PreprocessJS       string          `json:"preprocessJs"`
 }
 
 type previewTemplateRequest struct {
 	Content      string          `json:"content" validate:"required"`
 	ContextJSON  json.RawMessage `json:"contextJson"`
-	TemplateType string          `json:"templateType" validate:"omitempty,oneof=gonja univer_table"`
+	TemplateType string          `json:"templateType" validate:"omitempty,oneof=gonja table"`
 }
 
 type TemplateHandler struct {
@@ -210,3 +210,4 @@ func (handler *TemplateHandler) PreviewTemplate(c *fiber.Ctx, request *previewTe
 	}
 	return response.Success(c, fiber.StatusOK, preview, "预览渲染成功")
 }
+

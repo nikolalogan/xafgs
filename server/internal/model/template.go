@@ -21,7 +21,7 @@ const (
 
 const (
 	TemplateTypeGonja       = "gonja"
-	TemplateTypeUniverTable = "univer_table"
+	TemplateTypeTable       = "table"
 )
 
 func IsValidTemplateStatus(status string) bool {
@@ -37,7 +37,7 @@ func IsValidTemplateOutputType(outputType string) bool {
 }
 
 func IsValidTemplateType(templateType string) bool {
-	return templateType == TemplateTypeGonja || templateType == TemplateTypeUniverTable
+	return templateType == TemplateTypeGonja || templateType == TemplateTypeTable
 }
 
 type Template struct {
@@ -97,4 +97,5 @@ func (template Template) ToDetailDTO() TemplateDetailDTO {
 		PreprocessJS:        template.PreprocessJS,
 	}
 }
+
 
