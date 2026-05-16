@@ -749,6 +749,20 @@ WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_enterprise_region_id ON enterprise(region_id);
 CREATE INDEX IF NOT EXISTS idx_enterprise_admission_status ON enterprise(admission_status);
 CREATE INDEX IF NOT EXISTS idx_enterprise_updated_at ON enterprise(updated_at DESC);
+ALTER TABLE enterprise_tag
+ADD COLUMN IF NOT EXISTS order_no INT NOT NULL DEFAULT 1;
+ALTER TABLE enterprise_public_opinion
+ADD COLUMN IF NOT EXISTS order_no INT NOT NULL DEFAULT 1;
+ALTER TABLE enterprise_bond_tender
+ADD COLUMN IF NOT EXISTS order_no INT NOT NULL DEFAULT 1;
+ALTER TABLE enterprise_bond_detail
+ADD COLUMN IF NOT EXISTS order_no INT NOT NULL DEFAULT 1;
+ALTER TABLE enterprise_bond_registration
+ADD COLUMN IF NOT EXISTS order_no INT NOT NULL DEFAULT 1;
+ALTER TABLE enterprise_shareholder
+ADD COLUMN IF NOT EXISTS order_no INT NOT NULL DEFAULT 1;
+ALTER TABLE enterprise_financial_report_item
+ADD COLUMN IF NOT EXISTS order_no INT NOT NULL DEFAULT 1;
 CREATE INDEX IF NOT EXISTS idx_enterprise_tag_enterprise_order ON enterprise_tag(enterprise_id, order_no);
 CREATE INDEX IF NOT EXISTS idx_enterprise_public_opinion_enterprise_order ON enterprise_public_opinion(enterprise_id, order_no);
 CREATE INDEX IF NOT EXISTS idx_enterprise_bond_tender_enterprise_order ON enterprise_bond_tender(enterprise_id, order_no);
