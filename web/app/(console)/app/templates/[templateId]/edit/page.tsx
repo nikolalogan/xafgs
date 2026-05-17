@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
-import AntdTableEditor from '@/components/enterprise-projects/AntdTableEditor'
 import { renderTablePlaceholders } from '@/lib/table-template-placeholder'
 
 type TemplateStatus = 'active' | 'disabled'
@@ -371,13 +370,6 @@ export default function TemplateEditPage() {
                       {contextError}，预览失败，已保留上一次有效结果
                     </div>
                   )}
-                  <AntdTableEditor
-                    key={`table-template-content-edit-${templateIDValue}-${templateType || 'gonja'}`}
-                    editorSessionKey={`template-content-edit-${templateIDValue}`}
-                    valueHtml={hasParseableTable(contentValue) ? getTableTemplateHtml(contentValue) : EMPTY_TABLE_HTML}
-                    onChange={nextHtml => form.setFieldValue('content', nextHtml)}
-                    onError={(error) => msgApi.error(error)}
-                  />
                 </div>
               )}
             </Form>
