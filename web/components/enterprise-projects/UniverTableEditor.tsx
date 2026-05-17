@@ -181,11 +181,13 @@ export default function UniverTableEditor({
   const lastSyncedExternalHtmlRef = useRef('')
   const pendingInitialHtmlRef = useRef<string | null>(null)
   const rebuildCountRef = useRef(0)
+  const latestValueHtmlRef = useRef(valueHtml)
   const onChangeRef = useRef(onChange)
   const onErrorRef = useRef(onError)
 
   onChangeRef.current = onChange
   onErrorRef.current = onError
+  latestValueHtmlRef.current = valueHtml
 
   useEffect(() => {
     isMountedRef.current = true
@@ -315,7 +317,7 @@ export default function UniverTableEditor({
           setRenderProbeFailed(true)
           if (rebuildCountRef.current < 2) {
             rebuildCountRef.current += 1
-            pendingInitialHtmlRef.current = lastSyncedExternalHtmlRef.current || valueHtml
+            pendingInitialHtmlRef.current = lastSyncedExternalHtmlRef.current || latestValueHtmlRef.current
             setDebugState(previous => ({
               ...previous,
               'sync-fallback': { at: new Date().toLocaleTimeString(), summary: `render-probe-failed, rebuild=${rebuildCountRef.current}` },
@@ -345,7 +347,7 @@ export default function UniverTableEditor({
       }
       safeDispose()
     }
-  }, [editorSessionKey, rebuildNonce, valueHtml, disabled])
+  }, [editorSessionKey, rebuildNonce])
 
   useEffect(() => {
     if (useFallbackEditor) {
