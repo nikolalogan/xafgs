@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS template (
   output_type VARCHAR(16) NOT NULL DEFAULT 'html' CHECK (output_type IN ('text', 'html')),
   status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
   content TEXT NOT NULL,
+  table_content TEXT NOT NULL DEFAULT '',
   default_context_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   template_type VARCHAR(32) NOT NULL DEFAULT 'gonja' CHECK (template_type IN ('gonja', 'table')),
   preprocess_js TEXT NOT NULL DEFAULT 'return context',
@@ -862,6 +863,8 @@ ADD COLUMN IF NOT EXISTS template_type VARCHAR(32) NOT NULL DEFAULT 'gonja';
 UPDATE template SET template_type = 'table' WHERE template_type = 'univer_table';
 ALTER TABLE template
 ADD COLUMN IF NOT EXISTS preprocess_js TEXT NOT NULL DEFAULT 'return context';
+ALTER TABLE template
+ADD COLUMN IF NOT EXISTS table_content TEXT NOT NULL DEFAULT '';
 UPDATE report_template SET template_type = 'table' WHERE template_type = 'univer_table';
 
 ALTER TABLE region_economy
@@ -1323,7 +1326,7 @@ ON CONFLICT (template_key) DO NOTHING
 
 	// demo template
 	_, err = conn.ExecContext(ctx, `
-	INSERT INTO template (template_key, name, description, engine, output_type, status, content, default_context_json, template_type, preprocess_js, created_at, updated_at, created_by, updated_by)
+	INSERT INTO template (template_key, name, description, engine, output_type, status, content, table_content, default_context_json, template_type, preprocess_js, created_at, updated_at, created_by, updated_by)
 	VALUES (
   'demo_template',
   '示例模板',
@@ -1577,6 +1580,7 @@ ON CONFLICT (template_key) DO NOTHING
     </div>
   </body>
 </html>$$,
+  '',
   $${
   "title": "周报概览",
   "brand": "SXFG 运营中心",
@@ -1622,7 +1626,7 @@ ON CONFLICT (template_key) DO NOTHING
 
 	// admission template (modern + minimal)
 	_, err = conn.ExecContext(ctx, `
-	INSERT INTO template (template_key, name, description, engine, output_type, status, content, default_context_json, template_type, preprocess_js, created_at, updated_at, created_by, updated_by)
+	INSERT INTO template (template_key, name, description, engine, output_type, status, content, table_content, default_context_json, template_type, preprocess_js, created_at, updated_at, created_by, updated_by)
 	VALUES (
 	  'admission-template-modern',
 	  '准入结果模板（精简）',
@@ -1857,6 +1861,7 @@ ON CONFLICT (template_key) DO NOTHING
   </div>
 </body>
 </html>$$,
+	  '',
 	  $${
 	  "title": "准入结果",
 	  "decision": "reject",
@@ -1881,6 +1886,7 @@ ON CONFLICT (template_key) DO NOTHING
 	  output_type = EXCLUDED.output_type,
 	  status = EXCLUDED.status,
 	  content = EXCLUDED.content,
+	  table_content = EXCLUDED.table_content,
 	  default_context_json = EXCLUDED.default_context_json,
 	  template_type = EXCLUDED.template_type,
 	  preprocess_js = EXCLUDED.preprocess_js,

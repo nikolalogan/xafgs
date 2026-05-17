@@ -61,6 +61,7 @@ func (service *templateService) Create(
 	request.OutputType = strings.TrimSpace(request.OutputType)
 	request.Status = strings.TrimSpace(request.Status)
 	request.Content = strings.TrimSpace(request.Content)
+	request.TableContent = strings.TrimSpace(request.TableContent)
 	request.TemplateType = strings.TrimSpace(request.TemplateType)
 
 	if request.TemplateKey == "" || request.Name == "" {
@@ -84,14 +85,18 @@ func (service *templateService) Create(
 	if !model.IsValidTemplateStatus(request.Status) {
 		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "status 仅支持 active/disabled")
 	}
-	if request.Content == "" {
-		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "content 不能为空")
-	}
 	if request.TemplateType == "" {
 		request.TemplateType = model.TemplateTypeGonja
 	}
 	if !model.IsValidTemplateType(request.TemplateType) {
 		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/table")
+	}
+	if request.TemplateType == model.TemplateTypeTable {
+		if request.TableContent == "" {
+			return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "tableContent 不能为空")
+		}
+	} else if request.Content == "" {
+		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "content 不能为空")
 	}
 	if _, exists := service.templateRepository.FindByTemplateKey(request.TemplateKey); exists {
 		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateKey 已存在")
@@ -113,6 +118,7 @@ func (service *templateService) Create(
 		OutputType:         request.OutputType,
 		Status:             request.Status,
 		Content:            request.Content,
+		TableContent:       request.TableContent,
 		DefaultContextJSON: defaultContext,
 		TemplateType:       request.TemplateType,
 		PreprocessJS:       request.PreprocessJS,
@@ -131,6 +137,7 @@ func (service *templateService) Update(
 	request.OutputType = strings.TrimSpace(request.OutputType)
 	request.Status = strings.TrimSpace(request.Status)
 	request.Content = strings.TrimSpace(request.Content)
+	request.TableContent = strings.TrimSpace(request.TableContent)
 	request.TemplateType = strings.TrimSpace(request.TemplateType)
 
 	if request.Name == "" {
@@ -148,14 +155,18 @@ func (service *templateService) Update(
 	if !model.IsValidTemplateStatus(request.Status) {
 		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "status 仅支持 active/disabled")
 	}
-	if request.Content == "" {
-		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "content 不能为空")
-	}
 	if request.TemplateType == "" {
 		request.TemplateType = model.TemplateTypeGonja
 	}
 	if !model.IsValidTemplateType(request.TemplateType) {
 		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "templateType 仅支持 gonja/table")
+	}
+	if request.TemplateType == model.TemplateTypeTable {
+		if request.TableContent == "" {
+			return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "tableContent 不能为空")
+		}
+	} else if request.Content == "" {
+		return model.TemplateDTO{}, model.NewAPIError(400, response.CodeBadRequest, "content 不能为空")
 	}
 	defaultContext, apiError := normalizeContextJSON(request.DefaultContextJSON)
 	if apiError != nil {
@@ -168,6 +179,7 @@ func (service *templateService) Update(
 		OutputType:         request.OutputType,
 		Status:             request.Status,
 		Content:            request.Content,
+		TableContent:       request.TableContent,
 		DefaultContextJSON: defaultContext,
 		TemplateType:       request.TemplateType,
 		PreprocessJS:       request.PreprocessJS,

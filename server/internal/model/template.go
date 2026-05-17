@@ -49,6 +49,7 @@ type Template struct {
 	OutputType          string          `json:"outputType"`
 	Status              string          `json:"status"`
 	Content             string          `json:"content"`
+	TableContent        string          `json:"tableContent"`
 	DefaultContextJSON  json.RawMessage `json:"defaultContextJson,omitempty"`
 	TemplateType        string          `json:"templateType"`
 	PreprocessJS        string          `json:"preprocessJs"`
@@ -70,6 +71,7 @@ type TemplateDTO struct {
 type TemplateDetailDTO struct {
 	TemplateDTO
 	Content            string          `json:"content"`
+	TableContent       string          `json:"tableContent"`
 	DefaultContextJSON json.RawMessage `json:"defaultContextJson"`
 	PreprocessJS       string          `json:"preprocessJs"`
 }
@@ -93,6 +95,7 @@ func (template Template) ToDetailDTO() TemplateDetailDTO {
 	return TemplateDetailDTO{
 		TemplateDTO:         template.ToDTO(),
 		Content:             template.Content,
+		TableContent:        template.TableContent,
 		DefaultContextJSON:  template.DefaultContextJSON,
 		PreprocessJS:        template.PreprocessJS,
 	}

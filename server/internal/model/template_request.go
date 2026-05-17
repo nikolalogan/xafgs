@@ -10,6 +10,7 @@ type CreateTemplateRequest struct {
 	OutputType         string          `json:"outputType"`
 	Status             string          `json:"status"`
 	Content            string          `json:"content"`
+	TableContent       string          `json:"tableContent"`
 	DefaultContextJSON json.RawMessage `json:"defaultContextJson"`
 	TemplateType       string          `json:"templateType"`
 	PreprocessJS       string          `json:"preprocessJs"`
@@ -21,6 +22,7 @@ type UpdateTemplateRequest struct {
 	OutputType         string          `json:"outputType"`
 	Status             string          `json:"status"`
 	Content            string          `json:"content"`
+	TableContent       string          `json:"tableContent"`
 	DefaultContextJSON json.RawMessage `json:"defaultContextJson"`
 	TemplateType       string          `json:"templateType"`
 	PreprocessJS       string          `json:"preprocessJs"`

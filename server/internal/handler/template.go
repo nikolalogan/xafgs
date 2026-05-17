@@ -24,7 +24,8 @@ type createTemplateRequest struct {
 	Engine             string          `json:"engine" validate:"required,oneof=jinja2"`
 	OutputType         string          `json:"outputType" validate:"required,oneof=text html"`
 	Status             string          `json:"status" validate:"required,oneof=active disabled"`
-	Content            string          `json:"content" validate:"required"`
+	Content            string          `json:"content"`
+	TableContent       string          `json:"tableContent"`
 	DefaultContextJSON json.RawMessage `json:"defaultContextJson"`
 	TemplateType       string          `json:"templateType" validate:"omitempty,oneof=gonja table"`
 	PreprocessJS       string          `json:"preprocessJs"`
@@ -36,7 +37,8 @@ type updateTemplateRequest struct {
 	Description        string          `json:"description"`
 	OutputType         string          `json:"outputType" validate:"required,oneof=text html"`
 	Status             string          `json:"status" validate:"required,oneof=active disabled"`
-	Content            string          `json:"content" validate:"required"`
+	Content            string          `json:"content"`
+	TableContent       string          `json:"tableContent"`
 	DefaultContextJSON json.RawMessage `json:"defaultContextJson"`
 	TemplateType       string          `json:"templateType" validate:"omitempty,oneof=gonja table"`
 	PreprocessJS       string          `json:"preprocessJs"`
@@ -134,6 +136,7 @@ func (handler *TemplateHandler) CreateTemplate(c *fiber.Ctx, request *createTemp
 	request.OutputType = strings.TrimSpace(request.OutputType)
 	request.Status = strings.TrimSpace(request.Status)
 	request.Content = strings.TrimSpace(request.Content)
+	request.TableContent = strings.TrimSpace(request.TableContent)
 	request.TemplateType = strings.TrimSpace(request.TemplateType)
 
 	operatorID, ok := c.Locals(middleware.LocalAuthUserID).(int64)
@@ -149,6 +152,7 @@ func (handler *TemplateHandler) CreateTemplate(c *fiber.Ctx, request *createTemp
 		OutputType:         request.OutputType,
 		Status:             request.Status,
 		Content:            request.Content,
+		TableContent:       request.TableContent,
 		DefaultContextJSON: request.DefaultContextJSON,
 		TemplateType:       request.TemplateType,
 		PreprocessJS:       request.PreprocessJS,
@@ -165,6 +169,7 @@ func (handler *TemplateHandler) UpdateTemplate(c *fiber.Ctx, request *updateTemp
 	request.OutputType = strings.TrimSpace(request.OutputType)
 	request.Status = strings.TrimSpace(request.Status)
 	request.Content = strings.TrimSpace(request.Content)
+	request.TableContent = strings.TrimSpace(request.TableContent)
 	request.TemplateType = strings.TrimSpace(request.TemplateType)
 
 	operatorID, ok := c.Locals(middleware.LocalAuthUserID).(int64)
@@ -178,6 +183,7 @@ func (handler *TemplateHandler) UpdateTemplate(c *fiber.Ctx, request *updateTemp
 		OutputType:         request.OutputType,
 		Status:             request.Status,
 		Content:            request.Content,
+		TableContent:       request.TableContent,
 		DefaultContextJSON: request.DefaultContextJSON,
 		TemplateType:       request.TemplateType,
 		PreprocessJS:       request.PreprocessJS,

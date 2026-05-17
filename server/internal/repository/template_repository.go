@@ -630,6 +630,7 @@ func (repository *templateRepository) Update(templateID int64, update model.Temp
 	existing.OutputType = update.OutputType
 	existing.Status = update.Status
 	existing.Content = update.Content
+	existing.TableContent = update.TableContent
 	existing.DefaultContextJSON = update.DefaultContextJSON
 	existing.TemplateType = update.TemplateType
 	existing.PreprocessJS = update.PreprocessJS

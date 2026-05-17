@@ -36,7 +36,7 @@ func (repository *PostgresTemplateRepository) FindEntityByID(templateID int64) (
 	err := repository.db.QueryRowContext(ctx, `
 SELECT
   id, template_key, name, description, engine, output_type, status,
-  content, default_context_json, template_type, preprocess_js,
+  content, table_content, default_context_json, template_type, preprocess_js,
   created_at, updated_at, created_by, updated_by
 FROM template
 WHERE id = $1
@@ -49,6 +49,7 @@ WHERE id = $1
 		&template.OutputType,
 		&template.Status,
 		&template.Content,
+		&template.TableContent,
 		&defaultContextJSONBytes,
 		&template.TemplateType,
 		&template.PreprocessJS,
@@ -85,7 +86,7 @@ func (repository *PostgresTemplateRepository) FindByTemplateKey(templateKey stri
 	err := repository.db.QueryRowContext(ctx, `
 SELECT
   id, template_key, name, description, engine, output_type, status,
-  content, default_context_json, template_type, preprocess_js,
+  content, table_content, default_context_json, template_type, preprocess_js,
   created_at, updated_at, created_by, updated_by
 FROM template
 WHERE template_key = $1
@@ -98,6 +99,7 @@ WHERE template_key = $1
 		&template.OutputType,
 		&template.Status,
 		&template.Content,
+		&template.TableContent,
 		&defaultContextJSONBytes,
 		&template.TemplateType,
 		&template.PreprocessJS,
@@ -180,15 +182,15 @@ func (repository *PostgresTemplateRepository) Create(template model.Template) mo
 	_ = repository.db.QueryRowContext(ctx, `
 INSERT INTO template (
   template_key, name, description, engine, output_type, status,
-  content, default_context_json, template_type, preprocess_js,
+  content, table_content, default_context_json, template_type, preprocess_js,
   created_at, updated_at, created_by, updated_by
 ) VALUES (
   $1, $2, $3, $4, $5, $6,
-  $7, $8::jsonb, $9, $10,
-  $11, $11, $12, $12
+  $7, $8, $9::jsonb, $10, $11,
+  $12, $12, $13, $13
 )
 RETURNING id
-`, template.TemplateKey, template.Name, template.Description, template.Engine, template.OutputType, template.Status, template.Content, string(defaultContext), template.TemplateType, template.PreprocessJS, now, template.CreatedBy).Scan(&template.ID)
+`, template.TemplateKey, template.Name, template.Description, template.Engine, template.OutputType, template.Status, template.Content, template.TableContent, string(defaultContext), template.TemplateType, template.PreprocessJS, now, template.CreatedBy).Scan(&template.ID)
 
 	return template.ToDTO()
 }
@@ -214,13 +216,14 @@ SET
   output_type = $4,
   status = $5,
   content = $6,
-  default_context_json = $7::jsonb,
-  template_type = $8,
-  preprocess_js = $9,
-  updated_at = $10,
-  updated_by = $11
+  table_content = $7,
+  default_context_json = $8::jsonb,
+  template_type = $9,
+  preprocess_js = $10,
+  updated_at = $11,
+  updated_by = $12
 WHERE id = $1
-`, templateID, update.Name, update.Description, update.OutputType, update.Status, update.Content, string(defaultContext), update.TemplateType, update.PreprocessJS, now, update.UpdatedBy)
+`, templateID, update.Name, update.Description, update.OutputType, update.Status, update.Content, update.TableContent, string(defaultContext), update.TemplateType, update.PreprocessJS, now, update.UpdatedBy)
 	if err != nil {
 		return model.TemplateDTO{}, false
 	}

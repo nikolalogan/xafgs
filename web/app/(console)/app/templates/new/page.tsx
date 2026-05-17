@@ -4,6 +4,15 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
+import UniverTableEditor, { type UniverTableEditorRef } from '@/components/enterprise-projects/UniverTableEditor'
+import UniverTablePreview from '@/components/enterprise-projects/UniverTablePreview'
+import {
+  createDefaultTemplateWorkbookContent,
+  parseTemplateWorkbookContent,
+  renderWorkbookPlaceholders,
+  serializeTemplateWorkbookContent,
+  type TemplateWorkbookContent,
+} from '@/lib/table-template-workbook'
 
 type TemplateStatus = 'active' | 'disabled'
 type TemplateOutputType = 'text' | 'html'
@@ -20,6 +29,7 @@ type TemplateDTO = {
   templateType: TemplateType
   createdAt: string
   updatedAt: string
+  tableContent?: string
 }
 
 type PreviewResponse = {
@@ -48,12 +58,16 @@ export default function TemplateNewPage() {
   const [submitting, setSubmitting] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [preview, setPreview] = useState<{ outputType: TemplateOutputType, previewType: TemplateType, rendered: string } | null>(null)
-  const [processedContext, setProcessedContext] = useState<Record<string, unknown> | null>(null)
-  const [lastValidProcessedContext, setLastValidProcessedContext] = useState<Record<string, unknown>>({})
-  const [contextError, setContextError] = useState('')
+  const [tableEditorValue, setTableEditorValue] = useState<TemplateWorkbookContent>(createDefaultTemplateWorkbookContent())
+  const [tablePreviewWorkbook, setTablePreviewWorkbook] = useState<Record<string, unknown> | null>(null)
+  const [tableCompatError, setTableCompatError] = useState('')
+  const tableEditorRef = useState<{ current: UniverTableEditorRef | null }>({ current: null })[0]
+  const [gonjaContent, setGonjaContent] = useState('')
+  const [tableContentRaw, setTableContentRaw] = useState(serializeTemplateWorkbookContent(createDefaultTemplateWorkbookContent()))
   const [form] = Form.useForm()
   const templateType = Form.useWatch('templateType', form)
   const contentValue = Form.useWatch('content', form)
+  const tableContentValue = Form.useWatch('tableContent', form)
 
   const { role: currentRole, hydrated } = useConsoleRole()
 
@@ -97,30 +111,56 @@ export default function TemplateNewPage() {
     return parsed as Record<string, unknown>
   }
 
-  const executePreprocess = (raw: string, context: Record<string, unknown>) => {
-    const source = String(raw || '').trim() || 'return context'
-    const runner = new Function('context', source) as (context: Record<string, unknown>) => unknown
-    const result = runner(context)
-    if (!result || typeof result !== 'object' || Array.isArray(result))
-      throw new Error('preprocessJs 必须返回 JSON object')
-    return result as Record<string, unknown>
-  }
-
   useEffect(() => {
     if (templateType === 'table')
       setPreview(null)
   }, [templateType])
 
+  useEffect(() => {
+    if (templateType === 'gonja')
+      setGonjaContent(String(contentValue || ''))
+    if (templateType === 'table')
+      setTableContentRaw(String(tableContentValue || ''))
+  }, [contentValue, tableContentValue, templateType])
+
+  useEffect(() => {
+    if (templateType === 'gonja')
+      form.setFieldValue('content', gonjaContent)
+    if (templateType === 'table')
+      form.setFieldValue('tableContent', tableContentRaw)
+  }, [form, gonjaContent, tableContentRaw, templateType])
+
+  useEffect(() => {
+    if (templateType !== 'table')
+      return
+    const parsed = parseTemplateWorkbookContent(tableContentValue)
+    if (!String(tableContentValue || '').trim()) {
+      const initial = createDefaultTemplateWorkbookContent()
+      setTableEditorValue(initial)
+      form.setFieldValue('tableContent', serializeTemplateWorkbookContent(initial))
+      setTableCompatError('')
+      return
+    }
+    if (!parsed.ok) {
+      setTableCompatError(parsed.error)
+      return
+    }
+    setTableCompatError('')
+    setTableEditorValue(parsed.value)
+  }, [form, tableContentValue, templateType])
+
   const previewNow = async () => {
     try {
       const values = await form.validateFields()
       setPreviewLoading(true)
-      const contextObject = parseContextJson(values.defaultContextJson || '')
-      const mappedContext = executePreprocess(values.preprocessJs || '', contextObject)
+      const mappedContext = parseContextJson(values.defaultContextJson || '')
       if (values.templateType === 'table') {
-        setContextError('')
-        setProcessedContext(mappedContext)
-        setLastValidProcessedContext(mappedContext)
+        const snapshot = tableEditorRef.current?.getWorkbookSnapshot()
+        if (!snapshot)
+          throw new Error('无法获取当前表格内容，请刷新页面重试')
+        const tablePayload: TemplateWorkbookContent = { version: 1, workbook: snapshot }
+        form.setFieldValue('tableContent', serializeTemplateWorkbookContent(tablePayload))
+        setTablePreviewWorkbook(renderWorkbookPlaceholders(tablePayload.workbook, mappedContext))
         setPreview({
           outputType: values.outputType,
           previewType: 'table',
@@ -135,7 +175,6 @@ export default function TemplateNewPage() {
             templateType: values.templateType,
           }),
         })
-        setProcessedContext(null)
         setPreview({
           outputType: values.outputType,
           previewType: 'gonja',
@@ -146,10 +185,6 @@ export default function TemplateNewPage() {
     catch (error) {
       if (error instanceof Error && error.message.includes('out of date'))
         return
-      if (templateType === 'table') {
-        setProcessedContext(lastValidProcessedContext)
-        setContextError(error instanceof Error ? error.message : '上下文处理失败')
-      }
       msgApi.error(error instanceof Error ? error.message : '预览失败')
     }
     finally {
@@ -172,9 +207,14 @@ export default function TemplateNewPage() {
           outputType: values.outputType,
           status: values.status,
           content: values.templateType === 'table' ? '' : values.content,
+          tableContent: values.templateType === 'table'
+            ? serializeTemplateWorkbookContent({
+                version: 1,
+                workbook: tableEditorRef.current?.getWorkbookSnapshot() || tableEditorValue.workbook,
+              })
+            : '',
           defaultContextJson: contextObject,
           templateType: values.templateType,
-          preprocessJs: values.preprocessJs || '',
         }),
       })
       msgApi.success('创建模板成功')
@@ -234,7 +274,6 @@ export default function TemplateNewPage() {
                 outputType: 'html',
                 status: 'active',
                 templateType: 'gonja',
-                preprocessJs: 'return context',
                 content: `<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -301,6 +340,7 @@ export default function TemplateNewPage() {
     { "label": "平均耗时", "value": "187ms", "delta": "-14ms", "trend": "down" }
   ]
 }`,
+                tableContent: serializeTemplateWorkbookContent(createDefaultTemplateWorkbookContent()),
               }}
             >
               <Form.Item name="templateKey" label="Template Key" rules={[{ required: true, message: '请输入 templateKey' }]}>
@@ -339,7 +379,7 @@ export default function TemplateNewPage() {
                 </Form.Item>
               </div>
               {templateType === 'table'
-                ? <Form.Item name="content" hidden><Input /></Form.Item>
+                ? <Form.Item name="tableContent" hidden><Input /></Form.Item>
                 : (
                     <Form.Item name="content" label="模板内容" rules={[{ required: true, message: '请输入模板内容' }]}>
                       <Input.TextArea autoSize={{ minRows: 10, maxRows: 24 }} placeholder="Jinja2 模板内容" />
@@ -348,30 +388,37 @@ export default function TemplateNewPage() {
               <Form.Item name="defaultContextJson" label="默认 Context（JSON）">
                 <Input.TextArea autoSize={{ minRows: 8, maxRows: 16 }} placeholder='例如: {"name":"SXFG"}' />
               </Form.Item>
-              <Form.Item name="preprocessJs" label="预处理脚本 preprocessJs(context)">
-                <Input.TextArea autoSize={{ minRows: 4, maxRows: 10 }} placeholder="return context" />
-              </Form.Item>
               {templateType === 'table' && (
                 <div className="space-y-2">
-                  <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-                    <div className="mb-2 text-xs font-medium text-gray-700">预处理后数据（Preview Context）</div>
-                    {!previewLoading && preview?.previewType !== 'table' && !processedContext && (
-                      <div className="text-xs text-gray-500">点击“预览”生成数据</div>
+                  <div className="rounded-md border border-gray-200 bg-gray-50 p-2">
+                    <div className="mb-2 text-xs font-medium text-gray-700">表格模板编辑（Univer）</div>
+                    {!tableCompatError && (
+                      <UniverTableEditor
+                        ref={(instance) => {
+                          tableEditorRef.current = instance
+                        }}
+                        workbook={tableEditorValue.workbook}
+                      />
                     )}
-                    {previewLoading && (
-                      <div className="text-xs text-gray-500">预处理中...</div>
-                    )}
-                    {!previewLoading && processedContext && (
-                      <pre className="max-h-56 overflow-auto rounded border border-gray-200 bg-white p-2 text-xs text-gray-800">
-                        {JSON.stringify(processedContext, null, 2)}
-                      </pre>
+                    {tableCompatError && (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+                        当前历史 content 无法解析为 Univer Workbook JSON：{tableCompatError}
+                        <div className="mt-2">
+                          <Button
+                            size="small"
+                            onClick={() => {
+                              const rebuilt = createDefaultTemplateWorkbookContent()
+                              setTableEditorValue(rebuilt)
+                              form.setFieldValue('tableContent', serializeTemplateWorkbookContent(rebuilt))
+                              setTableCompatError('')
+                            }}
+                          >
+                            重建为新表格
+                          </Button>
+                        </div>
+                      </div>
                     )}
                   </div>
-                  {contextError && (
-                    <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
-                      {contextError}，预览失败，已保留上一次有效结果
-                    </div>
-                  )}
                 </div>
               )}
             </Form>
@@ -382,18 +429,14 @@ export default function TemplateNewPage() {
               <>
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-sm font-semibold text-gray-900">表格预览</div>
-                  <div className="text-xs text-gray-500">当前仅展示预处理后的上下文数据</div>
+                  <div className="text-xs text-gray-500">可编辑 Univer（模板 + 占位符替换）</div>
                 </div>
-                {!processedContext && (
+                {!tablePreviewWorkbook && (
                   <div className="rounded-md border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
                     点击“预览”生成数据
                   </div>
                 )}
-                {processedContext && (
-                  <pre className="h-[560px] w-full overflow-auto rounded-md border border-gray-200 bg-white p-3 text-xs text-gray-800">
-                    {JSON.stringify(processedContext, null, 2)}
-                  </pre>
-                )}
+                {tablePreviewWorkbook && <UniverTablePreview workbook={tablePreviewWorkbook} />}
               </>
             )}
             {templateType !== 'table' && (
