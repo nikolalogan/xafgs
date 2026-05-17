@@ -10,6 +10,12 @@ export type UniverTableEditorRef = {
   getWorkbookSnapshot: () => Record<string, unknown> | null
 }
 
+const scheduleDispose = (dispose: () => void) => {
+  setTimeout(() => {
+    dispose()
+  }, 0)
+}
+
 const moduleLoader = async () => {
   const [
     core,
@@ -137,8 +143,14 @@ const UniverTableEditor = forwardRef<UniverTableEditorRef, UniverTableEditorProp
           }).getActiveWorkbook?.()
         )
         facadeWorkbook?.setEditable?.(true)
+        let disposedRuntime = false
         runtimeRef.current = {
-          dispose: () => univer.dispose(),
+          dispose: () => {
+            if (disposedRuntime)
+              return
+            disposedRuntime = true
+            scheduleDispose(() => univer.dispose())
+          },
           getSnapshot: () => {
             const snapshotFromFacade = facadeWorkbook?.save?.()
             if (snapshotFromFacade)

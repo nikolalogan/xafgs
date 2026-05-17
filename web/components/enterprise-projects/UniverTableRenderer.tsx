@@ -7,6 +7,12 @@ type UniverTableRendererProps = {
   templateAoa: TableAoa
 }
 
+const scheduleDispose = (dispose: () => void) => {
+  setTimeout(() => {
+    dispose()
+  }, 0)
+}
+
 const moduleLoader = async () => {
   const [
     core,
@@ -140,7 +146,15 @@ export default function UniverTableRenderer({ templateAoa }: UniverTableRenderer
             },
           },
         })
-        univerRef.current = univer
+        let disposedRuntime = false
+        univerRef.current = {
+          dispose: () => {
+            if (disposedRuntime)
+              return
+            disposedRuntime = true
+            scheduleDispose(() => univer.dispose())
+          },
+        }
       }
       catch (mountError) {
         setError(mountError instanceof Error ? mountError.message : 'Univer 初始化失败')
