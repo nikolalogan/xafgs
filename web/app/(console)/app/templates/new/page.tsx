@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
 import AntdTableEditor from '@/components/enterprise-projects/AntdTableEditor'
+import TableTemplatePreview from '@/components/enterprise-projects/TableTemplatePreview'
 import { renderTablePlaceholders } from '@/lib/table-template-placeholder'
 
 type TemplateStatus = 'active' | 'disabled'
@@ -412,14 +413,7 @@ export default function TemplateNewPage() {
                   </div>
                 )}
                 {preview?.previewType === 'table' && (
-                  <AntdTableEditor
-                    key={`table-template-preview-new-${templateType || 'gonja'}`}
-                    editorSessionKey="template-preview-new"
-                    valueHtml={getTableTemplateHtml(preview.tableHtml)}
-                    disabled
-                    onChange={() => {}}
-                    onError={(error) => msgApi.error(error)}
-                  />
+                  <TableTemplatePreview valueHtml={getTableTemplateHtml(preview.tableHtml)} />
                 )}
               </div>
             )}
