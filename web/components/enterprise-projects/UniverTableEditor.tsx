@@ -161,6 +161,7 @@ export default function UniverTableEditor({
   const [isInitializing, setIsInitializing] = useState(true)
   const [isRenderRetrying, setIsRenderRetrying] = useState(false)
   const [rebuildNonce, setRebuildNonce] = useState(0)
+  const [renderProbeFailed, setRenderProbeFailed] = useState(false)
   const [debugState, setDebugState] = useState<Record<'init-attempt' | 'init-success' | 'sync-applied' | 'sync-fallback', DebugEvent | null>>({
     'init-attempt': null,
     'init-success': null,
@@ -177,6 +178,7 @@ export default function UniverTableEditor({
   const lastEmittedRef = useRef('')
   const lastSyncedExternalHtmlRef = useRef('')
   const pendingInitialHtmlRef = useRef<string | null>(null)
+  const rebuildCountRef = useRef(0)
   const onChangeRef = useRef(onChange)
   const onErrorRef = useRef(onError)
 
@@ -213,9 +215,11 @@ export default function UniverTableEditor({
     }
     let canceled = false
     let rafId = 0
+    let probeTimer = 0
     setIsInitializing(true)
     setInitError(null)
     setIsRenderRetrying(false)
+    setRenderProbeFailed(false)
 
     const pushDebug = (name: 'init-attempt' | 'init-success' | 'sync-applied' | 'sync-fallback', summary: string) => {
       const nextEvent: DebugEvent = { at: new Date().toLocaleTimeString(), summary }
@@ -293,7 +297,29 @@ export default function UniverTableEditor({
         lastSyncedExternalHtmlRef.current = initialHtml
         setIsInitializing(false)
         setInitError(null)
-        pushDebug('init-success', `attempt=${attempt}`)
+        pushDebug('init-success', `attempt=${attempt}, size=${container.clientWidth}x${container.clientHeight}`)
+        probeTimer = window.setTimeout(() => {
+          if (canceled) {
+            return
+          }
+          const host = containerRef.current
+          const workbookNow = workbookRef.current
+          const hasDomChildren = Boolean(host && host.querySelector('*'))
+          if (hasDomChildren && workbookNow) {
+            forceWorkbookRender(workbookNow)
+            return
+          }
+          setRenderProbeFailed(true)
+          if (rebuildCountRef.current < 2) {
+            rebuildCountRef.current += 1
+            pendingInitialHtmlRef.current = lastSyncedExternalHtmlRef.current || valueHtml
+            setDebugState(previous => ({
+              ...previous,
+              'sync-fallback': { at: new Date().toLocaleTimeString(), summary: `render-probe-failed, rebuild=${rebuildCountRef.current}` },
+            }))
+            setRebuildNonce(previous => previous + 1)
+          }
+        }, 240)
       } catch (error) {
         const message = error instanceof Error ? error.message : '初始化 Univer 失败'
         setInitError(message)
@@ -307,6 +333,9 @@ export default function UniverTableEditor({
       canceled = true
       if (rafId) {
         window.cancelAnimationFrame(rafId)
+      }
+      if (probeTimer) {
+        window.clearTimeout(probeTimer)
       }
       safeDispose()
     }
@@ -411,6 +440,11 @@ export default function UniverTableEditor({
           {!isInitializing && isRenderRetrying ? (
             <div className="pointer-events-none absolute inset-0 z-10 flex h-[560px] items-center justify-center bg-white/75 text-sm text-gray-500">
               编辑器已初始化，正在重试渲染...
+            </div>
+          ) : null}
+          {!isInitializing && renderProbeFailed ? (
+            <div className="pointer-events-none absolute inset-0 z-10 flex h-[560px] items-center justify-center bg-white/70 text-sm text-amber-700">
+              编辑器未检测到可见网格，正在自动恢复...
             </div>
           ) : null}
           <div ref={containerRef} style={{ height: 560 }} />
