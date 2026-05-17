@@ -22,9 +22,7 @@ export const createDefaultWorkbook = (): Record<string, unknown> => ({
       name: 'Sheet1',
       cellData: {
         '0': {
-          cells: {
-            '0': { v: '请在此输入模板内容，例如：{{user.name}}' },
-          },
+          '0': { v: '请在此输入模板内容，例如：{{user.name}}' },
         },
       },
       rowCount: 50,

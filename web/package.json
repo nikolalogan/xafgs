@@ -39,6 +39,7 @@
     "@univerjs/engine-render": "^0.22.1",
     "@univerjs/sheets": "^0.22.1",
     "@univerjs/sheets-formula": "^0.22.1",
+    "@univerjs/sheets-formula-ui": "^0.22.1",
     "@univerjs/sheets-ui": "^0.22.1",
     "@univerjs/ui": "^0.22.1",
     "antd": "^6.3.4",

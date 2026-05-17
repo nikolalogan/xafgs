@@ -18,10 +18,12 @@ const moduleLoader = async () => {
     sheetsUi,
     formula,
     formulaEngine,
+    formulaUi,
     zhCnUi,
     zhCnSheets,
     zhCnSheetsUi,
     zhCnFormula,
+    zhCnFormulaUi,
     zhCnDocsUi,
   ] = await Promise.all([
     import('@univerjs/core'),
@@ -33,10 +35,12 @@ const moduleLoader = async () => {
     import('@univerjs/sheets-ui'),
     import('@univerjs/sheets-formula'),
     import('@univerjs/engine-formula'),
+    import('@univerjs/sheets-formula-ui'),
     import('@univerjs/ui/locale/zh-CN'),
     import('@univerjs/sheets/locale/zh-CN'),
     import('@univerjs/sheets-ui/locale/zh-CN'),
     import('@univerjs/sheets-formula/locale/zh-CN'),
+    import('@univerjs/sheets-formula-ui/locale/zh-CN'),
     import('@univerjs/docs-ui/locale/zh-CN'),
   ])
   return {
@@ -52,10 +56,12 @@ const moduleLoader = async () => {
     UniverSheetsUIPlugin: sheetsUi.UniverSheetsUIPlugin,
     UniverSheetsFormulaPlugin: formula.UniverSheetsFormulaPlugin,
     UniverFormulaEnginePlugin: formulaEngine.UniverFormulaEnginePlugin,
+    UniverSheetsFormulaUIPlugin: formulaUi.UniverSheetsFormulaUIPlugin,
     zhCnUi: zhCnUi.default,
     zhCnSheets: zhCnSheets.default,
     zhCnSheetsUi: zhCnSheetsUi.default,
     zhCnFormula: zhCnFormula.default,
+    zhCnFormulaUi: zhCnFormulaUi.default,
     zhCnDocsUi: zhCnDocsUi.default,
   }
 }
@@ -65,9 +71,9 @@ export default function UniverTableRenderer({ templateAoa }: UniverTableRenderer
   const univerRef = useRef<{ dispose: () => void } | null>(null)
   const [error, setError] = useState('')
 
-  const dataRows = useMemo(() => {
-    return templateAoa.map((row, rowIndex) => {
-      const cellData = row.reduce<Record<string, { v?: string | number, f?: string }>>((acc, cell, colIndex) => {
+  const cellData = useMemo(() => {
+    return Object.fromEntries(templateAoa.map((row, rowIndex) => {
+      const rowData = row.reduce<Record<string, { v?: string | number, f?: string }>>((acc, cell, colIndex) => {
         if (cell === null)
           return acc
         const value = typeof cell === 'number' ? cell : String(cell)
@@ -77,8 +83,8 @@ export default function UniverTableRenderer({ templateAoa }: UniverTableRenderer
           acc[String(colIndex)] = { v: value }
         return acc
       }, {})
-      return [String(rowIndex), { cells: cellData }] as const
-    })
+      return [String(rowIndex), rowData] as const
+    }))
   }, [templateAoa])
 
   useEffect(() => {
@@ -104,6 +110,7 @@ export default function UniverTableRenderer({ templateAoa }: UniverTableRenderer
               Univer.zhCnSheets,
               Univer.zhCnSheetsUi,
               Univer.zhCnFormula,
+              Univer.zhCnFormulaUi,
               Univer.zhCnDocsUi,
             ),
           },
@@ -118,6 +125,7 @@ export default function UniverTableRenderer({ templateAoa }: UniverTableRenderer
         univer.registerPlugin(Univer.UniverSheetsUIPlugin)
         univer.registerPlugin(Univer.UniverFormulaEnginePlugin)
         univer.registerPlugin(Univer.UniverSheetsFormulaPlugin)
+        univer.registerPlugin(Univer.UniverSheetsFormulaUIPlugin)
         univer.createUnit(Univer.UniverInstanceType.UNIVER_SHEET, {
           id: 'sheet-render',
           name: 'Sheet1',
@@ -129,7 +137,7 @@ export default function UniverTableRenderer({ templateAoa }: UniverTableRenderer
             'sheet-1': {
               id: 'sheet-1',
               name: 'Sheet1',
-              cellData: Object.fromEntries(dataRows),
+              cellData,
               rowCount: Math.max(templateAoa.length, 20),
               columnCount: Math.max(Math.max(...templateAoa.map(row => row.length), 0), 10),
               zoomRatio: 1,
@@ -150,7 +158,7 @@ export default function UniverTableRenderer({ templateAoa }: UniverTableRenderer
         univerRef.current = null
       }
     }
-  }, [dataRows, templateAoa])
+  }, [cellData, templateAoa])
 
   if (error) {
     return (
