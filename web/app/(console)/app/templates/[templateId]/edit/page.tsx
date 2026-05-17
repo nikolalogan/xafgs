@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
 import UniverTableEditor from '@/components/enterprise-projects/UniverTableEditor'
+import { renderTablePlaceholders } from '@/lib/table-template-placeholder'
 
 type TemplateStatus = 'active' | 'disabled'
 type TemplateOutputType = 'text' | 'html'
@@ -51,25 +52,6 @@ type ApiResponse<T> = {
 }
 
 const EMPTY_TABLE_HTML = '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
-const buildTableHtmlFromContext = (context: Record<string, unknown>) => {
-  const entries = Object.entries(context || {})
-  if (!entries.length)
-    return EMPTY_TABLE_HTML
-  const escapeHtml = (value: string) => value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
-  const rows = entries.map(([key, value]) => {
-    const display = typeof value === 'string'
-      ? value
-      : JSON.stringify(value, null, 2) || ''
-    return `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(display)}</td></tr>`
-  }).join('')
-  return `<div class="table-wrapper"><table><tbody>${rows}</tbody></table></div>`
-}
-
 const getToken = () => {
   if (typeof window === 'undefined')
     return ''
@@ -209,8 +191,7 @@ export default function TemplateEditPage() {
         setContextError('')
         setProcessedContext(mappedContext)
         setLastValidProcessedContext(mappedContext)
-        const previewTableHtml = buildTableHtmlFromContext(mappedContext)
-        form.setFieldValue('content', previewTableHtml)
+        const previewTableHtml = renderTablePlaceholders(getTableTemplateHtml(values.content), mappedContext)
         setPreview({
           outputType: values.outputType,
           previewType: 'table',
@@ -377,7 +358,7 @@ export default function TemplateEditPage() {
               <div className="space-y-2">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-sm font-semibold text-gray-900">表格模板编辑区</div>
-                  <div className="text-xs text-gray-500">预览后更新（table）</div>
+                  <div className="text-xs text-gray-500">编辑模板原文（含占位符）</div>
                 </div>
                 <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
                   <div className="mb-2 text-xs font-medium text-gray-700">预处理后数据（Preview Context）</div>
@@ -405,6 +386,25 @@ export default function TemplateEditPage() {
                   onChange={nextHtml => form.setFieldValue('content', nextHtml)}
                   onError={(error) => msgApi.error(error)}
                 />
+                <div className="mb-2 mt-4 flex items-center justify-between">
+                  <div className="text-sm font-semibold text-gray-900">表格预览区</div>
+                  <div className="text-xs text-gray-500">仅展示渲染结果，不覆盖模板</div>
+                </div>
+                {preview?.previewType !== 'table' && (
+                  <div className="rounded-md border border-dashed border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">
+                    点击“预览”查看占位符渲染结果
+                  </div>
+                )}
+                {preview?.previewType === 'table' && (
+                  <UniverTableEditor
+                    key={`table-template-preview-edit-${templateIDValue}-${templateType || 'gonja'}`}
+                    editorSessionKey={`template-preview-edit-${templateIDValue}`}
+                    valueHtml={getTableTemplateHtml(preview.tableHtml)}
+                    disabled
+                    onChange={() => {}}
+                    onError={(error) => msgApi.error(error)}
+                  />
+                )}
               </div>
             )}
             {templateType !== 'table' && (
