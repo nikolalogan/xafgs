@@ -18,11 +18,11 @@ const moduleLoader = async () => {
     sheetsUi,
     formula,
     formulaEngine,
-    zhCnCore,
     zhCnUi,
     zhCnSheets,
     zhCnSheetsUi,
     zhCnFormula,
+    zhCnDocsUi,
   ] = await Promise.all([
     import('@univerjs/core'),
     import('@univerjs/engine-render'),
@@ -33,11 +33,11 @@ const moduleLoader = async () => {
     import('@univerjs/sheets-ui'),
     import('@univerjs/sheets-formula'),
     import('@univerjs/engine-formula'),
-    import('@univerjs/core/locale/zh-CN'),
     import('@univerjs/ui/locale/zh-CN'),
     import('@univerjs/sheets/locale/zh-CN'),
     import('@univerjs/sheets-ui/locale/zh-CN'),
     import('@univerjs/sheets-formula/locale/zh-CN'),
+    import('@univerjs/docs-ui/locale/zh-CN'),
   ])
   return {
     Univer: core.Univer,
@@ -52,11 +52,11 @@ const moduleLoader = async () => {
     UniverSheetsUIPlugin: sheetsUi.UniverSheetsUIPlugin,
     UniverSheetsFormulaPlugin: formula.UniverSheetsFormulaPlugin,
     UniverFormulaEnginePlugin: formulaEngine.UniverFormulaEnginePlugin,
-    zhCnCore: zhCnCore.default,
     zhCnUi: zhCnUi.default,
     zhCnSheets: zhCnSheets.default,
     zhCnSheetsUi: zhCnSheetsUi.default,
     zhCnFormula: zhCnFormula.default,
+    zhCnDocsUi: zhCnDocsUi.default,
   }
 }
 
@@ -100,11 +100,11 @@ export default function UniverTableRenderer({ templateAoa }: UniverTableRenderer
           locales: {
             [Univer.LocaleType.ZH_CN]: Univer.merge(
               {},
-              Univer.zhCnCore,
               Univer.zhCnUi,
               Univer.zhCnSheets,
               Univer.zhCnSheetsUi,
               Univer.zhCnFormula,
+              Univer.zhCnDocsUi,
             ),
           },
         })
