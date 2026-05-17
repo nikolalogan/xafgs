@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
-import { renderTablePlaceholders } from '@/lib/table-template-placeholder'
+import UniverTableRenderer from '@/components/enterprise-projects/UniverTableRenderer'
+import { parseTableAoaJson, renderTableAoaPlaceholders, type TableAoa } from '@/lib/table-template-aoa'
 
 type TemplateStatus = 'active' | 'disabled'
 type TemplateOutputType = 'text' | 'html'
@@ -34,7 +35,12 @@ type ApiResponse<T> = {
   data?: T
 }
 
-const EMPTY_TABLE_HTML = '<div class="table-wrapper"><table><tbody><tr><td></td></tr></tbody></table></div>'
+const DEFAULT_TABLE_AOA_JSON = JSON.stringify([
+  ['企业名称', '{{project.name}}'],
+  ['营业收入', '{{metrics.revenue}}'],
+  ['成本', '{{metrics.cost}}'],
+  ['利润', '=B2-B3'],
+], null, 2)
 const getToken = () => {
   if (typeof window === 'undefined')
     return ''
@@ -49,7 +55,8 @@ export default function TemplateNewPage() {
   const [msgApi, contextHolder] = message.useMessage()
   const [submitting, setSubmitting] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
-  const [preview, setPreview] = useState<{ outputType: TemplateOutputType, previewType: TemplateType, rendered: string, tableHtml: string } | null>(null)
+  const [preview, setPreview] = useState<{ outputType: TemplateOutputType, previewType: TemplateType, rendered: string } | null>(null)
+  const [tablePreviewAoa, setTablePreviewAoa] = useState<TableAoa | null>(null)
   const [processedContext, setProcessedContext] = useState<Record<string, unknown> | null>(null)
   const [lastValidProcessedContext, setLastValidProcessedContext] = useState<Record<string, unknown>>({})
   const [contextError, setContextError] = useState('')
@@ -108,18 +115,9 @@ export default function TemplateNewPage() {
     return result as Record<string, unknown>
   }
 
-  const getTableTemplateHtml = (raw: unknown) => {
-    const html = String(raw || '').trim()
-    if (html)
-      return html
-    return EMPTY_TABLE_HTML
-  }
-
-  const hasParseableTable = (raw: unknown) => /<table[\s>]/i.test(String(raw || ''))
-
   useEffect(() => {
-    if (templateType === 'table' && !hasParseableTable(contentValue))
-      form.setFieldValue('content', EMPTY_TABLE_HTML)
+    if (templateType === 'table' && !String(contentValue || '').trim())
+      form.setFieldValue('content', DEFAULT_TABLE_AOA_JSON)
   }, [contentValue, form, templateType])
 
   const previewNow = async () => {
@@ -132,14 +130,16 @@ export default function TemplateNewPage() {
         setContextError('')
         setProcessedContext(mappedContext)
         setLastValidProcessedContext(mappedContext)
-        const previewTableHtml = renderTablePlaceholders(getTableTemplateHtml(values.content), mappedContext)
+        const templateAoa = parseTableAoaJson(values.content || DEFAULT_TABLE_AOA_JSON)
+        const previewAoa = renderTableAoaPlaceholders(templateAoa, mappedContext)
+        setTablePreviewAoa(previewAoa)
         setPreview({
           outputType: values.outputType,
           previewType: 'table',
           rendered: '',
-          tableHtml: previewTableHtml,
         })
       } else {
+        setTablePreviewAoa(null)
         const result = await request<PreviewResponse>('/api/templates/preview', {
           method: 'POST',
           body: JSON.stringify({
@@ -153,7 +153,6 @@ export default function TemplateNewPage() {
           outputType: values.outputType,
           previewType: 'gonja',
           rendered: result.rendered || '',
-          tableHtml: '',
         })
       }
     }
@@ -163,6 +162,7 @@ export default function TemplateNewPage() {
       if (templateType === 'table') {
         setProcessedContext(lastValidProcessedContext)
         setContextError(error instanceof Error ? error.message : '上下文处理失败')
+        setTablePreviewAoa(null)
       }
       msgApi.error(error instanceof Error ? error.message : '预览失败')
     }
@@ -353,7 +353,11 @@ export default function TemplateNewPage() {
                 </Form.Item>
               </div>
               {templateType === 'table'
-                ? <Form.Item name="content" hidden rules={[{ required: true, message: '请输入模板内容' }]}><Input /></Form.Item>
+                ? (
+                    <Form.Item name="content" label="表格模板（AOA JSON）" rules={[{ required: true, message: '请输入表格模板 JSON' }]}>
+                      <Input.TextArea autoSize={{ minRows: 10, maxRows: 24 }} placeholder='例如: [["项目","{{project.name}}"],["利润","=B2-B3"]]' />
+                    </Form.Item>
+                  )
                 : (
                     <Form.Item name="content" label="模板内容" rules={[{ required: true, message: '请输入模板内容' }]}>
                       <Input.TextArea autoSize={{ minRows: 10, maxRows: 24 }} placeholder="Jinja2 模板内容" />
@@ -392,6 +396,22 @@ export default function TemplateNewPage() {
           </div>
 
           <div className="rounded-lg border border-gray-200 p-4">
+            {templateType === 'table' && (
+              <>
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-sm font-semibold text-gray-900">表格预览（Univer）</div>
+                  <div className="text-xs text-gray-500">前端替换占位符后渲染，支持简单公式</div>
+                </div>
+                {!tablePreviewAoa && (
+                  <div className="rounded-md border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
+                    点击“预览”生成表格数据
+                  </div>
+                )}
+                {tablePreviewAoa && (
+                  <UniverTableRenderer templateAoa={tablePreviewAoa} />
+                )}
+              </>
+            )}
             {templateType !== 'table' && (
               <>
                 <div className="mb-2 flex items-center justify-between">
