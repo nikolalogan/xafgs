@@ -5,6 +5,7 @@ import { LocaleType, LogLevel, Univer } from '@univerjs/core'
 import { FUniver } from '@univerjs/core/facade'
 import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core'
 import zhCN from '@univerjs/preset-sheets-core/lib/locales/zh-CN'
+import AntdTableEditor from '@/components/enterprise-projects/AntdTableEditor'
 
 type UniverTableEditorProps = {
   editorSessionKey: string
@@ -162,6 +163,7 @@ export default function UniverTableEditor({
   const [isRenderRetrying, setIsRenderRetrying] = useState(false)
   const [rebuildNonce, setRebuildNonce] = useState(0)
   const [renderProbeFailed, setRenderProbeFailed] = useState(false)
+  const [useFallbackEditor, setUseFallbackEditor] = useState(false)
   const [debugState, setDebugState] = useState<Record<'init-attempt' | 'init-success' | 'sync-applied' | 'sync-fallback', DebugEvent | null>>({
     'init-attempt': null,
     'init-success': null,
@@ -220,6 +222,7 @@ export default function UniverTableEditor({
     setInitError(null)
     setIsRenderRetrying(false)
     setRenderProbeFailed(false)
+    setUseFallbackEditor(false)
 
     const pushDebug = (name: 'init-attempt' | 'init-success' | 'sync-applied' | 'sync-fallback', summary: string) => {
       const nextEvent: DebugEvent = { at: new Date().toLocaleTimeString(), summary }
@@ -318,12 +321,15 @@ export default function UniverTableEditor({
               'sync-fallback': { at: new Date().toLocaleTimeString(), summary: `render-probe-failed, rebuild=${rebuildCountRef.current}` },
             }))
             setRebuildNonce(previous => previous + 1)
+          } else {
+            setUseFallbackEditor(true)
           }
         }, 240)
       } catch (error) {
         const message = error instanceof Error ? error.message : '初始化 Univer 失败'
         setInitError(message)
         setIsInitializing(false)
+        setUseFallbackEditor(true)
         onErrorRef.current?.(message)
       }
     }
@@ -342,6 +348,9 @@ export default function UniverTableEditor({
   }, [editorSessionKey, rebuildNonce, valueHtml, disabled])
 
   useEffect(() => {
+    if (useFallbackEditor) {
+      return
+    }
     const workbook = workbookRef.current
     if (!workbook) {
       return
@@ -387,6 +396,9 @@ export default function UniverTableEditor({
   }, [valueHtml])
 
   useEffect(() => {
+    if (useFallbackEditor) {
+      return
+    }
     const workbook = workbookRef.current
     if (!workbook || typeof workbook?.setEditable !== 'function') {
       return
@@ -395,6 +407,9 @@ export default function UniverTableEditor({
   }, [disabled])
 
   useEffect(() => {
+    if (useFallbackEditor) {
+      return
+    }
     const container = containerRef.current
     if (!container || typeof ResizeObserver === 'undefined') {
       return
@@ -417,6 +432,24 @@ export default function UniverTableEditor({
     observer.observe(container)
     return () => observer.disconnect()
   }, [])
+
+  if (useFallbackEditor) {
+    return (
+      <div className="rounded border border-gray-200 bg-white">
+        <div className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          Univer 渲染失败，已自动切换为兼容表格编辑器
+        </div>
+        <AntdTableEditor
+          editorSessionKey={editorSessionKey}
+          valueHtml={valueHtml}
+          disabled={disabled}
+          onChange={onChange}
+          onError={onError}
+          hideExportButton
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="rounded border border-gray-200 bg-white">
