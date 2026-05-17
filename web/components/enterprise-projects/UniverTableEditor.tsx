@@ -52,6 +52,7 @@ const moduleLoader = async () => {
   void sheetsUiFacade
   return {
     Univer: core.Univer,
+    IPermissionService: core.IPermissionService,
     LocaleType: core.LocaleType,
     UniverInstanceType: core.UniverInstanceType,
     FUniver: coreFacade.FUniver,
@@ -64,6 +65,9 @@ const moduleLoader = async () => {
     UniverSheetsUIPlugin: sheetsUi.UniverSheetsUIPlugin,
     UniverSheetsFormulaPlugin: formula.UniverSheetsFormulaPlugin,
     UniverFormulaEnginePlugin: formulaEngine.UniverFormulaEnginePlugin,
+    getAllWorkbookPermissionPoint: sheets.getAllWorkbookPermissionPoint,
+    getAllWorksheetPermissionPoint: sheets.getAllWorksheetPermissionPoint,
+    getAllWorksheetPermissionPointByPointPanel: sheets.getAllWorksheetPermissionPointByPointPanel,
     zhCnUi: zhCnUi.default,
     zhCnSheets: zhCnSheets.default,
     zhCnSheetsUi: zhCnSheetsUi.default,
@@ -123,6 +127,7 @@ const UniverTableEditor = forwardRef<UniverTableEditorRef, UniverTableEditorProp
         univer.registerPlugin(Univer.UniverSheetsFormulaPlugin)
         const workbookUnit = univer.createUnit(Univer.UniverInstanceType.UNIVER_SHEET, workbook)
         const univerAPI = Univer.FUniver.newAPI(univer)
+        const permissionService = univer.__getInjector().get(Univer.IPermissionService)
         const facadeWorkbook = (
           (univerAPI as {
             getWorkbook?: (unitId: string) => { save?: () => Record<string, unknown>, setEditable?: (editable: boolean) => unknown } | null
@@ -132,6 +137,27 @@ const UniverTableEditor = forwardRef<UniverTableEditorRef, UniverTableEditorProp
             getActiveWorkbook?: () => { save?: () => Record<string, unknown>, setEditable?: (editable: boolean) => unknown } | null
           }).getActiveWorkbook?.()
         )
+
+        // Explicitly enable both workbook and worksheet permission points.
+        const ensurePermissionEnabled = (permissionPoint: unknown) => {
+          const point = permissionPoint as { id: string }
+          if (!permissionService.getPermissionPoint(point.id))
+            permissionService.addPermissionPoint(permissionPoint as never)
+          permissionService.updatePermissionPoint(point.id, true)
+        }
+        Univer.getAllWorkbookPermissionPoint().forEach((PermissionPointCtor: new (unitId: string) => { id: string }) => {
+          ensurePermissionEnabled(new PermissionPointCtor(workbookUnit.getUnitId()))
+        })
+        const workbookWithSheets = workbookUnit as { getSheets?: () => Array<{ getSheetId: () => string }> }
+        workbookWithSheets.getSheets?.().forEach((sheet) => {
+          const subUnitId = sheet.getSheetId()
+          Univer.getAllWorksheetPermissionPoint().forEach((PermissionPointCtor: new (unitId: string, subUnitId: string) => { id: string }) => {
+            ensurePermissionEnabled(new PermissionPointCtor(workbookUnit.getUnitId(), subUnitId))
+          })
+          Univer.getAllWorksheetPermissionPointByPointPanel().forEach((PermissionPointCtor: new (unitId: string, subUnitId: string) => { id: string }) => {
+            ensurePermissionEnabled(new PermissionPointCtor(workbookUnit.getUnitId(), subUnitId))
+          })
+        })
         facadeWorkbook?.setEditable?.(true)
         runtimeRef.current = {
           dispose: () => univer.dispose(),
