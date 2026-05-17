@@ -23,7 +23,6 @@ const moduleLoader = async () => {
     zhCnSheets,
     zhCnSheetsUi,
     zhCnFormula,
-    zhCnFormulaUi,
     zhCnDocsUi,
   ] = await Promise.all([
     import('@univerjs/core'),
@@ -40,7 +39,6 @@ const moduleLoader = async () => {
     import('@univerjs/sheets/locale/zh-CN'),
     import('@univerjs/sheets-ui/locale/zh-CN'),
     import('@univerjs/sheets-formula/locale/zh-CN'),
-    import('@univerjs/sheets-formula-ui/locale/zh-CN'),
     import('@univerjs/docs-ui/locale/zh-CN'),
   ])
   return {
@@ -61,7 +59,6 @@ const moduleLoader = async () => {
     zhCnSheets: zhCnSheets.default,
     zhCnSheetsUi: zhCnSheetsUi.default,
     zhCnFormula: zhCnFormula.default,
-    zhCnFormulaUi: zhCnFormulaUi.default,
     zhCnDocsUi: zhCnDocsUi.default,
   }
 }
@@ -110,7 +107,6 @@ export default function UniverTableRenderer({ templateAoa }: UniverTableRenderer
               Univer.zhCnSheets,
               Univer.zhCnSheetsUi,
               Univer.zhCnFormula,
-              Univer.zhCnFormulaUi,
               Univer.zhCnDocsUi,
             ),
           },

@@ -25,12 +25,10 @@ const moduleLoader = async () => {
     coreFacade,
     sheetsFacade,
     sheetsUiFacade,
-    formulaUiFacade,
     zhCnUi,
     zhCnSheets,
     zhCnSheetsUi,
     zhCnFormula,
-    zhCnFormulaUi,
     zhCnDocsUi,
   ] = await Promise.all([
     import('@univerjs/core'),
@@ -46,17 +44,14 @@ const moduleLoader = async () => {
     import('@univerjs/core/facade'),
     import('@univerjs/sheets/facade'),
     import('@univerjs/sheets-ui/facade'),
-    import('@univerjs/sheets-formula-ui/facade'),
     import('@univerjs/ui/locale/zh-CN'),
     import('@univerjs/sheets/locale/zh-CN'),
     import('@univerjs/sheets-ui/locale/zh-CN'),
     import('@univerjs/sheets-formula/locale/zh-CN'),
-    import('@univerjs/sheets-formula-ui/locale/zh-CN'),
     import('@univerjs/docs-ui/locale/zh-CN'),
   ])
   void sheetsFacade
   void sheetsUiFacade
-  void formulaUiFacade
   return {
     Univer: core.Univer,
     LocaleType: core.LocaleType,
@@ -76,7 +71,6 @@ const moduleLoader = async () => {
     zhCnSheets: zhCnSheets.default,
     zhCnSheetsUi: zhCnSheetsUi.default,
     zhCnFormula: zhCnFormula.default,
-    zhCnFormulaUi: zhCnFormulaUi.default,
     zhCnDocsUi: zhCnDocsUi.default,
   }
 }
@@ -116,7 +110,6 @@ const UniverTableEditor = forwardRef<UniverTableEditorRef, UniverTableEditorProp
               Univer.zhCnSheets,
               Univer.zhCnSheetsUi,
               Univer.zhCnFormula,
-              Univer.zhCnFormulaUi,
               Univer.zhCnDocsUi,
             ),
           },

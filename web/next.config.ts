@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next'
+import path from 'path'
 
 const nextConfig: NextConfig = {
   output: 'standalone',
@@ -27,6 +28,15 @@ const nextConfig: NextConfig = {
     '172.31.*.*',
     '192.168.*.*',
   ],
+  webpack: config => {
+    config.resolve = config.resolve ?? {}
+    config.resolve.alias = config.resolve.alias ?? {}
+    config.resolve.alias['@univerjs/sheets-formula-ui'] = path.resolve(
+      __dirname,
+      'node_modules/@univerjs/sheets-formula-ui/lib/index.js',
+    )
+    return config
+  },
 }
 
 export default nextConfig

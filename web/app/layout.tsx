@@ -6,7 +6,7 @@ import '@univerjs/design/lib/index.css'
 import '@univerjs/ui/lib/index.css'
 import '@univerjs/docs-ui/lib/index.css'
 import '@univerjs/sheets-ui/lib/index.css'
-import '@univerjs/sheets-formula-ui/lib/index.css'
+import '../node_modules/@univerjs/sheets-formula-ui/lib/index.css'
 
 export const metadata: Metadata = {
   title: '西安分公司',
