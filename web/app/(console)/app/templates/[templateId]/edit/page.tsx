@@ -5,7 +5,6 @@ import { useParams, useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
 import AntdTableEditor from '@/components/enterprise-projects/AntdTableEditor'
-import TableTemplatePreview from '@/components/enterprise-projects/TableTemplatePreview'
 import { renderTablePlaceholders } from '@/lib/table-template-placeholder'
 
 type TemplateStatus = 'active' | 'disabled'
@@ -351,56 +350,40 @@ export default function TemplateEditPage() {
               <Form.Item name="preprocessJs" label="预处理脚本 preprocessJs(context)">
                 <Input.TextArea autoSize={{ minRows: 4, maxRows: 10 }} placeholder="return context" />
               </Form.Item>
+              {templateType === 'table' && (
+                <div className="space-y-2">
+                  <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+                    <div className="mb-2 text-xs font-medium text-gray-700">预处理后数据（Preview Context）</div>
+                    {!previewLoading && preview?.previewType !== 'table' && !processedContext && (
+                      <div className="text-xs text-gray-500">点击“预览”生成数据</div>
+                    )}
+                    {previewLoading && (
+                      <div className="text-xs text-gray-500">预处理中...</div>
+                    )}
+                    {!previewLoading && processedContext && (
+                      <pre className="max-h-56 overflow-auto rounded border border-gray-200 bg-white p-2 text-xs text-gray-800">
+                        {JSON.stringify(processedContext, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                  {contextError && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
+                      {contextError}，预览失败，已保留上一次有效结果
+                    </div>
+                  )}
+                  <AntdTableEditor
+                    key={`table-template-content-edit-${templateIDValue}-${templateType || 'gonja'}`}
+                    editorSessionKey={`template-content-edit-${templateIDValue}`}
+                    valueHtml={hasParseableTable(contentValue) ? getTableTemplateHtml(contentValue) : EMPTY_TABLE_HTML}
+                    onChange={nextHtml => form.setFieldValue('content', nextHtml)}
+                    onError={(error) => msgApi.error(error)}
+                  />
+                </div>
+              )}
             </Form>
           </div>
 
           <div className="rounded-lg border border-gray-200 p-4">
-            {templateType === 'table' && (
-              <div className="space-y-2">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="text-sm font-semibold text-gray-900">表格模板编辑区</div>
-                  <div className="text-xs text-gray-500">编辑模板原文（含占位符）</div>
-                </div>
-                <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-                  <div className="mb-2 text-xs font-medium text-gray-700">预处理后数据（Preview Context）</div>
-                  {!previewLoading && preview?.previewType !== 'table' && !processedContext && (
-                    <div className="text-xs text-gray-500">点击“预览”生成数据</div>
-                  )}
-                  {previewLoading && (
-                    <div className="text-xs text-gray-500">预处理中...</div>
-                  )}
-                  {!previewLoading && processedContext && (
-                    <pre className="max-h-56 overflow-auto rounded border border-gray-200 bg-white p-2 text-xs text-gray-800">
-                      {JSON.stringify(processedContext, null, 2)}
-                    </pre>
-                  )}
-                </div>
-                {contextError && (
-                  <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
-                    {contextError}，预览失败，已保留上一次有效结果
-                  </div>
-                )}
-                <AntdTableEditor
-                  key={`table-template-content-edit-${templateIDValue}-${templateType || 'gonja'}`}
-                  editorSessionKey={`template-content-edit-${templateIDValue}`}
-                  valueHtml={hasParseableTable(contentValue) ? getTableTemplateHtml(contentValue) : EMPTY_TABLE_HTML}
-                  onChange={nextHtml => form.setFieldValue('content', nextHtml)}
-                  onError={(error) => msgApi.error(error)}
-                />
-                <div className="mb-2 mt-4 flex items-center justify-between">
-                  <div className="text-sm font-semibold text-gray-900">表格预览区</div>
-                  <div className="text-xs text-gray-500">仅展示渲染结果，不覆盖模板</div>
-                </div>
-                {preview?.previewType !== 'table' && (
-                  <div className="rounded-md border border-dashed border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">
-                    点击“预览”查看占位符渲染结果
-                  </div>
-                )}
-                {preview?.previewType === 'table' && (
-                  <TableTemplatePreview valueHtml={getTableTemplateHtml(preview.tableHtml)} />
-                )}
-              </div>
-            )}
             {templateType !== 'table' && (
               <>
                 <div className="mb-2 flex items-center justify-between">
