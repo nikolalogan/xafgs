@@ -334,28 +334,24 @@ export default function AntdTableEditor({
   }, [onChange, serializeHtml])
 
   const updateCell = useCallback((row: number, col: number, value: string) => {
-    setGrid(prev => {
-      const nextCells = prev.cells.map(row => row.map(cell => ({ ...cell })))
-      nextCells[row][col].raw = value
-      emitGridChange(nextCells)
-      return { ...prev, cells: nextCells }
-    })
-  }, [emitGridChange])
+    const nextCells = grid.cells.map(currentRow => currentRow.map(cell => ({ ...cell })))
+    nextCells[row][col].raw = value
+    setGrid({ ...grid, cells: nextCells })
+    emitGridChange(nextCells)
+  }, [emitGridChange, grid])
 
   const clearSelection = useCallback(() => {
-    setGrid(prev => {
-      const nextCells = prev.cells.map(row => row.map(cell => ({ ...cell })))
-      for (const range of selection.ranges) {
-        for (let r = range.startRow; r <= range.endRow; r += 1) {
-          for (let c = range.startCol; c <= range.endCol; c += 1) {
-            nextCells[r][c].raw = ''
-          }
+    const nextCells = grid.cells.map(currentRow => currentRow.map(cell => ({ ...cell })))
+    for (const range of selection.ranges) {
+      for (let r = range.startRow; r <= range.endRow; r += 1) {
+        for (let c = range.startCol; c <= range.endCol; c += 1) {
+          nextCells[r][c].raw = ''
         }
       }
-      emitGridChange(nextCells)
-      return { ...prev, cells: nextCells }
-    })
-  }, [emitGridChange, selection.ranges])
+    }
+    setGrid({ ...grid, cells: nextCells })
+    emitGridChange(nextCells)
+  }, [emitGridChange, grid, selection.ranges])
 
   const applyPaste = useCallback((text: string) => {
     const rows = text.split(/\r?\n/).filter(item => item.length > 0).map(row => row.split('\t'))
@@ -363,22 +359,20 @@ export default function AntdTableEditor({
       return
     }
     const start = selection.ranges[0] || normalizeRange(selection.active, selection.active)
-    setGrid(prev => {
-      const nextCells = prev.cells.map(row => row.map(cell => ({ ...cell })))
-      for (let r = 0; r < rows.length; r += 1) {
-        for (let c = 0; c < rows[r].length; c += 1) {
-          const rr = start.startRow + r
-          const cc = start.startCol + c
-          if (rr >= prev.rows || cc >= prev.cols) {
-            continue
-          }
-          nextCells[rr][cc].raw = rows[r][c]
+    const nextCells = grid.cells.map(currentRow => currentRow.map(cell => ({ ...cell })))
+    for (let r = 0; r < rows.length; r += 1) {
+      for (let c = 0; c < rows[r].length; c += 1) {
+        const rr = start.startRow + r
+        const cc = start.startCol + c
+        if (rr >= grid.rows || cc >= grid.cols) {
+          continue
         }
+        nextCells[rr][cc].raw = rows[r][c]
       }
-      emitGridChange(nextCells)
-      return { ...prev, cells: nextCells }
-    })
-  }, [emitGridChange, selection.active, selection.ranges])
+    }
+    setGrid({ ...grid, cells: nextCells })
+    emitGridChange(nextCells)
+  }, [emitGridChange, grid, selection.active, selection.ranges])
 
   const moveBy = useCallback((rowDelta: number, colDelta: number, keepAnchor: boolean) => {
     const row = clamp(selection.active.row + rowDelta, 0, grid.rows - 1)
