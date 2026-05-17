@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Form, Input, Select, Space, message } from 'antd'
 import { useConsoleRole } from '@/lib/useConsoleRole'
-import UniverTableEditor from '@/components/enterprise-projects/UniverTableEditor'
+import AntdTableEditor from '@/components/enterprise-projects/AntdTableEditor'
 import { renderTablePlaceholders } from '@/lib/table-template-placeholder'
 
 type TemplateStatus = 'active' | 'disabled'
@@ -395,7 +395,7 @@ export default function TemplateNewPage() {
                     {contextError}，预览失败，已保留上一次有效结果
                   </div>
                 )}
-                <UniverTableEditor
+                <AntdTableEditor
                   key={`table-template-content-new-${templateType || 'gonja'}`}
                   editorSessionKey="template-content-new"
                   valueHtml={hasParseableTable(contentValue) ? getTableTemplateHtml(contentValue) : EMPTY_TABLE_HTML}
@@ -412,7 +412,7 @@ export default function TemplateNewPage() {
                   </div>
                 )}
                 {preview?.previewType === 'table' && (
-                  <UniverTableEditor
+                  <AntdTableEditor
                     key={`table-template-preview-new-${templateType || 'gonja'}`}
                     editorSessionKey="template-preview-new"
                     valueHtml={getTableTemplateHtml(preview.tableHtml)}
